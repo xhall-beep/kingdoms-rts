@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { Engine } from '../src/core/engine.ts'
+import { Engine } from '../src/core/Engine.ts'
 import {
     FIXED_POINT_SCALE,
     addFixedPoint,
     fromFixedPoint,
     toFixedPoint,
-} from '../src/core/math.ts'
+} from '../src/core/Math.ts'
 
 test('fixed-point helpers keep deterministic values at a common scale', () => {
     const fixed = toFixedPoint(1.23456789)

@@ -1,12 +1,12 @@
-import './style.css'
-import { Engine } from './core/engine'
-import { Renderer } from './render/renderer'
+import { Engine } from './core/Engine'
 import { InputControllerImpl } from './input/input-controller'
-import { HudImpl } from './ui/hud'
+import { Renderer } from './render/renderer'
+import './style.css'
 import { CombatSystemImpl } from './systems/combat'
 import { GatherSystemImpl } from './systems/gather'
 import { MovementSystemImpl } from './systems/movement'
 import { ProductionSystemImpl } from './systems/production'
+import { HudImpl } from './ui/hud'
 
 export interface GameComposition {
   engine: Engine

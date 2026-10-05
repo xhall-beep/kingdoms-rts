@@ -1,4 +1,4 @@
-import type { World } from '../core/world'
+import type { World } from '../core/World'
 
 export interface MovementSystem {
     step(world: World): void
