@@ -1,0 +1,8 @@
+{
+  "name": "Kingdoms RTS",
+  "description": "A real-time strategy game featuring factions, unit combat, resource gathering, and base building.",
+  "requestPermissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
