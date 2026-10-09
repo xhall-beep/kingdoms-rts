@@ -206,8 +206,6 @@ export class InputControllerImpl implements InputController {
     }
 
     const isOwn = world.team[hit] === TEAM_PLAYER
-    const isResource = world.kind[hit] === KIND_TREE || world.kind[hit] === KIND_GOLDMINE
-
     if (isOwn) {
       // Own entity: select it; tapping the sole selection deselects.
       if (this.selected.length === 1 && this.selected[0] === hit) {
