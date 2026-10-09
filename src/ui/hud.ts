@@ -97,7 +97,7 @@ export class HudImpl implements Hud {
     this.bannerEl = parent.querySelector('#hud-banner')
     // Menu toggle.
     const menuBtn = parent.querySelector('#hud-menu-btn')
-    const menuEl = parent.querySelector('#hud-menu')
+    const menuEl = parent.querySelector<HTMLElement>('#hud-menu')
     if (menuBtn && menuEl) {
       menuBtn.addEventListener('click', () => {
         menuEl.hidden = !menuEl.hidden
@@ -115,7 +115,7 @@ export class HudImpl implements Hud {
     })
     wire('#hud-save', () => this.callbacks?.onSave())
     wire('#hud-load', () => this.callbacks?.onLoad())
-    const speedRow = parent.querySelector('#hud-speed')
+    const speedRow = parent.querySelector<HTMLElement>('#hud-speed')
     wire('#hud-replay', () => {
       this.callbacks?.onReplay()
       const btn = parent.querySelector('#hud-replay')
