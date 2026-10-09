@@ -141,6 +141,9 @@ export class World {
   supplyCap: number[] = [0, 0]
   factionOfTeam: [FactionId, FactionId] = ['human', 'human']
 
+  /** Match outcome: -1 = ongoing, 0 = player (team 0) wins, 1 = enemy wins. */
+  winner: -1 | 0 | 1 = -1
+
   readonly entities = new Map<number, Entity>()
   readonly systems: System[] = []
 
