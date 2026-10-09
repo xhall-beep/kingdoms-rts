@@ -43,6 +43,8 @@ export function orderMove(world: World, id: number, x: number, z: number): void 
   world.stopDist[id] = 0.5
   world.moving[id] = 1
   world.state[id] = STATE_MOVE
+  world.resumeX[id] = NaN
+  world.resumeZ[id] = NaN
   // An explicit move order cancels auto-harvest: the worker holds position
   // on arrival instead of walking back to work. The Gather command re-arms it.
   if (world.kind[id] === KIND_WORKER) {
