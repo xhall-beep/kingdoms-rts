@@ -16,6 +16,7 @@ import {
   STATE_IDLE,
 } from '../core/World'
 import { orderBuild, orderGather } from '../systems/gather.ts'
+import { orderAttackMove } from '../systems/combat.ts'
 import { orderMove } from '../systems/movement.ts'
 import { enqueueTrain } from '../systems/production.ts'
 import {
@@ -209,7 +210,7 @@ export class OpponentAI implements System {
     const tz = world.positionZ[threat]
     for (const id of soldiers) {
       if (world.state[id] !== STATE_IDLE) continue
-      orderMove(world, id, tx, tz) // They engage anything in sight on the way.
+      orderAttackMove(world, id, tx, tz)
     }
     return true
   }
@@ -221,7 +222,7 @@ export class OpponentAI implements System {
     if (idle.length === 0) return
     const target = this.findTarget(world, hall, idle)
     if (target === null) return
-    for (const id of idle) orderMove(world, id, target.x, target.z)
+    for (const id of idle) orderAttackMove(world, id, target.x, target.z)
   }
 
   /** Where to send the army: the enemy hall if explored, else the mirror guess, else search. */
