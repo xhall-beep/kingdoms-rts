@@ -1,5 +1,6 @@
 import type { System, World } from '../core/World'
-import { BUILDINGS, BUILDING_BY_KIND } from '../data/buildings.ts'
+import { BUILDINGS } from '../data/buildings.ts'
+import { BUILDING_TYPE_BY_KIND } from '../world/construction.ts'
 import {
   CARRY_GOLD,
   CARRY_NONE,
@@ -126,7 +127,7 @@ export class GatherSystemImpl implements System {
             // Grant supply on completion (not on placement).
             const bkind = world.kind[site]
             if (bkind >= KIND_HALL && bkind <= KIND_FARM) {
-              const btype = BUILDING_BY_KIND[bkind]
+              const btype = BUILDING_TYPE_BY_KIND[bkind]
               world.supplyCap[world.team[site]] += BUILDINGS[btype].supply
             }
           }
