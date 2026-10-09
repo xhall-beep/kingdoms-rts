@@ -28,6 +28,7 @@ export interface HudCallbacks {
   onBuildType(type: BuildingType): void
   onTrain(type: UnitType): void
   onSelectBuilding(kind: number): void
+  onNewGame(): void
   onPause(): void
   onSave(): void
   onLoad(): void
@@ -79,6 +80,7 @@ export class HudImpl implements Hud {
           <button class="hud-pill hud-mode" id="hud-save">Save</button>
           <button class="hud-pill hud-mode" id="hud-load">Load</button>
           <button class="hud-pill hud-mode" id="hud-replay">Replay</button>
+          <button class="hud-pill hud-mode" id="hud-newgame">New Game</button>
         </div>
         <div class="hud-bar" id="hud-speed" hidden>
           <button class="hud-pill hud-mode hud-speed-on" data-speed="1">1x</button>
@@ -118,6 +120,7 @@ export class HudImpl implements Hud {
     wire('#hud-save', () => this.callbacks?.onSave())
     wire('#hud-load', () => this.callbacks?.onLoad())
     const speedRow = parent.querySelector<HTMLElement>('#hud-speed')
+    wire('#hud-newgame', () => this.callbacks?.onNewGame())
     wire('#hud-replay', () => {
       this.callbacks?.onReplay()
       const btn = parent.querySelector('#hud-replay')
