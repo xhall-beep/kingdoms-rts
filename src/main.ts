@@ -107,6 +107,7 @@ export function initializeGame(): GameComposition {
   const hudCallbacks: HudCallbacks = {
     onMode: (mode) => composition.inputController.setMode(mode),
     onBuildType: (type) => composition.inputController.setPendingBuilding(type),
+    onSelectBuilding: (kind) => composition.inputController.selectBuilding(kind),
     onTrain: (type) => {
       const selected = composition.inputController.getSelected()
       if (selected.length !== 1) return
