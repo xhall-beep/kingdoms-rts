@@ -17,7 +17,8 @@ export class MovementSystemImpl implements System {
       const dx = world.targetX[id] - world.positionX[id]
       const dz = world.targetZ[id] - world.positionZ[id]
       const dist = Math.hypot(dx, dz)
-      if (dist <= world.stopDist[id]) {
+      // Epsilon: without it, float rounding stalls units exactly at the boundary (Zeno).
+      if (dist <= world.stopDist[id] + 1e-4) {
         world.moving[id] = 0
         world.velocityX[id] = 0
         world.velocityZ[id] = 0
