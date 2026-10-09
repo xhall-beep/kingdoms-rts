@@ -4,6 +4,7 @@ import {
   KIND_RANGED,
   NO_TARGET,
   STATE_ATTACK,
+  STATE_ATTACKMOVE,
   STATE_IDLE,
   STATE_MOVE,
 } from '../core/World'
@@ -31,11 +32,30 @@ export class CombatSystemImpl implements System {
 
       let target = world.targetId[id]
       if (target === NO_TARGET || !world.entities.has(target) || world.health[target] <= 0) {
-        target = findNearestEnemy(world, id)
+        // Auto-acquire: idle soldiers defend themselves, attack-move engages
+        // on the march. Plain move orders (STATE_MOVE) walk through.
+        const stance = world.state[id]
+        if (stance === STATE_IDLE || stance === STATE_ATTACKMOVE || stance === STATE_ATTACK) {
+          target = findNearestEnemy(world, id)
+        } else {
+          target = NO_TARGET
+        }
         world.targetId[id] = target
       }
       if (target === NO_TARGET) {
-        if (world.state[id] === STATE_ATTACK) world.state[id] = STATE_IDLE
+        if (world.state[id] === STATE_ATTACK) {
+          // Was attack-moving: resume the march. Otherwise go idle.
+          if (!Number.isNaN(world.resumeX[id])) {
+            world.targetX[id] = world.resumeX[id]
+            world.targetZ[id] = world.resumeZ[id]
+            world.stopDist[id] = 0.5
+            world.moving[id] = 1
+            world.state[id] = STATE_ATTACKMOVE
+          } else {
+            world.state[id] = STATE_IDLE
+          }
+        }
+        // ATTACKMOVE with no target yet: movement system keeps walking.
         continue
       }
 
@@ -94,6 +114,21 @@ function findNearestEnemy(world: World, id: number): number {
 export function orderAttack(world: World, id: number, target: number): void {
   const kind = world.kind[id]
   if (kind !== KIND_MELEE && kind !== KIND_RANGED) return
+  world.resumeX[id] = NaN
+  world.resumeZ[id] = NaN
   world.targetId[id] = target
   world.state[id] = STATE_ATTACK
+}
+
+/** Order a combat unit to march to a point, engaging enemies on the way. */
+export function orderAttackMove(world: World, id: number, x: number, z: number): void {
+  const kind = world.kind[id]
+  if (kind !== KIND_MELEE && kind !== KIND_RANGED) return
+  world.targetX[id] = x
+  world.targetZ[id] = z
+  world.resumeX[id] = x
+  world.resumeZ[id] = z
+  world.stopDist[id] = 0.5
+  world.moving[id] = 1
+  world.state[id] = STATE_ATTACKMOVE
 }
