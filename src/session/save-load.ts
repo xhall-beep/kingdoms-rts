@@ -32,7 +32,7 @@ interface WorldSave {
   factionOfTeam: [FactionId, FactionId]
   winner: -1 | 0 | 1
   fog: number[][]
-  commands: Command[]
+  commands: readonly Command[]
 }
 
 function maxEntityId(world: World): number {
@@ -42,7 +42,7 @@ function maxEntityId(world: World): number {
 }
 
 /** Capture the full simulation state plus the command log. */
-export function serializeWorld(world: World, step: number, commands: Command[]): WorldSave {
+export function serializeWorld(world: World, step: number, commands: readonly Command[]): WorldSave {
   const maxId = maxEntityId(world)
   const arrays: Record<string, number[]> = {}
   for (const name of ARRAY_FIELDS) {
@@ -96,7 +96,7 @@ export function deserializeWorld(world: World, save: WorldSave): void {
 }
 
 /** Persist a save to localStorage. Returns false when storage is unavailable. */
-export function writeSave(world: World, step: number, commands: Command[]): boolean {
+export function writeSave(world: World, step: number, commands: readonly Command[]): boolean {
   try {
     const data = serializeWorld(world, step, commands)
     localStorage.setItem(SAVE_KEY, JSON.stringify(data))
@@ -127,7 +127,7 @@ export function hasSave(): boolean {
 export function loadIntoWorld(
   world: World,
   save: WorldSave,
-): { step: number; commands: Command[] } {
+): { step: number; commands: readonly Command[] } {
   deserializeWorld(world, save)
   return { step: save.step, commands: save.commands.map((c) => ({ ...c })) }
 }
