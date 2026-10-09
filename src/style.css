@@ -371,3 +371,54 @@ code {
   color: #102b2b;
   border-color: #f5c542;
 }
+
+.hud-actions {
+  margin-top: 8px;
+  min-height: 0;
+}
+
+.hud-actions:empty {
+  display: none;
+}
+
+.hud-action {
+  cursor: pointer;
+  font: inherit;
+  pointer-events: auto;
+  min-height: 44px;
+  padding: 6px 16px;
+  background: rgba(20, 60, 50, 0.92);
+}
+
+.hud-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.hud-banner {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 48px;
+  font-weight: 800;
+  padding: 24px 48px;
+  border-radius: 16px;
+  pointer-events: none;
+}
+
+.hud-banner[hidden] {
+  display: none;
+}
+
+.hud-win {
+  background: rgba(20, 80, 40, 0.95);
+  color: #d1fae5;
+  border: 3px solid #4ade80;
+}
+
+.hud-lose {
+  background: rgba(80, 20, 20, 0.95);
+  color: #fee2e2;
+  border: 3px solid #ef4444;
+}
