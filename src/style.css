@@ -478,3 +478,10 @@ code {
   color: #102b2b;
   border-color: #f5c542;
 }
+
+.hud-detail {
+  background: rgba(16, 43, 43, 0.7);
+  border-color: rgba(255, 243, 212, 0.12);
+  font-weight: 400;
+  opacity: 0.9;
+}
