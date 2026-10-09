@@ -1,6 +1,7 @@
 import { Engine } from './core/Engine'
 import { InputControllerImpl } from './input/input-controller'
 import { Renderer } from './render/renderer'
+import { seedScenario } from './scenario'
 import './style.css'
 import { CombatSystemImpl } from './systems/combat'
 import { GatherSystemImpl } from './systems/gather'
@@ -22,17 +23,24 @@ export interface GameComposition {
 }
 
 export function composeGame(): GameComposition {
+  const engine = new Engine()
+  const systems = {
+    production: new ProductionSystemImpl(),
+    gather: new GatherSystemImpl(),
+    combat: new CombatSystemImpl(),
+    movement: new MovementSystemImpl(),
+  }
+  // Decisions first, steering integration last.
+  engine.world.registerSystem(systems.production)
+  engine.world.registerSystem(systems.gather)
+  engine.world.registerSystem(systems.combat)
+  engine.world.registerSystem(systems.movement)
   return {
-    engine: new Engine(),
+    engine,
     renderer: new Renderer({ width: 1280, height: 720 }),
     inputController: new InputControllerImpl(),
     hud: new HudImpl(),
-    systems: {
-      movement: new MovementSystemImpl(),
-      combat: new CombatSystemImpl(),
-      gather: new GatherSystemImpl(),
-      production: new ProductionSystemImpl(),
-    },
+    systems,
   }
 }
 
@@ -43,6 +51,7 @@ export function initializeGame(): GameComposition {
   }
 
   const composition = composeGame()
+  seedScenario(composition.engine.world)
   app.innerHTML = `
     <main class="game-shell">
       <header class="game-header">
