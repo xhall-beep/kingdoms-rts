@@ -1,5 +1,5 @@
 import type { System, World } from '../core/World'
-import { HARVEST_OFF, KIND_WORKER, STATE_MOVE } from '../core/World'
+import { HARVEST_OFF, KIND_WORKER, NO_TARGET, STATE_IDLE, STATE_MOVE } from '../core/World'
 
 /**
  * Steering: every entity flagged `moving` walks toward (targetX, targetZ) at
