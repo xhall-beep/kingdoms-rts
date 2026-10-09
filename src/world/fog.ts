@@ -35,6 +35,17 @@ export class FogGrid {
     return this.cells[row * this.cols + col]
   }
 
+  /** Full cell array copy for save files. */
+  snapshotCells(): number[] {
+    return Array.from(this.cells)
+  }
+
+  /** Restore cell states from a save file. */
+  restoreCells(data: number[]): void {
+    const n = Math.min(data.length, this.cells.length)
+    for (let i = 0; i < n; i += 1) this.cells[i] = data[i]
+  }
+
   /** Call once per vision update, before any reveal(): last update's visible cells become EXPLORED. */
   beginUpdate(): void {
     for (const i of this.visibleNow) this.cells[i] = FOG_EXPLORED
