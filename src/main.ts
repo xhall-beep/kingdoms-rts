@@ -13,7 +13,7 @@ import { enqueueTrain } from './systems/production'
 import { VictorySystemImpl } from './systems/victory'
 import { VisionSystemImpl } from './systems/vision'
 import { CommandLog } from './session/commands.ts'
-import { hasSave, loadIntoWorld, readSave, writeSave } from './session/save-load.ts'
+import { loadIntoWorld, readSave, writeSave } from './session/save-load.ts'
 import { HudImpl } from './ui/hud'
 import type { HudCallbacks } from './ui/hud'
 
