@@ -43,6 +43,8 @@ export class InputControllerImpl implements InputController {
   private selected: number[] = []
   private dragStart: { x: number; y: number } | null = null
   private panning = false
+  private boxSelecting = false
+  private pointers = new Map<number, { x: number; y: number }>()
   private pendingBuilding: BuildingType | null = null
   private commandListener: ((cmd: Command) => void) | null = null
 
@@ -66,7 +68,7 @@ export class InputControllerImpl implements InputController {
 
   /** Legacy entry: treat as a left-click at canvas pixel position. */
   handlePointer(position: readonly [number, number]): void {
-    this.clickSelect(position[0], position[1])
+    this.tapSelect(position[0], position[1])
   }
 
   getSelected(): number[] {
@@ -94,15 +96,50 @@ export class InputControllerImpl implements InputController {
 
   private onDown(e: PointerEvent): void {
     if (e.button !== 0) return
-    this.dragStart = { x: e.offsetX, y: e.offsetY }
-    this.panning = false
+    this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY })
+    if (this.pointers.size === 1) {
+      this.dragStart = { x: e.offsetX, y: e.offsetY }
+      this.panning = false
+      this.boxSelecting = false
+    } else {
+      // Second finger: switch to two-finger pan, cancel box select.
+      this.boxSelecting = false
+      this.panning = true
+      this.renderer?.setSelectionBox(null)
+    }
   }
 
   private onMove(e: PointerEvent): void {
-    if (!this.dragStart || !this.renderer) return
+    if (!this.pointers.has(e.pointerId)) return
+    this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY })
+    if (!this.renderer) return
+
+    if (this.pointers.size >= 2) {
+      // Two-finger pan.
+      this.renderer.pan(e.movementX, e.movementY)
+      this.dragStart = null
+      return
+    }
+
+    if (!this.dragStart) return
     const dx = e.offsetX - this.dragStart.x
     const dy = e.offsetY - this.dragStart.y
-    if (!this.panning && Math.hypot(dx, dy) > 10) this.panning = true
+    const dist = Math.hypot(dx, dy)
+
+    // In selection mode a drag becomes a box-select; otherwise it pans.
+    if (this.mode === 'selection' && !this.panning && dist > 10) {
+      this.boxSelecting = true
+    }
+    if (this.boxSelecting) {
+      this.renderer.setSelectionBox({
+        x0: this.dragStart.x,
+        y0: this.dragStart.y,
+        x1: e.offsetX,
+        y1: e.offsetY,
+      })
+      return
+    }
+    if (!this.panning && dist > 10) this.panning = true
     if (this.panning) {
       this.renderer.pan(e.movementX, e.movementY)
       this.dragStart = { x: e.offsetX, y: e.offsetY }
@@ -110,17 +147,35 @@ export class InputControllerImpl implements InputController {
   }
 
   private onUp(e: PointerEvent): void {
+    this.pointers.delete(e.pointerId)
     if (e.button === 2) {
       this.smartOrder(e.offsetX, e.offsetY)
       return
     }
     if (e.button !== 0) return
+
+    const wasBox = this.boxSelecting
     const wasPan = this.panning
+    const start = this.dragStart
     this.dragStart = null
     this.panning = false
+    this.boxSelecting = false
+    this.renderer?.setSelectionBox(null)
+
+    // Another finger still down: ignore this release.
+    if (this.pointers.size > 0) return
+
+    if (wasBox && start) {
+      this.boxSelect(start.x, start.y, e.offsetX, e.offsetY)
+      return
+    }
     if (wasPan) return
-    if (this.mode === 'selection' || this.selected.length === 0) {
-      this.clickSelect(e.offsetX, e.offsetY)
+
+    // Tap.
+    if (this.mode === 'selection') {
+      this.tapSelect(e.offsetX, e.offsetY)
+    } else if (this.selected.length === 0) {
+      this.tapSelect(e.offsetX, e.offsetY)
     } else {
       this.modeOrder(e.offsetX, e.offsetY)
     }
@@ -131,26 +186,64 @@ export class InputControllerImpl implements InputController {
     this.renderer?.zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.offsetX, e.offsetY)
   }
 
-  /** Select the nearest player entity under the cursor. */
-  private clickSelect(sx: number, sy: number): void {
+  /** Tap in selection mode: select a unit/building, or smart-order the selection. */
+  private tapSelect(sx: number, sy: number): void {
     const world = this.world
     const renderer = this.renderer
     if (!world || !renderer) return
     const p = renderer.screenToWorld(sx, sy)
-    const pickRadius = PICK_RADIUS_PX / renderer.getZoom()
-    let best = -1
-    let bestDist = pickRadius
+    const hit = this.entityAt(p.x, p.z, false)
+
+    if (hit !== -1) {
+      // Tap on own entity: select it; tapping the sole selection deselects.
+      if (this.selected.length === 1 && this.selected[0] === hit) {
+        this.selected = []
+      } else {
+        this.selected = [hit]
+      }
+      renderer.setSelection(this.selected)
+      return
+    }
+
+    // Tap elsewhere: order selected units, or deselect when nothing mobile.
+    if (this.hasUnitsSelected(world)) {
+      this.smartOrder(sx, sy)
+    } else {
+      this.selected = []
+      renderer.setSelection(this.selected)
+    }
+  }
+
+  /** Drag box in selection mode: select all own units inside the rectangle. */
+  private boxSelect(x0: number, y0: number, x1: number, y1: number): void {
+    const world = this.world
+    const renderer = this.renderer
+    if (!world || !renderer) return
+    const a = renderer.screenToWorld(Math.min(x0, x1), Math.min(y0, y1))
+    const b = renderer.screenToWorld(Math.max(x0, x1), Math.max(y0, y1))
+    const minX = Math.min(a.x, b.x)
+    const maxX = Math.max(a.x, b.x)
+    const minZ = Math.min(a.y, b.y)
+    const maxZ = Math.max(a.y, b.y)
+    const inside: number[] = []
     for (const id of world.entities.keys()) {
       if (world.team[id] !== TEAM_PLAYER) continue
-      if (!world.isAttackable(id)) continue
-      const d = Math.hypot(world.positionX[id] - p.x, world.positionZ[id] - p.z)
-      if (d < bestDist) {
-        bestDist = d
-        best = id
-      }
+      const k = world.kind[id]
+      if (k !== KIND_WORKER && k !== KIND_MELEE && k !== KIND_RANGED) continue
+      const x = world.positionX[id]
+      const z = world.positionZ[id]
+      if (x >= minX && x <= maxX && z >= minZ && z <= maxZ) inside.push(id)
     }
-    this.selected = best === -1 ? [] : [best]
+    this.selected = inside
     renderer.setSelection(this.selected)
+  }
+
+  private hasUnitsSelected(world: World): boolean {
+    for (const id of this.selected) {
+      const k = world.kind[id]
+      if (k === KIND_WORKER || k === KIND_MELEE || k === KIND_RANGED) return true
+    }
+    return false
   }
 
   /** Left-click order in move/attack/gather/build mode. */
