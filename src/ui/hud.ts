@@ -2,6 +2,7 @@ import { BUILDINGS } from '../data/buildings.ts'
 import type { BuildingType } from '../data/buildings.ts'
 import { UNITS } from '../data/units.ts'
 import type { UnitType } from '../data/units.ts'
+import type { AIDifficulty } from '../ai/opponent.ts'
 import type { InputMode } from '../input/input-controller'
 import type { World } from '../core/World'
 import {
@@ -24,6 +25,7 @@ export interface HudCallbacks {
   onPause(): void
   onSave(): void
   onLoad(): void
+  onDifficulty(d: AIDifficulty): void
 }
 
 const MODES: { id: InputMode; label: string }[] = [
@@ -94,6 +96,18 @@ export class HudImpl implements Hud {
         btn.className = 'hud-pill hud-mode'
         btn.textContent = labelText
         btn.addEventListener('click', fn)
+        sessionEl.appendChild(btn)
+      }
+      for (const d of ['easy', 'normal', 'hard'] as AIDifficulty[]) {
+        const btn = document.createElement('button')
+        btn.className = 'hud-pill hud-mode' + (d === 'normal' ? ' hud-mode-on' : '')
+        btn.textContent = d.charAt(0).toUpperCase() + d.slice(1)
+        btn.addEventListener('click', () => {
+          for (const b of sessionEl.querySelectorAll('.hud-diff')) b.classList.remove('hud-mode-on')
+          btn.classList.add('hud-mode-on')
+          this.callbacks?.onDifficulty(d)
+        })
+        btn.classList.add('hud-diff')
         sessionEl.appendChild(btn)
       }
     }
