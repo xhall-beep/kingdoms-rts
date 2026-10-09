@@ -13,6 +13,7 @@ import { enqueueTrain } from './systems/production'
 import { VictorySystemImpl } from './systems/victory'
 import { VisionSystemImpl } from './systems/vision'
 import { CommandLog } from './session/commands.ts'
+import { ReplayPlayer } from './session/replay.ts'
 import { loadIntoWorld, readSave, writeSave } from './session/save-load.ts'
 import type { AIDifficulty } from './ai/opponent'
 import { HudImpl } from './ui/hud'
@@ -90,6 +91,11 @@ export function initializeGame(): GameComposition {
   composition.inputController.setCommandListener((cmd) => {
     commandLog.record({ ...cmd, step: composition.engine.getSimulationSteps() })
   })
+  // Pristine initial state for replays; live state stashed when entering replay.
+  const initialSave = serializeWorld(composition.engine.world, 0, [])
+  let liveSave: ReturnType<typeof serializeWorld> | null = null
+  let replaying = false
+  const replayPlayer = new ReplayPlayer(composition.engine.world)
   composition.renderer.centerOn(-40, -40, 8)
   composition.renderer.resize(canvas.clientWidth || 1280, canvas.clientHeight || 720)
   const hudCallbacks: HudCallbacks = {
@@ -129,6 +135,26 @@ export function initializeGame(): GameComposition {
       else world.systems.push(next)
       systems.opponent = next
     },
+    onReplay: () => {
+      const world = composition.engine.world
+      if (!replaying) {
+        // Enter replay: stash live game, rewind, play back commands.
+        liveSave = serializeWorld(world, composition.engine.getSimulationSteps(), commandLog.getCommands())
+        deserializeWorld(world, initialSave)
+        replayPlayer.load(commandLog.getCommands())
+        composition.engine.pause()
+        replaying = true
+      } else {
+        // Exit replay: restore the live game.
+        if (liveSave) deserializeWorld(world, liveSave)
+        commandLog.fromJSON(liveSave ? liveSave.commands : [])
+        composition.engine.resume()
+        replaying = false
+      }
+    },
+    onReplaySpeed: (speed: number) => {
+      replayPlayer.setSpeed(speed)
+    },
     onLoad: () => {
       const save = readSave()
       if (!save) return
@@ -154,7 +180,12 @@ export function initializeGame(): GameComposition {
   }, 30_000)
 
   // Render loop: draw the world for the player, then refresh the HUD.
+  let lastFrame = performance.now()
   const frame = (): void => {
+    const now = performance.now()
+    const dt = Math.min(0.1, (now - lastFrame) / 1000)
+    lastFrame = now
+    if (replaying) replayPlayer.update(dt)
     composition.renderer.render(composition.engine.world, TEAM_PLAYER)
     composition.hud.update(composition.engine.world, composition.inputController.getSelected())
     requestAnimationFrame(frame)
