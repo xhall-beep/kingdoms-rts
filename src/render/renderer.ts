@@ -9,7 +9,6 @@ import {
   KIND_MELEE,
   KIND_RANGED,
   KIND_TREE,
-  KIND_WORKER,
 } from '../core/World'
 import { FOG_UNEXPLORED, FOG_VISIBLE } from '../world/fog.ts'
 import { canSee } from '../world/visibility.ts'
