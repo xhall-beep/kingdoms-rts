@@ -14,6 +14,8 @@ import { VictorySystemImpl } from './systems/victory'
 import { VisionSystemImpl } from './systems/vision'
 import { CommandLog } from './session/commands.ts'
 import { loadIntoWorld, readSave, writeSave } from './session/save-load.ts'
+import { OpponentAI } from './ai/opponent.ts'
+import type { AIDifficulty } from './ai/opponent.ts'
 import { HudImpl } from './ui/hud'
 import type { HudCallbacks } from './ui/hud'
 
@@ -118,6 +120,15 @@ export function initializeGame(): GameComposition {
         composition.engine.getSimulationSteps(),
         commandLog.getCommands(),
       )
+    },
+    onDifficulty: (d: AIDifficulty) => {
+      const world = composition.engine.world
+      const systems = composition.systems
+      const idx = world.systems.indexOf(systems.opponent)
+      const next = new OpponentAI(TEAM_ENEMY, d)
+      if (idx !== -1) world.systems.splice(idx, 1, next)
+      else world.systems.push(next)
+      systems.opponent = next
     },
     onLoad: () => {
       const save = readSave()
