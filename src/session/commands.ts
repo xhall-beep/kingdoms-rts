@@ -47,7 +47,7 @@ export class CommandLog {
     return this.commands.map((c) => ({ ...c }))
   }
 
-  fromJSON(data: Command[]): void {
+  fromJSON(data: readonly Command[]): void {
     this.commands = data.map((c) => ({ ...c }))
   }
 }
