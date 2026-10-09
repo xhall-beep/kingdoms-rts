@@ -186,16 +186,30 @@ export class InputControllerImpl implements InputController {
     this.renderer?.zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.offsetX, e.offsetY)
   }
 
-  /** Tap in selection mode: select a unit/building, or smart-order the selection. */
+  /** Tap: select entities for info/commands, or smart-order the selection. */
   private tapSelect(sx: number, sy: number): void {
     const world = this.world
     const renderer = this.renderer
     if (!world || !renderer) return
     const p = renderer.screenToWorld(sx, sy)
-    const hit = this.entityAt(p.x, p.z, false)
+    const hit = this.entityAt(p.x, p.z, true)
 
-    if (hit !== -1) {
-      // Tap on own entity: select it; tapping the sole selection deselects.
+    if (hit === -1) {
+      // Empty ground: order selected units, or deselect.
+      if (this.hasUnitsSelected(world)) {
+        this.smartOrder(sx, sy)
+      } else {
+        this.selected = []
+        renderer.setSelection(this.selected)
+      }
+      return
+    }
+
+    const isOwn = world.team[hit] === TEAM_PLAYER
+    const isResource = world.kind[hit] === KIND_TREE || world.kind[hit] === KIND_GOLDMINE
+
+    if (isOwn) {
+      // Own entity: select it; tapping the sole selection deselects.
       if (this.selected.length === 1 && this.selected[0] === hit) {
         this.selected = []
       } else {
@@ -205,11 +219,16 @@ export class InputControllerImpl implements InputController {
       return
     }
 
-    // Tap elsewhere: order selected units, or deselect when nothing mobile.
+    // Enemy or resource: if we have units selected, smart-order (attack/gather).
+    // Otherwise select it for info viewing.
     if (this.hasUnitsSelected(world)) {
       this.smartOrder(sx, sy)
     } else {
-      this.selected = []
+      if (this.selected.length === 1 && this.selected[0] === hit) {
+        this.selected = []
+      } else {
+        this.selected = [hit]
+      }
       renderer.setSelection(this.selected)
     }
   }
