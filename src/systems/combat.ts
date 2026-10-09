@@ -5,6 +5,7 @@ import {
   NO_TARGET,
   STATE_ATTACK,
   STATE_IDLE,
+  STATE_MOVE,
 } from '../core/World'
 
 /**
@@ -19,6 +20,12 @@ export class CombatSystemImpl implements System {
     for (const id of world.entities.keys()) {
       const kind = world.kind[id]
       if (kind !== KIND_MELEE && kind !== KIND_RANGED) continue
+
+      // Explicit move order finished: back to idle so the AI (and player)
+      // can issue fresh orders. (Workers get this from the gather system.)
+      if (world.state[id] === STATE_MOVE && world.moving[id] === 0) {
+        world.state[id] = STATE_IDLE
+      }
 
       if (world.cooldown[id] > 0) world.cooldown[id] -= dt
 
