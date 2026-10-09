@@ -27,6 +27,17 @@ export class CombatSystemImpl implements System {
       if (world.state[id] === STATE_MOVE && world.moving[id] === 0) {
         world.state[id] = STATE_IDLE
       }
+      // Attack-move reached its destination with nothing left to fight:
+      // go idle so fresh orders can be issued.
+      if (
+        world.state[id] === STATE_ATTACKMOVE &&
+        world.moving[id] === 0 &&
+        world.targetId[id] === NO_TARGET
+      ) {
+        world.state[id] = STATE_IDLE
+        world.resumeX[id] = NaN
+        world.resumeZ[id] = NaN
+      }
 
       if (world.cooldown[id] > 0) world.cooldown[id] -= dt
 
