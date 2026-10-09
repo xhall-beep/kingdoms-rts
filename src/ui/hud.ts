@@ -210,7 +210,7 @@ export class HudImpl implements Hud {
   private updateActions(world: World, selected: number[]): void {
     const el = this.actionsEl
     if (!el) return
-    const key = selected.join(',')
+    const key = `${selected.join(',')}|${Math.floor(world.gold[TEAM_PLAYER])}|${Math.floor(world.wood[TEAM_PLAYER])}`
     if (key === this.lastActionsKey) return
     this.lastActionsKey = key
     el.innerHTML = ''
