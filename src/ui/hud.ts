@@ -21,6 +21,9 @@ export interface HudCallbacks {
   onMode(mode: InputMode): void
   onBuildType(type: BuildingType): void
   onTrain(type: UnitType): void
+  onPause(): void
+  onSave(): void
+  onLoad(): void
 }
 
 const MODES: { id: InputMode; label: string }[] = [
@@ -64,6 +67,7 @@ export class HudImpl implements Hud {
         <span class="hud-pill hud-info" id="hud-info"></span>
       </div>
       <div class="hud-bar hud-modes" id="hud-modes"></div>
+      <div class="hud-bar hud-session" id="hud-session"></div>
       <div class="hud-bar hud-actions" id="hud-actions"></div>
       <div class="hud-banner" id="hud-banner" hidden></div>`
     this.goldEl = parent.querySelector('#hud-gold')
@@ -72,6 +76,27 @@ export class HudImpl implements Hud {
     this.infoEl = parent.querySelector('#hud-info')
     this.actionsEl = parent.querySelector('#hud-actions')
     this.bannerEl = parent.querySelector('#hud-banner')
+    const sessionEl = parent.querySelector('#hud-session')
+    if (sessionEl) {
+      const pauseBtn = document.createElement('button')
+      pauseBtn.className = 'hud-pill hud-mode'
+      pauseBtn.textContent = 'Pause'
+      pauseBtn.addEventListener('click', () => {
+        this.callbacks?.onPause()
+        pauseBtn.textContent = pauseBtn.textContent === 'Pause' ? 'Resume' : 'Pause'
+      })
+      sessionEl.appendChild(pauseBtn)
+      for (const [labelText, fn] of [
+        ['Save', () => this.callbacks?.onSave()],
+        ['Load', () => this.callbacks?.onLoad()],
+      ] as const) {
+        const btn = document.createElement('button')
+        btn.className = 'hud-pill hud-mode'
+        btn.textContent = labelText
+        btn.addEventListener('click', fn)
+        sessionEl.appendChild(btn)
+      }
+    }
     const modesEl = parent.querySelector('#hud-modes')
     if (modesEl) {
       for (const { id, label } of MODES) {
