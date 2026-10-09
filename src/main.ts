@@ -78,7 +78,7 @@ export function initializeGame(): GameComposition {
   const composition = composeGame(canvas)
   seedScenario(composition.engine.world)
   composition.renderer.resize(canvas.clientWidth || 1280, canvas.clientHeight || 720)
-  composition.hud.mount(hudRoot)
+  composition.hud.mount(hudRoot, (mode) => composition.inputController.setMode(mode))
   composition.engine.start()
 
   // Render loop: draw the world for the player, then refresh the HUD.
