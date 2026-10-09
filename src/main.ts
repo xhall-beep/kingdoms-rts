@@ -37,6 +37,7 @@ export function composeGame(canvas: HTMLCanvasElement): GameComposition {
     gather: new GatherSystemImpl(),
     combat: new CombatSystemImpl(),
     vision: new VisionSystemImpl(),
+    victory: new VictorySystemImpl(),
     opponent: new OpponentAI(TEAM_ENEMY),
     movement: new MovementSystemImpl(),
   }
@@ -45,6 +46,7 @@ export function composeGame(canvas: HTMLCanvasElement): GameComposition {
   engine.world.registerSystem(systems.gather)
   engine.world.registerSystem(systems.combat)
   engine.world.registerSystem(systems.vision)
+  engine.world.registerSystem(systems.victory)
   engine.world.registerSystem(systems.opponent)
   engine.world.registerSystem(systems.movement)
   inputController.attach(canvas, engine.world, renderer)
@@ -79,13 +81,21 @@ export function initializeGame(): GameComposition {
   seedScenario(composition.engine.world)
   composition.renderer.centerOn(-40, -40, 8)
   composition.renderer.resize(canvas.clientWidth || 1280, canvas.clientHeight || 720)
-  composition.hud.mount(hudRoot, (mode) => composition.inputController.setMode(mode))
+  const hudCallbacks: HudCallbacks = {
+    onMode: (mode) => composition.inputController.setMode(mode),
+    onBuildType: (type) => composition.inputController.setPendingBuilding(type),
+    onTrain: (type) => {
+      const selected = composition.inputController.getSelected()
+      if (selected.length === 1) enqueueTrain(composition.engine.world, selected[0], type)
+    },
+  }
+  composition.hud.mount(hudRoot, hudCallbacks)
   composition.engine.start()
 
   // Render loop: draw the world for the player, then refresh the HUD.
   const frame = (): void => {
     composition.renderer.render(composition.engine.world, TEAM_PLAYER)
-    composition.hud.update(composition.engine.world)
+    composition.hud.update(composition.engine.world, composition.inputController.getSelected())
     requestAnimationFrame(frame)
   }
   requestAnimationFrame(frame)
