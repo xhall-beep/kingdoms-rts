@@ -1,4 +1,5 @@
 import { BUILDINGS } from '../data/buildings.ts'
+import { UNITS } from '../data/units.ts'
 import type { System, World } from '../core/World'
 import {
   HARVEST_GOLD,
@@ -79,8 +80,8 @@ export class OpponentAI implements System {
 
     this.trainWorkers(world, hall, workers.length)
     this.assignWorkers(world, workers)
-    const saving = this.expand(world, hall, workers)
-    if (!saving) this.trainSoldiers(world, workers.length) // Don't buy soldiers while saving for a building.
+    const reserveGold = this.expand(world, hall, workers)
+    this.trainSoldiers(world, workers.length, reserveGold)
     if (!this.defend(world, hall, soldiers)) this.attack(world, hall, soldiers)
   }
 
@@ -111,9 +112,10 @@ export class OpponentAI implements System {
 
   /**
    * At most one new structure per decision, in priority order.
-   * Returns true while saving up for one (pauses soldier training).
+   * Returns the gold cost to reserve from soldier training while saving
+   * for the planned building (0 when nothing is planned).
    */
-  private expand(world: World, hall: number, workers: number[]): boolean {
+  private expand(world: World, hall: number, workers: number[]): number {
     const team = this.team
     const all = (kind: number): number => structuresOf(world, team, kind, false).length
     const pending = (kind: number): number => all(kind) - structuresOf(world, team, kind, true).length
@@ -130,8 +132,10 @@ export class OpponentAI implements System {
     else if (ready && world.gold[team] >= 400 && all(KIND_BARRACKS) < 2 && pending(KIND_BARRACKS) === 0) {
       want = KIND_BARRACKS
     }
-    if (want === null) return false
-    return this.build(world, hall, want, workers)
+    if (want === null) return 0
+    const type = BUILDING_TYPE_BY_KIND[want]
+    this.build(world, hall, want, workers)
+    return BUILDINGS[type].cost.gold
   }
 
   /** Place a structure in a free spot around the hall and send a worker to build it. */
@@ -166,7 +170,7 @@ export class OpponentAI implements System {
     return false // No free spot; try again next decision.
   }
 
-  private trainSoldiers(world: World, workerCount: number): void {
+  private trainSoldiers(world: World, workerCount: number, reserveGold: number): void {
     if (workerCount < this.tuning.workersBeforeArmy) return
     const jobs: [number, 'melee' | 'ranged'][] = [
       [KIND_BARRACKS, 'melee'],
@@ -174,7 +178,11 @@ export class OpponentAI implements System {
     ]
     for (const [kind, unit] of jobs) {
       for (const id of structuresOf(world, this.team, kind, true)) {
-        if (world.trainKind[id] === NO_TRAINING) enqueueTrain(world, id, unit)
+        if (world.trainKind[id] !== NO_TRAINING) continue
+        // Don't spend the gold reserved for the planned building.
+        const cost = UNITS[unit].cost.gold
+        if (world.gold[this.team] - reserveGold < cost) continue
+        enqueueTrain(world, id, unit)
       }
     }
   }
