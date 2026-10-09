@@ -30,6 +30,11 @@ export class FogGrid {
     return this.cells[this.toCell(z) * this.cols + this.toCell(x)]
   }
 
+  /** Direct cell read (0 = unexplored, 1 = explored, 2 = visible). */
+  cellState(col: number, row: number): number {
+    return this.cells[row * this.cols + col]
+  }
+
   /** Call once per vision update, before any reveal(): last update's visible cells become EXPLORED. */
   beginUpdate(): void {
     for (const i of this.visibleNow) this.cells[i] = FOG_EXPLORED
