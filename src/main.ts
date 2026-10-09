@@ -109,6 +109,8 @@ export function initializeGame(): GameComposition {
     onMode: (mode) => composition.inputController.setMode(mode),
     onBuildType: (type) => composition.inputController.setPendingBuilding(type),
     onSelectBuilding: (kind) => composition.inputController.selectBuilding(kind),
+    onSelectIdleWorkers: () => composition.inputController.selectIdleWorkers(),
+    onStop: () => composition.inputController.stopSelected(),
     onTrain: (type) => {
       const selected = composition.inputController.getSelected()
       if (selected.length !== 1) return
