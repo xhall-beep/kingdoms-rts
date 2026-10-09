@@ -23,12 +23,28 @@ import {
 } from '../world/construction.ts'
 import { canSee, isExplored } from '../world/visibility.ts'
 
-const THINK_EVERY = 1.0 // seconds between decisions
-const WORKER_TARGET = 10
-const WORKERS_BEFORE_ARMY = 5 // Economy first: no military buildings before this many workers.
-const ATTACK_ARMY = 8 // Soldiers needed before attacking.
-const DEFENSE_RADIUS = 28 // Enemies this close to the hall pull the army home.
 const WOOD_SHARE = 0.4 // Fraction of workers assigned to wood (the rest mine gold).
+
+export type AIDifficulty = 'easy' | 'normal' | 'hard'
+
+interface DifficultyTuning {
+  thinkEvery: number // seconds between decisions
+  workerTarget: number
+  workersBeforeArmy: number // economy first: no military buildings before this many workers
+  attackArmy: number // soldiers needed before attacking
+  defenseRadius: number // enemies this close to the hall pull the army home
+}
+
+/**
+ * Difficulty handicaps. The AI always plays by the rules (same commands, costs
+ * and build times as the player); difficulty only changes how fast and how
+ * ambitiously it makes decisions.
+ */
+const DIFFICULTY: Record<AIDifficulty, DifficultyTuning> = {
+  easy: { thinkEvery: 2.0, workerTarget: 7, workersBeforeArmy: 6, attackArmy: 12, defenseRadius: 20 },
+  normal: { thinkEvery: 1.0, workerTarget: 10, workersBeforeArmy: 5, attackArmy: 8, defenseRadius: 28 },
+  hard: { thinkEvery: 0.5, workerTarget: 12, workersBeforeArmy: 4, attackArmy: 6, defenseRadius: 36 },
+}
 
 /**
  * Built-in opponent. It plays by the rules: every action goes through the same
@@ -41,15 +57,17 @@ const WOOD_SHARE = 0.4 // Fraction of workers assigned to wood (the rest mine go
  */
 export class OpponentAI implements System {
   private readonly team: 0 | 1
+  private readonly tuning: DifficultyTuning
   private timer = 0
 
-  constructor(team: 0 | 1) {
+  constructor(team: 0 | 1, difficulty: AIDifficulty = 'normal') {
     this.team = team
+    this.tuning = DIFFICULTY[difficulty]
   }
 
   update(world: World, dt: number): void {
     this.timer += dt
-    if (this.timer < THINK_EVERY) return
+    if (this.timer < this.tuning.thinkEvery) return
     this.timer = 0
 
     const team = this.team
@@ -68,7 +86,7 @@ export class OpponentAI implements System {
 
   private trainWorkers(world: World, hall: number, workerCount: number): void {
     const queued = world.trainKind[hall] !== NO_TRAINING ? 1 : 0 // Single training slot.
-    if (workerCount + queued < WORKER_TARGET) enqueueTrain(world, hall, 'worker')
+    if (workerCount + queued < this.tuning.workerTarget) enqueueTrain(world, hall, 'worker')
   }
 
   /** Idle workers go back to harvesting, keeping roughly WOOD_SHARE on wood. */
@@ -100,7 +118,7 @@ export class OpponentAI implements System {
     const all = (kind: number): number => structuresOf(world, team, kind, false).length
     const pending = (kind: number): number => all(kind) - structuresOf(world, team, kind, true).length
     const slack = world.supplyCap[team] - world.supplyUsed[team]
-    const ready = workers.length >= WORKERS_BEFORE_ARMY
+    const ready = workers.length >= this.tuning.workersBeforeArmy
 
     // Priority order. Farms only jump the queue when population is truly blocked,
     // otherwise cheap farms would starve the military buildings forever.
@@ -149,7 +167,7 @@ export class OpponentAI implements System {
   }
 
   private trainSoldiers(world: World, workerCount: number): void {
-    if (workerCount < WORKERS_BEFORE_ARMY) return
+    if (workerCount < this.tuning.workersBeforeArmy) return
     const jobs: [number, 'melee' | 'ranged'][] = [
       [KIND_BARRACKS, 'melee'],
       [KIND_ARCHERY, 'ranged'],
@@ -166,7 +184,7 @@ export class OpponentAI implements System {
     const hx = world.positionX[hall]
     const hz = world.positionZ[hall]
     let threat = NO_TARGET
-    let nearest = DEFENSE_RADIUS
+    let nearest = this.tuning.defenseRadius
     for (const id of world.entities.keys()) {
       const kind = world.kind[id]
       if (kind !== KIND_WORKER && kind !== KIND_MELEE && kind !== KIND_RANGED) continue
@@ -190,7 +208,7 @@ export class OpponentAI implements System {
 
   /** Once strong enough, idle soldiers march on the enemy hall (or search for it). */
   private attack(world: World, hall: number, soldiers: number[]): void {
-    if (soldiers.length < ATTACK_ARMY) return
+    if (soldiers.length < this.tuning.attackArmy) return
     const idle = soldiers.filter((id) => world.state[id] === STATE_IDLE)
     if (idle.length === 0) return
     const target = this.findTarget(world, hall, idle)
