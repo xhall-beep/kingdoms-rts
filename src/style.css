@@ -485,3 +485,15 @@ code {
   font-weight: 400;
   opacity: 0.9;
 }
+
+.hud-buildings {
+  gap: 6px;
+}
+.hud-building {
+  background: rgba(43, 32, 16, 0.7);
+  border-color: rgba(255, 200, 100, 0.25);
+  font-size: 12px;
+}
+.hud-building:active {
+  background: rgba(80, 60, 30, 0.8);
+}
