@@ -49,7 +49,7 @@ export class ProductionSystemImpl implements System {
 
       const kind = world.trainKind[id]
       world.trainKind[id] = NO_TRAINING
-      const team = world.team[id]
+      const team = world.team[id] as 0 | 1
       const type: UnitType =
         kind === KIND_WORKER ? 'worker' : kind === KIND_MELEE ? 'melee' : 'ranged'
       const unit = world.spawnUnit(
