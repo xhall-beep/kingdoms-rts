@@ -98,3 +98,11 @@ export function enqueueTrain(world: World, buildingId: number, type: UnitType): 
   world.trainLeft[buildingId] = world.trainTotal[buildingId]
   return true
 }
+
+/** Set where newly trained units from this building will gather. */
+export function setRally(world: World, buildingId: number, x: number, z: number): void {
+  const kind = world.kind[buildingId]
+  if (kind !== KIND_HALL && kind !== KIND_BARRACKS && kind !== KIND_ARCHERY) return
+  world.rallyX[buildingId] = x
+  world.rallyZ[buildingId] = z
+}
