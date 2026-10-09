@@ -3,6 +3,9 @@ import {
   CARRY_GOLD,
   CARRY_NONE,
   CARRY_WOOD,
+  HARVEST_ANY,
+  HARVEST_GOLD,
+  HARVEST_WOOD,
   KIND_GOLDMINE,
   KIND_HALL,
   KIND_TREE,
@@ -132,15 +135,24 @@ function walkTo(world: World, id: number, target: number, margin: number): void 
   world.moving[id] = 1
 }
 
-/** Nearest resource node that still has stock, or NO_TARGET. */
+/** Nearest stocked node, preferring the worker's harvest assignment (falls back to any). */
 function nearestNode(world: World, id: number): number {
+  const pref = world.harvestKind[id]
+  const found = nearestNodeOf(world, id, pref)
+  if (found !== NO_TARGET || pref === HARVEST_ANY) return found
+  return nearestNodeOf(world, id, HARVEST_ANY)
+}
+
+function nearestNodeOf(world: World, id: number, want: number): number {
   const px = world.positionX[id]
   const pz = world.positionZ[id]
   let best = NO_TARGET
   let bestDist = Infinity
   for (const other of world.entities.keys()) {
     const kind = world.kind[other]
-    if (kind !== KIND_TREE && kind !== KIND_GOLDMINE) continue
+    if (want === HARVEST_WOOD && kind !== KIND_TREE) continue
+    if (want === HARVEST_GOLD && kind !== KIND_GOLDMINE) continue
+    if (want === HARVEST_ANY && kind !== KIND_TREE && kind !== KIND_GOLDMINE) continue
     if (world.amount[other] <= 0) continue
     const d = Math.hypot(world.positionX[other] - px, world.positionZ[other] - pz)
     if (d < bestDist) {
@@ -181,11 +193,10 @@ function sendToHall(world: World, id: number): void {
   walkTo(world, id, hall, ARRIVE_MARGIN)
 }
 
-/** Order a worker to gather (it picks the nearest node itself). */
+/** Order a worker to (re)start gathering. Carried resources are kept and delivered. */
 export function orderGather(world: World, id: number): void {
   if (world.kind[id] !== KIND_WORKER) return
-  world.carryAmount[id] = 0
-  world.carryKind[id] = CARRY_NONE
+  world.moving[id] = 0
   world.state[id] = STATE_IDLE
 }
 
