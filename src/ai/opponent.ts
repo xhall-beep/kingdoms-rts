@@ -17,7 +17,6 @@ import {
 } from '../core/World'
 import { orderBuild, orderGather } from '../systems/gather.ts'
 import { orderAttackMove } from '../systems/combat.ts'
-import { orderMove } from '../systems/movement.ts'
 import { enqueueTrain } from '../systems/production.ts'
 import {
   BUILDING_TYPE_BY_KIND,
