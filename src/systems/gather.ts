@@ -5,6 +5,7 @@ import {
   CARRY_WOOD,
   HARVEST_ANY,
   HARVEST_GOLD,
+  HARVEST_OFF,
   HARVEST_WOOD,
   KIND_GOLDMINE,
   KIND_HALL,
@@ -37,6 +38,8 @@ export class GatherSystemImpl implements System {
       if (world.kind[id] !== KIND_WORKER) continue
       switch (world.state[id]) {
         case STATE_IDLE: {
+          // HARVEST_OFF: an explicit move order disarmed auto-gather; hold position.
+          if (world.harvestKind[id] === HARVEST_OFF) break
           if (world.carryAmount[id] > 0) {
             world.state[id] = STATE_RETURN
             sendToHall(world, id)
