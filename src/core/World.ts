@@ -43,6 +43,7 @@ export const CARRY_GOLD = 2
 export const HARVEST_ANY = 0
 export const HARVEST_WOOD = 1
 export const HARVEST_GOLD = 2
+export const HARVEST_OFF = 3 // auto-gather disarmed: worker holds position
 
 const KIND_BY_UNIT: Record<UnitType, number> = {
   worker: KIND_WORKER,
