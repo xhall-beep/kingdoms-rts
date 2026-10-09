@@ -77,6 +77,7 @@ export function initializeGame(): GameComposition {
 
   const composition = composeGame(canvas)
   seedScenario(composition.engine.world)
+  composition.renderer.centerOn(-40, -40, 8)
   composition.renderer.resize(canvas.clientWidth || 1280, canvas.clientHeight || 720)
   composition.hud.mount(hudRoot, (mode) => composition.inputController.setMode(mode))
   composition.engine.start()
