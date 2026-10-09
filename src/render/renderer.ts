@@ -55,6 +55,17 @@ export class Renderer {
     return [...this.selected]
   }
 
+  getZoom(): number {
+    return this.zoom
+  }
+
+  /** Jump the camera to a world point. */
+  centerOn(x: number, z: number, zoom?: number): void {
+    this.camX = x
+    this.camZ = z
+    if (zoom !== undefined) this.zoom = Math.min(40, Math.max(2, zoom))
+  }
+
   pan(dxPixels: number, dyPixels: number): void {
     this.camX -= dxPixels / this.zoom
     this.camZ -= dyPixels / this.zoom
@@ -123,7 +134,7 @@ export class Renderer {
   private drawEntity(world: World, id: number): void {
     const kind = world.kind[id]
     const p = this.toScreen(world.positionX[id], world.positionZ[id])
-    const r = Math.max(2, world.radius[id] * this.zoom)
+    const r = Math.max(5, world.radius[id] * this.zoom)
     const color = this.teamColor(world, id)
 
     if (kind === KIND_TREE) {
