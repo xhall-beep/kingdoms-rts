@@ -17,6 +17,7 @@ export class Engine {
   private interpolationAlpha = 0
   private previousSpatialState: Float32Array[]
   private running = false
+  private paused = false
   private lastFrameTime: number | undefined
 
   constructor(options: EngineOptions = {}) {
@@ -36,6 +37,21 @@ export class Engine {
 
   stop(): void {
     this.running = false
+  }
+
+  /** Freeze simulation steps; rendering continues. */
+  pause(): void {
+    this.paused = true
+  }
+
+  resume(): void {
+    this.paused = false
+    // Drop the paused interval so time doesn't jump on resume.
+    this.lastFrameTime = performance.now()
+  }
+
+  isPaused(): boolean {
+    return this.paused
   }
 
   advance(deltaSeconds: number): void {
@@ -66,7 +82,7 @@ export class Engine {
 
     const deltaSeconds = Math.max(0, (time - (this.lastFrameTime ?? time)) / 1000)
     this.lastFrameTime = time
-    this.advance(deltaSeconds)
+    if (!this.paused) this.advance(deltaSeconds)
     requestAnimationFrame((nextTime) => this.tick(nextTime))
   }
 
