@@ -1,5 +1,4 @@
 import { BUILDINGS } from '../data/buildings.ts'
-import type { BuildingType } from '../data/buildings.ts'
 import type { System, World } from '../core/World'
 import {
   HARVEST_GOLD,
