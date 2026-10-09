@@ -7,6 +7,7 @@ import type { ResourceKind } from './types.ts'
 import { UNITS } from '../data/units.ts'
 import type { UnitType } from '../data/units.ts'
 import { TICK_RATE } from './time.ts'
+import { FogGrid } from '../world/fog.ts'
 
 // ---- entity kinds ----
 export const KIND_WORKER = 0
@@ -37,6 +38,11 @@ export const NO_TRAINING = -1
 export const CARRY_NONE = 0
 export const CARRY_WOOD = 1
 export const CARRY_GOLD = 2
+
+/** Worker harvest preference: 0 = nearest node, 1 = wood, 2 = gold. */
+export const HARVEST_ANY = 0
+export const HARVEST_WOOD = 1
+export const HARVEST_GOLD = 2
 
 const KIND_BY_UNIT: Record<UnitType, number> = {
   worker: KIND_WORKER,
@@ -121,6 +127,12 @@ export class World {
   readonly rallyX: Float32Array
   readonly rallyZ: Float32Array
 
+  // ---- fog of war (one grid per team) ----
+  readonly fog: FogGrid[]
+
+  // ---- worker harvest preference ----
+  readonly harvestKind: Uint8Array
+
   // ---- economy & factions per team (index 0 = player, 1 = enemy) ----
   gold: number[] = [0, 0]
   wood: number[] = [0, 0]
@@ -171,6 +183,8 @@ export class World {
     this.trainTotal = new Float32Array(length)
     this.rallyX = new Float32Array(length)
     this.rallyZ = new Float32Array(length)
+    this.fog = [new FogGrid(), new FogGrid()]
+    this.harvestKind = new Uint8Array(length)
   }
 
   createEntity(): Entity {
