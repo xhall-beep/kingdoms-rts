@@ -1,6 +1,6 @@
 import { OpponentAI } from './ai/opponent'
 import { Engine } from './core/Engine'
-import { TEAM_ENEMY } from './core/World'
+import { TEAM_ENEMY, TEAM_PLAYER } from './core/World'
 import { InputControllerImpl } from './input/input-controller'
 import { Renderer } from './render/renderer'
 import { seedScenario } from './scenario'
@@ -27,8 +27,11 @@ export interface GameComposition {
   }
 }
 
-export function composeGame(): GameComposition {
+export function composeGame(canvas: HTMLCanvasElement): GameComposition {
   const engine = new Engine()
+  const renderer = new Renderer(canvas)
+  const inputController = new InputControllerImpl()
+  const hud = new HudImpl()
   const systems = {
     production: new ProductionSystemImpl(),
     gather: new GatherSystemImpl(),
@@ -44,13 +47,8 @@ export function composeGame(): GameComposition {
   engine.world.registerSystem(systems.vision)
   engine.world.registerSystem(systems.opponent)
   engine.world.registerSystem(systems.movement)
-  return {
-    engine,
-    renderer: new Renderer({ width: 1280, height: 720 }),
-    inputController: new InputControllerImpl(),
-    hud: new HudImpl(),
-    systems,
-  }
+  inputController.attach(canvas, engine.world, renderer)
+  return { engine, renderer, inputController, hud, systems }
 }
 
 export function initializeGame(): GameComposition {
@@ -59,14 +57,9 @@ export function initializeGame(): GameComposition {
     throw new Error('Application root #app was not found')
   }
 
-  const composition = composeGame()
-  seedScenario(composition.engine.world)
   app.innerHTML = `
     <main class="game-shell">
-      <header class="game-header">
-        <h1>Kingdoms RTS</h1>
-        <p>Deterministic ECS composition root</p>
-      </header>
+      <div id="hud-root"></div>
       <section class="game-stage" aria-label="RTS game viewport">
         <canvas id="game-canvas"></canvas>
       </section>
@@ -77,15 +70,24 @@ export function initializeGame(): GameComposition {
   if (!canvas) {
     throw new Error('Game canvas was not found')
   }
-
-  const context = canvas.getContext('2d')
-  if (!context) {
-    throw new Error('2D canvas context is unavailable')
+  const hudRoot = document.querySelector<HTMLElement>('#hud-root')
+  if (!hudRoot) {
+    throw new Error('HUD root was not found')
   }
 
+  const composition = composeGame(canvas)
+  seedScenario(composition.engine.world)
   composition.renderer.resize(canvas.clientWidth || 1280, canvas.clientHeight || 720)
-  composition.hud.render(composition.engine.world)
+  composition.hud.mount(hudRoot)
   composition.engine.start()
+
+  // Render loop: draw the world for the player, then refresh the HUD.
+  const frame = (): void => {
+    composition.renderer.render(composition.engine.world, TEAM_PLAYER)
+    composition.hud.update(composition.engine.world)
+    requestAnimationFrame(frame)
+  }
+  requestAnimationFrame(frame)
   return composition
 }
 
