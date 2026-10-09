@@ -32,8 +32,9 @@ export function seedScenario(world: World): void {
       world.spawnResource('wood', -4.5 + gx * 3, -4.5 + gz * 3)
     }
   }
-  for (let i = 0; i < 3; i += 1) world.spawnResource('gold', 18 + i * 4, -52)
-  for (let i = 0; i < 3; i += 1) world.spawnResource('gold', -18 - i * 4, 52)
+  // Gold mines close to each hall (short walk = real income).
+  for (let i = 0; i < 4; i += 1) world.spawnResource('gold', -28 + i * 4, -32)
+  for (let i = 0; i < 4; i += 1) world.spawnResource('gold', 28 - i * 4, 32)
 
   world.gold[TEAM_PLAYER] = 200
   world.wood[TEAM_PLAYER] = 100
