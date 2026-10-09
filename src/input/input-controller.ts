@@ -75,6 +75,49 @@ export class InputControllerImpl implements InputController {
     return [...this.selected]
   }
 
+  /**
+   * Select a player building of the given kind (Stormgate/AoE4-style quick select).
+   * Tapping again cycles through multiple buildings of the same kind.
+   * Does not move the camera.
+   */
+  selectBuilding(kind: number): void {
+    const world = this.world
+    const renderer = this.renderer
+    if (!world || !renderer) return
+    const matches: number[] = []
+    for (const id of world.entities.keys()) {
+      if (world.team[id] === TEAM_PLAYER && world.kind[id] === kind) matches.push(id)
+    }
+    if (matches.length === 0) return
+    // Cycle: if currently selecting one of this kind, pick the next.
+    let next = matches[0]
+    if (this.selected.length === 1) {
+      const idx = matches.indexOf(this.selected[0])
+      if (idx !== -1) next = matches[(idx + 1) % matches.length]
+    }
+    this.selected = [next]
+    renderer.setSelection(this.selected)
+  }
+
+  /** All building kinds the player currently owns (for the quick-select bar). */
+  getOwnedBuildingKinds(): { kind: number; count: number }[] {
+    const world = this.world
+    if (!world) return []
+    const counts = new Map<number, number>()
+    for (const id of world.entities.keys()) {
+      if (world.team[id] !== TEAM_PLAYER) continue
+      const k = world.kind[id]
+      if (k === KIND_HALL || k === KIND_BARRACKS || k === KIND_ARCHERY || k === KIND_FARM) {
+        counts.set(k, (counts.get(k) ?? 0) + 1)
+      }
+    }
+    // Fixed order: hall, barracks, archery, farm.
+    const order = [KIND_HALL, KIND_BARRACKS, KIND_ARCHERY, KIND_FARM]
+    return order
+      .filter((k) => counts.has(k))
+      .map((k) => ({ kind: k, count: counts.get(k)! }))
+  }
+
   /** Choose which building the next 'build'-mode tap will place. */
   setPendingBuilding(type: BuildingType | null): void {
     this.pendingBuilding = type
