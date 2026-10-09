@@ -1,4 +1,5 @@
 import type { System, World } from '../core/World'
+import { BUILDINGS, BUILDING_BY_KIND } from '../data/buildings.ts'
 import {
   CARRY_GOLD,
   CARRY_NONE,
@@ -7,6 +8,7 @@ import {
   HARVEST_GOLD,
   HARVEST_OFF,
   HARVEST_WOOD,
+  KIND_FARM,
   KIND_GOLDMINE,
   KIND_HALL,
   KIND_TREE,
@@ -119,7 +121,15 @@ export class GatherSystemImpl implements System {
                   (world.maxHealth[site] * world.buildProgress[site]) / world.buildTotal[site],
                 ),
               )
-          if (done) world.state[id] = STATE_IDLE
+          if (done) {
+            world.state[id] = STATE_IDLE
+            // Grant supply on completion (not on placement).
+            const bkind = world.kind[site]
+            if (bkind >= KIND_HALL && bkind <= KIND_FARM) {
+              const btype = BUILDING_BY_KIND[bkind]
+              world.supplyCap[world.team[site]] += BUILDINGS[btype].supply
+            }
+          }
           break
         }
         default:
