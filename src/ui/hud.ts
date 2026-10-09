@@ -27,6 +27,7 @@ export interface HudCallbacks {
   onMode(mode: InputMode): void
   onBuildType(type: BuildingType): void
   onTrain(type: UnitType): void
+  onSelectBuilding(kind: number): void
   onPause(): void
   onSave(): void
   onLoad(): void
@@ -56,6 +57,8 @@ export class HudImpl implements Hud {
   private supplyEl: HTMLElement | null = null
   private infoEl: HTMLElement | null = null
   private actionsEl: HTMLElement | null = null
+  private buildingsEl: HTMLElement | null = null
+  private lastBuildingsKey = ''
   private bannerEl: HTMLElement | null = null
   private callbacks: HudCallbacks | null = null
   private lastActionsKey = ''
@@ -84,6 +87,7 @@ export class HudImpl implements Hud {
         </div>
         <div class="hud-bar" id="hud-difficulty"></div>
       </div>
+      <div class="hud-bar hud-buildings" id="hud-buildings"></div>
       <div class="hud-bar hud-actions" id="hud-actions"></div>
       <div class="hud-banner" id="hud-banner" hidden></div>`
     this.goldEl = parent.querySelector('#hud-gold')
@@ -91,6 +95,7 @@ export class HudImpl implements Hud {
     this.supplyEl = parent.querySelector('#hud-supply')
     this.infoEl = parent.querySelector('#hud-info')
     this.actionsEl = parent.querySelector('#hud-actions')
+    this.buildingsEl = parent.querySelector('#hud-buildings')
     this.bannerEl = parent.querySelector('#hud-banner')
     // Menu toggle.
     const menuBtn = parent.querySelector('#hud-menu-btn')
@@ -167,7 +172,38 @@ export class HudImpl implements Hud {
       this.infoEl.textContent = `Workers ${workers} · Army ${army}`
     }
     this.updateActions(world, selected)
+    this.updateBuildings(world)
     this.updateBanner(world)
+  }
+
+  /** Rebuild the persistent building quick-select bar (Stormgate/AoE4 pattern). */
+  private updateBuildings(world: World): void {
+    const el = this.buildingsEl
+    if (!el) return
+    // Count owned buildings by kind.
+    const counts = new Map<number, number>()
+    for (const id of world.entities.keys()) {
+      if (world.team[id] !== TEAM_PLAYER) continue
+      const k = world.kind[id]
+      if (k === KIND_HALL || k === KIND_BARRACKS || k === KIND_ARCHERY || k === KIND_FARM) {
+        counts.set(k, (counts.get(k) ?? 0) + 1)
+      }
+    }
+    const order = [KIND_HALL, KIND_BARRACKS, KIND_ARCHERY, KIND_FARM]
+    const key = order.map((k) => `${k}:${counts.get(k) ?? 0}`).join(',')
+    if (key === this.lastBuildingsKey) return
+    this.lastBuildingsKey = key
+    el.innerHTML = ''
+    for (const k of order) {
+      const count = counts.get(k) ?? 0
+      if (count === 0) continue
+      const btype = BUILDING_TYPE_BY_KIND[k]
+      const btn = document.createElement('button')
+      btn.className = 'hud-pill hud-building'
+      btn.textContent = count > 1 ? `${BUILDINGS[btype].name} ×${count}` : BUILDINGS[btype].name
+      btn.addEventListener('click', () => this.callbacks?.onSelectBuilding(k))
+      el.appendChild(btn)
+    }
   }
 
   /** Rebuild the contextual info + action panel when the selection changes. */
