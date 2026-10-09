@@ -1,11 +1,100 @@
-import type { World } from '../core/World'
+import { BUILDINGS } from '../data/buildings.ts'
+import type { BuildingType } from '../data/buildings.ts'
+import { FACTIONS } from '../data/factions.ts'
+import { UNITS } from '../data/units.ts'
+import type { UnitType } from '../data/units.ts'
+import { TICK_RATE } from '../core/time.ts'
+import type { System, World } from '../core/World'
+import {
+  KIND_ARCHERY,
+  KIND_BARRACKS,
+  KIND_FARM,
+  KIND_HALL,
+  KIND_MELEE,
+  KIND_RANGED,
+  KIND_WORKER,
+  NO_TRAINING,
+  STATE_MOVE,
+} from '../core/World'
 
-export interface ProductionSystem {
-    step(world: World): void
+/** Building type per kind index (0-2 are units, unused here). */
+const BUILDING_TYPE_BY_KIND: BuildingType[] = [
+  'hall',
+  'hall',
+  'hall',
+  'hall',
+  'barracks',
+  'archery',
+  'farm',
+]
+
+const KIND_BY_UNIT: Record<UnitType, number> = {
+  worker: KIND_WORKER,
+  melee: KIND_MELEE,
+  ranged: KIND_RANGED,
 }
 
-export class ProductionSystemImpl implements ProductionSystem {
-    step(_world: World): void {
-        // Produce units and structures from scheduled orders.
+/**
+ * Production: each finished building trains one unit at a time. When the
+ * timer completes the unit spawns at the building's edge and walks to the
+ * rally point. Costs are charged when the item is queued (enqueueTrain).
+ */
+export class ProductionSystemImpl implements System {
+  update(world: World, dt: number): void {
+    for (const id of world.entities.keys()) {
+      if (world.trainKind[id] === NO_TRAINING) continue
+      if (world.buildProgress[id] < world.buildTotal[id]) continue // still under construction
+      world.trainLeft[id] -= dt
+      if (world.trainLeft[id] > 0) continue
+
+      const kind = world.trainKind[id]
+      world.trainKind[id] = NO_TRAINING
+      const team = world.team[id]
+      const type: UnitType =
+        kind === KIND_WORKER ? 'worker' : kind === KIND_MELEE ? 'melee' : 'ranged'
+      const unit = world.spawnUnit(
+        type,
+        team,
+        world.positionX[id] + world.radius[id] + 1.5,
+        world.positionZ[id],
+      )
+      const uid = unit.id
+      world.targetX[uid] = world.rallyX[id]
+      world.targetZ[uid] = world.rallyZ[id]
+      world.stopDist[uid] = 0.5
+      world.moving[uid] = 1
+      world.state[uid] = STATE_MOVE
     }
+  }
+}
+
+/**
+ * Queue a unit at a finished building. Returns false when the building can't
+ * train the type, is busy, is unfinished, or the team can't afford it.
+ * Faction cost/train-time modifiers apply.
+ */
+export function enqueueTrain(world: World, buildingId: number, type: UnitType): boolean {
+  const kind = world.kind[buildingId]
+  if (kind !== KIND_HALL && kind !== KIND_BARRACKS && kind !== KIND_ARCHERY && kind !== KIND_FARM) {
+    return false
+  }
+  const def = BUILDINGS[BUILDING_TYPE_BY_KIND[kind]]
+  if (!def.trains.includes(type)) return false
+  if (world.buildProgress[buildingId] < world.buildTotal[buildingId]) return false
+  if (world.trainKind[buildingId] !== NO_TRAINING) return false
+
+  const team = world.team[buildingId]
+  const mods = FACTIONS[world.factionOfTeam[team]].mods
+  const unitDef = UNITS[type]
+  const goldCost = Math.round(unitDef.cost.gold * mods.cost)
+  const woodCost = Math.round(unitDef.cost.wood * mods.cost)
+  if (world.gold[team] < goldCost || world.wood[team] < woodCost) return false
+  if (world.supplyUsed[team] + unitDef.popCost > world.supplyCap[team]) return false
+
+  world.gold[team] -= goldCost
+  world.wood[team] -= woodCost
+  world.trainKind[buildingId] = KIND_BY_UNIT[type]
+  world.trainTotal[buildingId] = (unitDef.trainTicks / TICK_RATE) * mods.train
+  world.trainLeft[buildingId] = world.trainTotal[buildingId]
+  return true
 }
