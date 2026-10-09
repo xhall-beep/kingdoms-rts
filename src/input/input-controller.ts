@@ -21,7 +21,7 @@ export interface InputController {
   handlePointer(position: readonly [number, number]): void
 }
 
-const PICK_RADIUS = 1.6 // world units
+const PICK_RADIUS_PX = 28 // minimum tap target in screen pixels (finger-friendly)
 
 /**
  * Pointer input: left-click selects, left-drag pans, wheel zooms,
@@ -73,7 +73,7 @@ export class InputControllerImpl implements InputController {
     if (!this.dragStart || !this.renderer) return
     const dx = e.offsetX - this.dragStart.x
     const dy = e.offsetY - this.dragStart.y
-    if (!this.panning && Math.hypot(dx, dy) > 6) this.panning = true
+    if (!this.panning && Math.hypot(dx, dy) > 10) this.panning = true
     if (this.panning) {
       this.renderer.pan(e.movementX, e.movementY)
       this.dragStart = { x: e.offsetX, y: e.offsetY }
@@ -90,8 +90,11 @@ export class InputControllerImpl implements InputController {
     this.dragStart = null
     this.panning = false
     if (wasPan) return
-    if (this.mode === 'selection') this.clickSelect(e.offsetX, e.offsetY)
-    else this.modeOrder(e.offsetX, e.offsetY)
+    if (this.mode === 'selection' || this.selected.length === 0) {
+      this.clickSelect(e.offsetX, e.offsetY)
+    } else {
+      this.modeOrder(e.offsetX, e.offsetY)
+    }
   }
 
   private onWheel(e: WheelEvent): void {
@@ -105,8 +108,9 @@ export class InputControllerImpl implements InputController {
     const renderer = this.renderer
     if (!world || !renderer) return
     const p = renderer.screenToWorld(sx, sy)
+    const pickRadius = PICK_RADIUS_PX / renderer.getZoom()
     let best = -1
-    let bestDist = PICK_RADIUS
+    let bestDist = pickRadius
     for (const id of world.entities.keys()) {
       if (world.team[id] !== TEAM_PLAYER) continue
       if (!world.isAttackable(id)) continue
@@ -169,9 +173,10 @@ export class InputControllerImpl implements InputController {
   /** Nearest entity to a world point; enemies included when `anyTeam`. */
   private entityAt(x: number, z: number, anyTeam = false): number {
     const world = this.world
-    if (!world) return -1
+    const renderer = this.renderer
+    if (!world || !renderer) return -1
     let best = -1
-    let bestDist = PICK_RADIUS
+    let bestDist = PICK_RADIUS_PX / renderer.getZoom()
     for (const id of world.entities.keys()) {
       if (!anyTeam && world.team[id] !== TEAM_PLAYER) continue
       const d = Math.hypot(world.positionX[id] - x, world.positionZ[id] - z) - world.radius[id]
