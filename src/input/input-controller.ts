@@ -1,12 +1,11 @@
 import type { World } from '../core/World'
-import { orderStop } from '../systems/movement.ts'
 import {
+  CARRY_NONE,
   HARVEST_GOLD,
   HARVEST_WOOD,
   KIND_ARCHERY,
   KIND_BARRACKS,
   KIND_FARM,
-  CARRY_NONE,
   KIND_GOLDMINE,
   KIND_HALL,
   KIND_MELEE,
@@ -14,7 +13,6 @@ import {
   KIND_TREE,
   KIND_WORKER,
   STATE_IDLE,
-  KIND_WORKER,
   TEAM_PLAYER,
 } from '../core/World'
 import { orderStop } from '../systems/movement.ts'
