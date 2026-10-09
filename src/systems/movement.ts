@@ -37,6 +37,18 @@ export class MovementSystemImpl implements System {
 }
 
 /** Order any unit to a point on the map. */
+/**
+ * Stop a unit: cancel movement, attacks, and other orders.
+ * Workers keep HARVEST_OFF (hold position); use Gather to re-arm.
+ */
+export function orderStop(world: World, id: number): void {
+  world.moving[id] = 0
+  world.velocityX[id] = 0
+  world.velocityZ[id] = 0
+  world.targetId[id] = NO_TARGET
+  world.state[id] = STATE_IDLE
+}
+
 export function orderMove(world: World, id: number, x: number, z: number): void {
   world.targetX[id] = x
   world.targetZ[id] = z
