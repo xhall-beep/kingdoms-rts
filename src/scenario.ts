@@ -19,10 +19,20 @@ export function seedScenario(world: World): void {
     world.spawnUnit('worker', TEAM_ENEMY, 36 - i * 2, 36)
   }
 
-  // Resource fields near each base.
-  for (let i = 0; i < 6; i += 1) world.spawnResource('wood', -52 + i * 3, -18)
+  // Forests near each base: 6x4 grids (24 trees each).
+  for (let gx = 0; gx < 6; gx += 1) {
+    for (let gz = 0; gz < 4; gz += 1) {
+      world.spawnResource('wood', -58 + gx * 3, -24 + gz * 3)
+      world.spawnResource('wood', 58 - gx * 3, 24 - gz * 3)
+    }
+  }
+  // Central contested forest.
+  for (let gx = 0; gx < 4; gx += 1) {
+    for (let gz = 0; gz < 4; gz += 1) {
+      world.spawnResource('wood', -4.5 + gx * 3, -4.5 + gz * 3)
+    }
+  }
   for (let i = 0; i < 3; i += 1) world.spawnResource('gold', 18 + i * 4, -52)
-  for (let i = 0; i < 6; i += 1) world.spawnResource('wood', 52 - i * 3, 18)
   for (let i = 0; i < 3; i += 1) world.spawnResource('gold', -18 - i * 4, 52)
 
   world.gold[TEAM_PLAYER] = 200
