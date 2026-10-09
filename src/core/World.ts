@@ -201,6 +201,11 @@ export class World {
     return entity
   }
 
+  /** Restore the id counter after loading a save (ids themselves are restored directly). */
+  setNextEntityId(id: number): void {
+    this.nextEntityId = id
+  }
+
   removeEntity(entity: Entity): void {
     const id = entity.id
     const kind = this.kind[id]
