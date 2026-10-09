@@ -70,10 +70,23 @@ export class HudImpl implements Hud {
         <span class="hud-pill hud-gold">Gold <b id="hud-gold">0</b></span>
         <span class="hud-pill hud-wood">Wood <b id="hud-wood">0</b></span>
         <span class="hud-pill">Supply <b id="hud-supply">0/0</b></span>
-        <span class="hud-pill hud-info" id="hud-info"></span>
+        <span class="hud-pill hud-info" id="hud-info"></span><button class="hud-pill hud-menu-btn" id="hud-menu-btn">☰</button>
       </div>
       <div class="hud-bar hud-modes" id="hud-modes"></div>
-      <div class="hud-bar hud-session" id="hud-session"></div>
+      <div class="hud-menu" id="hud-menu" hidden>
+        <div class="hud-bar">
+          <button class="hud-pill hud-mode" id="hud-pause">Pause</button>
+          <button class="hud-pill hud-mode" id="hud-save">Save</button>
+          <button class="hud-pill hud-mode" id="hud-load">Load</button>
+          <button class="hud-pill hud-mode" id="hud-replay">Replay</button>
+        </div>
+        <div class="hud-bar" id="hud-speed" hidden>
+          <button class="hud-pill hud-mode hud-speed-on" data-speed="1">1x</button>
+          <button class="hud-pill hud-mode" data-speed="2">2x</button>
+          <button class="hud-pill hud-mode" data-speed="4">4x</button>
+        </div>
+        <div class="hud-bar" id="hud-difficulty"></div>
+      </div>
       <div class="hud-bar hud-actions" id="hud-actions"></div>
       <div class="hud-banner" id="hud-banner" hidden></div>`
     this.goldEl = parent.querySelector('#hud-gold')
@@ -82,62 +95,56 @@ export class HudImpl implements Hud {
     this.infoEl = parent.querySelector('#hud-info')
     this.actionsEl = parent.querySelector('#hud-actions')
     this.bannerEl = parent.querySelector('#hud-banner')
-    const sessionEl = parent.querySelector('#hud-session')
-    if (sessionEl) {
-      const pauseBtn = document.createElement('button')
-      pauseBtn.className = 'hud-pill hud-mode'
-      pauseBtn.textContent = 'Pause'
-      pauseBtn.addEventListener('click', () => {
-        this.callbacks?.onPause()
-        pauseBtn.textContent = pauseBtn.textContent === 'Pause' ? 'Resume' : 'Pause'
+    // Menu toggle.
+    const menuBtn = parent.querySelector('#hud-menu-btn')
+    const menuEl = parent.querySelector('#hud-menu')
+    if (menuBtn && menuEl) {
+      menuBtn.addEventListener('click', () => {
+        menuEl.hidden = !menuEl.hidden
       })
-      sessionEl.appendChild(pauseBtn)
-      for (const [labelText, fn] of [
-        ['Save', () => this.callbacks?.onSave()],
-        ['Load', () => this.callbacks?.onLoad()],
-      ] as const) {
-        const btn = document.createElement('button')
-        btn.className = 'hud-pill hud-mode'
-        btn.textContent = labelText
-        btn.addEventListener('click', fn)
-        sessionEl.appendChild(btn)
-      }
-      const replayBtn = document.createElement('button')
-      replayBtn.className = 'hud-pill hud-mode'
-      replayBtn.textContent = 'Replay'
-      replayBtn.addEventListener('click', () => {
-        this.callbacks?.onReplay()
-        const inReplay = replayBtn.textContent === 'Replay'
-        replayBtn.textContent = inReplay ? 'Exit' : 'Replay'
-        speedRow.hidden = !inReplay
-      })
-      sessionEl.appendChild(replayBtn)
-      const speedRow = document.createElement('div')
-      speedRow.className = 'hud-bar hud-session'
-      speedRow.hidden = true
-      for (const s of [1, 2, 4]) {
-        const btn = document.createElement('button')
-        btn.className = 'hud-pill hud-mode' + (s === 1 ? ' hud-mode-on' : '')
-        btn.textContent = `${s}x`
+    }
+    // Session buttons (in the menu).
+    const wire = (id: string, fn: () => void): void => {
+      const btn = parent.querySelector(id)
+      if (btn) btn.addEventListener('click', fn)
+    }
+    wire('#hud-pause', () => {
+      this.callbacks?.onPause()
+      const btn = parent.querySelector('#hud-pause')
+      if (btn) btn.textContent = btn.textContent === 'Pause' ? 'Resume' : 'Pause'
+    })
+    wire('#hud-save', () => this.callbacks?.onSave())
+    wire('#hud-load', () => this.callbacks?.onLoad())
+    const speedRow = parent.querySelector('#hud-speed')
+    wire('#hud-replay', () => {
+      this.callbacks?.onReplay()
+      const btn = parent.querySelector('#hud-replay')
+      const inReplay = btn && btn.textContent === 'Replay'
+      if (btn) btn.textContent = inReplay ? 'Exit' : 'Replay'
+      if (speedRow) speedRow.hidden = !inReplay
+    })
+    if (speedRow) {
+      for (const btn of speedRow.querySelectorAll('button')) {
         btn.addEventListener('click', () => {
-          for (const b of speedRow.querySelectorAll('button')) b.classList.remove('hud-mode-on')
-          btn.classList.add('hud-mode-on')
-          this.callbacks?.onReplaySpeed(s)
+          for (const b of speedRow.querySelectorAll('button')) b.classList.remove('hud-speed-on')
+          btn.classList.add('hud-speed-on')
+          this.callbacks?.onReplaySpeed(Number(btn.dataset.speed))
         })
-        speedRow.appendChild(btn)
       }
-      sessionEl.appendChild(speedRow)
+    }
+    const diffEl = parent.querySelector('#hud-difficulty')
+    if (diffEl) {
       for (const d of ['easy', 'normal', 'hard'] as AIDifficulty[]) {
         const btn = document.createElement('button')
         btn.className = 'hud-pill hud-mode' + (d === 'normal' ? ' hud-mode-on' : '')
         btn.textContent = d.charAt(0).toUpperCase() + d.slice(1)
         btn.addEventListener('click', () => {
-          for (const b of sessionEl.querySelectorAll('.hud-diff')) b.classList.remove('hud-mode-on')
+          for (const b of diffEl.querySelectorAll('.hud-diff')) b.classList.remove('hud-mode-on')
           btn.classList.add('hud-mode-on')
           this.callbacks?.onDifficulty(d)
         })
         btn.classList.add('hud-diff')
-        sessionEl.appendChild(btn)
+        diffEl.appendChild(btn)
       }
     }
     const modesEl = parent.querySelector('#hud-modes')
