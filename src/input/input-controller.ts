@@ -5,11 +5,14 @@ import {
   KIND_ARCHERY,
   KIND_BARRACKS,
   KIND_FARM,
+  CARRY_NONE,
   KIND_GOLDMINE,
   KIND_HALL,
   KIND_MELEE,
   KIND_RANGED,
   KIND_TREE,
+  KIND_WORKER,
+  STATE_IDLE,
   KIND_WORKER,
   TEAM_PLAYER,
 } from '../core/World'
@@ -97,6 +100,29 @@ export class InputControllerImpl implements InputController {
       if (idx !== -1) next = matches[(idx + 1) % matches.length]
     }
     this.selected = [next]
+    renderer.setSelection(this.selected)
+  }
+
+  /**
+   * Select all idle player workers (classic RTS idle-worker button).
+   * A worker is idle when in STATE_IDLE and not carrying resources.
+   */
+  selectIdleWorkers(): void {
+    const world = this.world
+    const renderer = this.renderer
+    if (!world || !renderer) return
+    const idle: number[] = []
+    for (const id of world.entities.keys()) {
+      if (
+        world.team[id] === TEAM_PLAYER &&
+        world.kind[id] === KIND_WORKER &&
+        world.state[id] === STATE_IDLE &&
+        world.carryKind[id] === CARRY_NONE
+      ) {
+        idle.push(id)
+      }
+    }
+    this.selected = idle
     renderer.setSelection(this.selected)
   }
 
