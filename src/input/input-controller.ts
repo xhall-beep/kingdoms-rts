@@ -8,12 +8,14 @@ import {
   KIND_WORKER,
   TEAM_PLAYER,
 } from '../core/World'
+import type { BuildingType } from '../data/buildings.ts'
 import type { Renderer } from '../render/renderer'
+import { placeStructure } from '../world/construction.ts'
 import { orderAttack } from '../systems/combat'
-import { orderGather } from '../systems/gather'
+import { orderBuild, orderGather } from '../systems/gather'
 import { orderMove } from '../systems/movement'
 
-export type InputMode = 'selection' | 'move' | 'attack' | 'gather'
+export type InputMode = 'selection' | 'move' | 'attack' | 'gather' | 'build'
 
 export interface InputController {
   setMode(mode: InputMode): void
@@ -35,6 +37,7 @@ export class InputControllerImpl implements InputController {
   private selected: number[] = []
   private dragStart: { x: number; y: number } | null = null
   private panning = false
+  private pendingBuilding: BuildingType | null = null
 
   attach(canvas: HTMLCanvasElement, world: World, renderer: Renderer): void {
     this.world = world
@@ -61,6 +64,16 @@ export class InputControllerImpl implements InputController {
 
   getSelected(): number[] {
     return [...this.selected]
+  }
+
+  /** Choose which building the next 'build'-mode tap will place. */
+  setPendingBuilding(type: BuildingType | null): void {
+    this.pendingBuilding = type
+    if (type !== null) this.setMode('build')
+  }
+
+  getPendingBuilding(): BuildingType | null {
+    return this.pendingBuilding
   }
 
   private onDown(e: PointerEvent): void {
@@ -124,7 +137,7 @@ export class InputControllerImpl implements InputController {
     renderer.setSelection(this.selected)
   }
 
-  /** Left-click order in move/attack/gather mode. */
+  /** Left-click order in move/attack/gather/build mode. */
   private modeOrder(sx: number, sy: number): void {
     const world = this.world
     const renderer = this.renderer
@@ -137,8 +150,24 @@ export class InputControllerImpl implements InputController {
       for (const id of this.selected) orderAttack(world, id, target)
     } else if (this.mode === 'gather' && target !== -1) {
       this.assignGather(world, target)
+    } else if (this.mode === 'build' && this.pendingBuilding !== null) {
+      this.placeBuilding(p.x, p.z)
     }
-    this.setMode('selection')
+    if (this.mode !== 'build') this.setMode('selection')
+  }
+
+  /** Place the pending building at a world point and send a selected worker. */
+  private placeBuilding(x: number, z: number): void {
+    const world = this.world
+    const type = this.pendingBuilding
+    if (!world || type === null) return
+    const worker = this.selected.find((id) => world.kind[id] === KIND_WORKER)
+    if (worker === undefined) return
+    const placed = placeStructure(world, TEAM_PLAYER, type, x, z)
+    if (placed.ok) {
+      orderBuild(world, worker, placed.id)
+      // Stay in build mode for placing more; the HUD can cancel.
+    }
   }
 
   /** Right-click: attack enemies, gather from nodes, move otherwise. */
