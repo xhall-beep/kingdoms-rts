@@ -106,6 +106,15 @@ export function writeSave(world: World, step: number, commands: readonly Command
   }
 }
 
+/** Delete the save from localStorage. */
+export function clearSave(): void {
+  try {
+    localStorage.removeItem(SAVE_KEY)
+  } catch {
+    /* storage unavailable — nothing to clear */
+  }
+}
+
 /** Read a save from localStorage, or null when none exists / corrupt. */
 export function readSave(): WorldSave | null {
   try {
