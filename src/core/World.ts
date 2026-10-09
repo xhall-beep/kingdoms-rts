@@ -220,7 +220,10 @@ export class World {
     if (kind === KIND_WORKER || kind === KIND_MELEE || kind === KIND_RANGED) {
       this.supplyUsed[team] -= UNITS[UNIT_BY_KIND[kind]].popCost
     } else if (kind >= KIND_HALL && kind <= KIND_FARM) {
-      this.supplyCap[team] -= BUILDINGS[BUILDING_BY_KIND[kind]].supply
+      // Only completed buildings granted supply.
+      if (this.buildProgress[id] >= this.buildTotal[id]) {
+        this.supplyCap[team] -= BUILDINGS[BUILDING_BY_KIND[kind]].supply
+      }
     }
     this.entities.delete(id)
   }
@@ -315,7 +318,7 @@ export class World {
     this.rallyZ[id] = z + def.radius + 4
     this.state[id] = STATE_IDLE
     this.setPosition(entity, x, 0, z)
-    this.supplyCap[team] += def.supply
+    if (built) this.supplyCap[team] += def.supply
     return entity
   }
 
