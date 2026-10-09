@@ -14,7 +14,13 @@ import { VictorySystemImpl } from './systems/victory'
 import { VisionSystemImpl } from './systems/vision'
 import { CommandLog } from './session/commands.ts'
 import { ReplayPlayer } from './session/replay.ts'
-import { loadIntoWorld, readSave, writeSave } from './session/save-load.ts'
+import {
+  deserializeWorld,
+  loadIntoWorld,
+  readSave,
+  serializeWorld,
+  writeSave,
+} from './session/save-load.ts'
 import type { AIDifficulty } from './ai/opponent'
 import { HudImpl } from './ui/hud'
 import type { HudCallbacks } from './ui/hud'
