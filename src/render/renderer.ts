@@ -11,6 +11,7 @@ import {
   KIND_TREE,
 } from '../core/World'
 import { FOG_UNEXPLORED, FOG_VISIBLE } from '../world/fog.ts'
+import type { FogGrid } from '../world/fog.ts'
 import { canSee } from '../world/visibility.ts'
 
 const css = (hex: number): string => `#${hex.toString(16).padStart(6, '0')}`
@@ -34,6 +35,11 @@ export class Renderer {
   private camZ = 0
   private zoom = 6
   private selected = new Set<number>()
+  private frame = 0
+  // Fog is cached to an offscreen canvas (one px per cell) and rebuilt only
+  // every few frames; per-frame we do a single drawImage instead of ~8k rects.
+  private fogCache: (HTMLCanvasElement | null)[] = [null, null]
+  private fogCacheFrame: number[] = [-1e9, -1e9]
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
@@ -89,6 +95,7 @@ export class Renderer {
   }
 
   render(world: World, team: 0 | 1): void {
+    this.frame += 1
     const { ctx, canvas } = this
     ctx.fillStyle = '#16241a'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
@@ -201,19 +208,33 @@ export class Renderer {
 
   private drawFog(world: World, team: 0 | 1): void {
     const fog = world.fog[team]
-    const px = fog.cell * this.zoom
-    if (px < 2) return // Too far out for fog detail to matter.
-    const { ctx } = this
-    const half = (fog.cols * fog.cell) / 2
+    if (!this.fogCache[team] || this.frame - this.fogCacheFrame[team] > 20) {
+      this.fogCache[team] = this.buildFogCache(fog)
+      this.fogCacheFrame[team] = this.frame
+    }
+    const cache = this.fogCache[team]
+    if (!cache) return
+    // Fog grid covers [-90, -90] .. [90, 90] in world units.
+    const p = this.toScreen(-90, -90)
+    const size = 180 * this.zoom
+    this.ctx.drawImage(cache, p.x, p.y, size, size)
+  }
+
+  private buildFogCache(fog: FogGrid): HTMLCanvasElement {
+    const c = document.createElement('canvas')
+    c.width = fog.cols
+    c.height = fog.cols
+    const ctx = c.getContext('2d')
+    if (!ctx) throw new Error('2D canvas context is unavailable')
     for (let r = 0; r < fog.cols; r += 1) {
-      for (let c = 0; c < fog.cols; c += 1) {
-        const s = fog.cellState(c, r)
-        if (s === FOG_VISIBLE) continue
-        ctx.fillStyle = s === FOG_UNEXPLORED ? 'rgba(4,8,6,1)' : 'rgba(4,8,6,0.45)'
-        const p = this.toScreen(c * fog.cell - half, r * fog.cell - half)
-        ctx.fillRect(p.x, p.y, px + 1, px + 1)
+      for (let col = 0; col < fog.cols; col += 1) {
+        const s = fog.cellState(col, r)
+        if (s === FOG_VISIBLE) continue // transparent: fully revealed
+        ctx.fillStyle = s === FOG_UNEXPLORED ? '#040806' : 'rgba(4,8,6,0.45)'
+        ctx.fillRect(col, r, 1, 1)
       }
     }
+    return c
   }
 
   private circle(x: number, y: number, r: number, fill: string): void {
