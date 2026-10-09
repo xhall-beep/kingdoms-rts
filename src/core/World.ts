@@ -27,6 +27,7 @@ export const STATE_GATHER = 2
 export const STATE_RETURN = 3
 export const STATE_ATTACK = 4
 export const STATE_BUILD = 5
+export const STATE_ATTACKMOVE = 6
 
 export const TEAM_PLAYER = 0
 export const TEAM_ENEMY = 1
@@ -134,6 +135,10 @@ export class World {
   // ---- worker harvest preference ----
   readonly harvestKind: Uint8Array
 
+  // ---- attack-move destination (restored after each engagement) ----
+  readonly resumeX: Float32Array
+  readonly resumeZ: Float32Array
+
   // ---- economy & factions per team (index 0 = player, 1 = enemy) ----
   gold: number[] = [0, 0]
   wood: number[] = [0, 0]
@@ -189,6 +194,8 @@ export class World {
     this.rallyZ = new Float32Array(length)
     this.fog = [new FogGrid(), new FogGrid()]
     this.harvestKind = new Uint8Array(length)
+    this.resumeX = new Float32Array(length).fill(NaN)
+    this.resumeZ = new Float32Array(length).fill(NaN)
   }
 
   createEntity(): Entity {
