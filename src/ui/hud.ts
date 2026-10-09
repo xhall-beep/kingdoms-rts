@@ -9,6 +9,8 @@ import {
   KIND_ARCHERY,
   KIND_BARRACKS,
   KIND_HALL,
+  KIND_MELEE,
+  KIND_RANGED,
   KIND_WORKER,
   TEAM_PLAYER,
 } from '../core/World'
