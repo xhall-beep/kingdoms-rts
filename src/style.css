@@ -426,3 +426,55 @@ code {
 .hud-session {
   margin-top: 8px;
 }
+
+/* Fix: hidden attribute must win over flex display. */
+.hud-bar[hidden],
+.hud-menu[hidden],
+.hud-banner[hidden] {
+  display: none !important;
+}
+
+/* Compact top bar with menu button. */
+.hud-top {
+  margin-bottom: 0;
+}
+
+.hud-menu-btn {
+  cursor: pointer;
+  font: inherit;
+  pointer-events: auto;
+  margin-left: auto;
+  min-width: 44px;
+  min-height: 44px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+/* Dropdown menu panel for session controls. */
+.hud-menu {
+  position: absolute;
+  top: 100%;
+  right: 10px;
+  background: rgba(10, 28, 28, 0.97);
+  border: 2px solid rgba(255, 243, 212, 0.25);
+  border-radius: 12px;
+  padding: 10px;
+  z-index: 20;
+  pointer-events: auto;
+  min-width: 200px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.hud-menu .hud-bar {
+  margin-bottom: 8px;
+}
+
+.hud-menu .hud-bar:last-child {
+  margin-bottom: 0;
+}
+
+.hud-speed-on {
+  background: #f5c542;
+  color: #102b2b;
+  border-color: #f5c542;
+}
