@@ -1,21 +1,227 @@
-export interface RenderContext {
-    width: number
-    height: number
+import { FACTIONS } from '../data/factions.ts'
+import type { World } from '../core/World'
+import {
+  KIND_ARCHERY,
+  KIND_BARRACKS,
+  KIND_FARM,
+  KIND_GOLDMINE,
+  KIND_HALL,
+  KIND_MELEE,
+  KIND_RANGED,
+  KIND_TREE,
+  KIND_WORKER,
+} from '../core/World'
+import { FOG_UNEXPLORED, FOG_VISIBLE } from '../world/fog.ts'
+import { canSee } from '../world/visibility.ts'
+
+const css = (hex: number): string => `#${hex.toString(16).padStart(6, '0')}`
+
+/** Short glyph per entity kind, drawn inside buildings. */
+const GLYPH: Record<number, string> = {
+  [KIND_HALL]: 'H',
+  [KIND_BARRACKS]: 'B',
+  [KIND_ARCHERY]: 'A',
+  [KIND_FARM]: 'F',
 }
 
+/**
+ * 2D canvas renderer: terrain, fog-gated entities, health bars, selection,
+ * and a fog-of-war overlay for the viewing team. Own camera (pan/zoom).
+ */
 export class Renderer {
-    private readonly context: RenderContext
+  private readonly canvas: HTMLCanvasElement
+  private readonly ctx: CanvasRenderingContext2D
+  private camX = 0
+  private camZ = 0
+  private zoom = 6
+  private selected = new Set<number>()
 
-    constructor(context: RenderContext) {
-        this.context = context
+  constructor(canvas: HTMLCanvasElement) {
+    this.canvas = canvas
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('2D canvas context is unavailable')
+    this.ctx = ctx
+  }
+
+  resize(width: number, height: number): void {
+    this.canvas.width = width
+    this.canvas.height = height
+  }
+
+  setSelection(ids: number[]): void {
+    this.selected = new Set(ids)
+  }
+
+  getSelection(): number[] {
+    return [...this.selected]
+  }
+
+  pan(dxPixels: number, dyPixels: number): void {
+    this.camX -= dxPixels / this.zoom
+    this.camZ -= dyPixels / this.zoom
+  }
+
+  zoomBy(factor: number, cx?: number, cy?: number): void {
+    const px = cx ?? this.canvas.width / 2
+    const py = cy ?? this.canvas.height / 2
+    const before = this.screenToWorld(px, py)
+    this.zoom = Math.min(40, Math.max(2, this.zoom * factor))
+    const after = this.screenToWorld(px, py)
+    this.camX += before.x - after.x
+    this.camZ += before.z - after.z
+  }
+
+  screenToWorld(sx: number, sy: number): { x: number; z: number } {
+    return {
+      x: (sx - this.canvas.width / 2) / this.zoom + this.camX,
+      z: (sy - this.canvas.height / 2) / this.zoom + this.camZ,
+    }
+  }
+
+  render(world: World, team: 0 | 1): void {
+    const { ctx, canvas } = this
+    ctx.fillStyle = '#16241a'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    this.drawGrid()
+    for (const id of world.entities.keys()) {
+      if (!canSee(world, team, id)) continue
+      this.drawEntity(world, id)
+    }
+    this.drawFog(world, team)
+  }
+
+  private toScreen(x: number, z: number): { x: number; y: number } {
+    return {
+      x: (x - this.camX) * this.zoom + this.canvas.width / 2,
+      y: (z - this.camZ) * this.zoom + this.canvas.height / 2,
+    }
+  }
+
+  private drawGrid(): void {
+    const { ctx, canvas } = this
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)'
+    ctx.lineWidth = 1
+    const step = 10 * this.zoom
+    const ox = canvas.width / 2 - this.camX * this.zoom
+    const oy = canvas.height / 2 - this.camZ * this.zoom
+    ctx.beginPath()
+    for (let x = ox % step; x < canvas.width; x += step) {
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x, canvas.height)
+    }
+    for (let y = oy % step; y < canvas.height; y += step) {
+      ctx.moveTo(0, y)
+      ctx.lineTo(canvas.width, y)
+    }
+    ctx.stroke()
+  }
+
+  private teamColor(world: World, id: number): string {
+    const faction = world.factionOfTeam[world.team[id] as 0 | 1]
+    return css(FACTIONS[faction].colors[0])
+  }
+
+  private drawEntity(world: World, id: number): void {
+    const kind = world.kind[id]
+    const p = this.toScreen(world.positionX[id], world.positionZ[id])
+    const r = Math.max(2, world.radius[id] * this.zoom)
+    const color = this.teamColor(world, id)
+
+    if (kind === KIND_TREE) {
+      this.circle(p.x, p.y, r, '#2e9e57')
+      this.circle(p.x, p.y, r * 0.55, '#3fbf6f')
+    } else if (kind === KIND_GOLDMINE) {
+      this.circle(p.x, p.y, r, '#b8912f')
+      this.circle(p.x, p.y, r * 0.55, '#f5c542')
+    } else if (kind >= KIND_HALL && kind <= KIND_FARM) {
+      // Building: dark base, team-colored roof, glyph.
+      this.rect(p.x - r, p.y - r, r * 2, r * 2, '#3a3f4a')
+      this.rect(p.x - r, p.y - r, r * 2, r * 0.7, color)
+      const glyph = GLYPH[kind]
+      if (glyph && r > 8) {
+        this.text(glyph, p.x, p.y + r * 0.55, Math.min(16, r), '#ffffff')
+      }
+      // Construction progress ring.
+      if (world.buildProgress[id] < world.buildTotal[id]) {
+        const q = world.buildProgress[id] / world.buildTotal[id]
+        this.ctx.strokeStyle = '#f5c542'
+        this.ctx.lineWidth = 3
+        this.ctx.beginPath()
+        this.ctx.arc(p.x, p.y, r + 5, -Math.PI / 2, -Math.PI / 2 + q * Math.PI * 2)
+        this.ctx.stroke()
+      }
+    } else {
+      // Unit: team-colored disc, darker ring for melee, gold ring for ranged.
+      this.circle(p.x, p.y, r, color)
+      if (kind === KIND_MELEE) {
+        this.ctx.strokeStyle = 'rgba(0,0,0,0.5)'
+        this.ctx.lineWidth = 2
+        this.ctx.beginPath()
+        this.ctx.arc(p.x, p.y, r * 0.7, 0, Math.PI * 2)
+        this.ctx.stroke()
+      } else if (kind === KIND_RANGED) {
+        this.ctx.strokeStyle = '#f5c542'
+        this.ctx.lineWidth = 2
+        this.ctx.beginPath()
+        this.ctx.arc(p.x, p.y, r * 0.7, 0, Math.PI * 2)
+        this.ctx.stroke()
+      }
+      // Training progress bar for queued production is drawn on the building.
     }
 
-    resize(width: number, height: number): void {
-        this.context.width = width
-        this.context.height = height
+    // Health bar when damaged.
+    if (world.health[id] < world.maxHealth[id] && world.maxHealth[id] > 1) {
+      const q = Math.max(0, world.health[id] / world.maxHealth[id])
+      const bw = Math.max(18, r * 2)
+      this.ctx.fillStyle = 'rgba(0,0,0,0.6)'
+      this.ctx.fillRect(p.x - bw / 2, p.y - r - 8, bw, 4)
+      this.ctx.fillStyle = q > 0.5 ? '#4ade80' : q > 0.25 ? '#f5c542' : '#ef4444'
+      this.ctx.fillRect(p.x - bw / 2, p.y - r - 8, bw * q, 4)
     }
 
-    render(): void {
-        // Rendering is intentionally deferred to the renderer implementation.
+    // Selection ring.
+    if (this.selected.has(id)) {
+      this.ctx.strokeStyle = '#ffffff'
+      this.ctx.lineWidth = 2
+      this.ctx.beginPath()
+      this.ctx.arc(p.x, p.y, r + 4, 0, Math.PI * 2)
+      this.ctx.stroke()
     }
+  }
+
+  private drawFog(world: World, team: 0 | 1): void {
+    const fog = world.fog[team]
+    const px = fog.cell * this.zoom
+    if (px < 2) return // Too far out for fog detail to matter.
+    const { ctx } = this
+    const half = (fog.cols * fog.cell) / 2
+    for (let r = 0; r < fog.cols; r += 1) {
+      for (let c = 0; c < fog.cols; c += 1) {
+        const s = fog.cellState(c, r)
+        if (s === FOG_VISIBLE) continue
+        ctx.fillStyle = s === FOG_UNEXPLORED ? 'rgba(4,8,6,1)' : 'rgba(4,8,6,0.45)'
+        const p = this.toScreen(c * fog.cell - half, r * fog.cell - half)
+        ctx.fillRect(p.x, p.y, px + 1, px + 1)
+      }
+    }
+  }
+
+  private circle(x: number, y: number, r: number, fill: string): void {
+    this.ctx.fillStyle = fill
+    this.ctx.beginPath()
+    this.ctx.arc(x, y, r, 0, Math.PI * 2)
+    this.ctx.fill()
+  }
+
+  private rect(x: number, y: number, w: number, h: number, fill: string): void {
+    this.ctx.fillStyle = fill
+    this.ctx.fillRect(x, y, w, h)
+  }
+
+  private text(s: string, x: number, y: number, size: number, fill: string): void {
+    this.ctx.fillStyle = fill
+    this.ctx.font = `700 ${size}px system-ui, sans-serif`
+    this.ctx.textAlign = 'center'
+    this.ctx.fillText(s, x, y)
+  }
 }
