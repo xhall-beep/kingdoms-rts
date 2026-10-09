@@ -35,6 +35,7 @@ export class Renderer {
   private camZ = 0
   private zoom = 6
   private selected = new Set<number>()
+  private selectionBox: { x0: number; y0: number; x1: number; y1: number } | null = null
   private frame = 0
   // Fog is cached to an offscreen canvas (one px per cell) and rebuilt only
   // every few frames; per-frame we do a single drawImage instead of ~8k rects.
@@ -55,6 +56,11 @@ export class Renderer {
 
   setSelection(ids: number[]): void {
     this.selected = new Set(ids)
+  }
+
+  /** Drag-selection rectangle in screen pixels, or null to hide. */
+  setSelectionBox(box: { x0: number; y0: number; x1: number; y1: number } | null): void {
+    this.selectionBox = box
   }
 
   getSelection(): number[] {
@@ -105,6 +111,22 @@ export class Renderer {
       this.drawEntity(world, id)
     }
     this.drawFog(world, team)
+    this.drawSelectionBox()
+  }
+
+  private drawSelectionBox(): void {
+    const box = this.selectionBox
+    if (!box) return
+    const { ctx } = this
+    const x = Math.min(box.x0, box.x1)
+    const y = Math.min(box.y0, box.y1)
+    const w = Math.abs(box.x1 - box.x0)
+    const h = Math.abs(box.y1 - box.y0)
+    ctx.fillStyle = 'rgba(80, 200, 120, 0.12)'
+    ctx.fillRect(x, y, w, h)
+    ctx.strokeStyle = 'rgba(80, 200, 120, 0.8)'
+    ctx.lineWidth = 1.5
+    ctx.strokeRect(x, y, w, h)
   }
 
   private toScreen(x: number, z: number): { x: number; y: number } {
