@@ -9,8 +9,11 @@ import { CombatSystemImpl } from './systems/combat'
 import { GatherSystemImpl } from './systems/gather'
 import { MovementSystemImpl } from './systems/movement'
 import { ProductionSystemImpl } from './systems/production'
+import { enqueueTrain } from './systems/production'
+import { VictorySystemImpl } from './systems/victory'
 import { VisionSystemImpl } from './systems/vision'
 import { HudImpl } from './ui/hud'
+import type { HudCallbacks } from './ui/hud'
 
 export interface GameComposition {
   engine: Engine
@@ -23,6 +26,7 @@ export interface GameComposition {
     gather: GatherSystemImpl
     production: ProductionSystemImpl
     vision: VisionSystemImpl
+    victory: VictorySystemImpl
     opponent: OpponentAI
   }
 }
