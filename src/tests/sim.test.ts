@@ -214,3 +214,33 @@ test('destroying enemy hall triggers victory', () => {
   stepWorld(world, 60 * 2)
   assertEqual(world.winner, 0, 'player should win when enemy buildings destroyed')
 })
+
+suite('supply timing')
+test('farm grants no supply on placement', () => {
+  const world = freshWorld()
+  const capBefore = world.supplyCap[TEAM_PLAYER]
+  const placed = placeStructure(world, TEAM_PLAYER, 'farm', 0, -40)
+  assert(placed.ok, 'placement should succeed')
+  assertEqual(world.supplyCap[TEAM_PLAYER], capBefore, 'supply cap unchanged on placement')
+})
+
+test('farm grants supply on completion', () => {
+  const world = freshWorld()
+  const capBefore = world.supplyCap[TEAM_PLAYER]
+  const placed = placeStructure(world, TEAM_PLAYER, 'farm', 0, -40)
+  assert(placed.ok, 'placement should succeed')
+  const workers = playerUnits(world, KIND_WORKER)
+  orderBuild(world, workers[0], placed.id)
+  stepWorld(world, 60 * 60)
+  assert(world.buildProgress[placed.id] >= world.buildTotal[placed.id], 'farm should complete')
+  assert(world.supplyCap[TEAM_PLAYER] > capBefore, 'supply cap increases on completion')
+})
+
+test('destroying unfinished farm loses no supply', () => {
+  const world = freshWorld()
+  const capBefore = world.supplyCap[TEAM_PLAYER]
+  const placed = placeStructure(world, TEAM_PLAYER, 'farm', 0, -40)
+  assert(placed.ok, 'placement should succeed')
+  world.removeEntityById(placed.id)
+  assertEqual(world.supplyCap[TEAM_PLAYER], capBefore, 'no supply lost for unfinished farm')
+})
