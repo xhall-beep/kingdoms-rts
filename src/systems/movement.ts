@@ -1,5 +1,5 @@
 import type { System, World } from '../core/World'
-import { STATE_MOVE } from '../core/World'
+import { HARVEST_NONE, KIND_WORKER, STATE_MOVE } from '../core/World'
 
 /**
  * Steering: every entity flagged `moving` walks toward (targetX, targetZ) at
@@ -43,4 +43,9 @@ export function orderMove(world: World, id: number, x: number, z: number): void 
   world.stopDist[id] = 0.5
   world.moving[id] = 1
   world.state[id] = STATE_MOVE
+  // An explicit move order cancels auto-harvest: the worker holds position
+  // on arrival instead of walking back to work. The Gather command re-arms it.
+  if (world.kind[id] === KIND_WORKER) {
+    world.harvestKind[id] = HARVEST_NONE
+  }
 }
