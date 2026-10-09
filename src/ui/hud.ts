@@ -8,13 +8,16 @@ import type { World } from '../core/World'
 import {
   KIND_ARCHERY,
   KIND_BARRACKS,
+  KIND_FARM,
+  KIND_GOLDMINE,
   KIND_HALL,
   KIND_MELEE,
   KIND_RANGED,
+  KIND_TREE,
   KIND_WORKER,
   TEAM_PLAYER,
 } from '../core/World'
-import { PLAYER_BUILDABLE, canAfford } from '../world/construction.ts'
+import { BUILDING_TYPE_BY_KIND, PLAYER_BUILDABLE, canAfford } from '../world/construction.ts'
 
 export interface Hud {
   render(world: World): void
@@ -32,12 +35,7 @@ export interface HudCallbacks {
   onReplaySpeed(speed: number): void
 }
 
-const MODES: { id: InputMode; label: string }[] = [
-  { id: 'selection', label: 'Select' },
-  { id: 'move', label: 'Move' },
-  { id: 'attack', label: 'Attack' },
-  { id: 'gather', label: 'Gather' },
-]
+
 
 /** Which unit each production building trains. */
 const TRAIN_BY_BUILDING: Record<number, UnitType> = {
@@ -59,7 +57,6 @@ export class HudImpl implements Hud {
   private infoEl: HTMLElement | null = null
   private actionsEl: HTMLElement | null = null
   private bannerEl: HTMLElement | null = null
-  private modeButtons: HTMLElement[] = []
   private callbacks: HudCallbacks | null = null
   private lastActionsKey = ''
 
@@ -72,7 +69,7 @@ export class HudImpl implements Hud {
         <span class="hud-pill">Supply <b id="hud-supply">0/0</b></span>
         <span class="hud-pill hud-info" id="hud-info"></span><button class="hud-pill hud-menu-btn" id="hud-menu-btn">☰</button>
       </div>
-      <div class="hud-bar hud-modes" id="hud-modes"></div>
+      
       <div class="hud-menu" id="hud-menu" hidden>
         <div class="hud-bar">
           <button class="hud-pill hud-mode" id="hud-pause">Pause</button>
@@ -147,21 +144,6 @@ export class HudImpl implements Hud {
         diffEl.appendChild(btn)
       }
     }
-    const modesEl = parent.querySelector('#hud-modes')
-    if (modesEl) {
-      for (const { id, label } of MODES) {
-        const btn = document.createElement('button')
-        btn.className = 'hud-pill hud-mode' + (id === 'selection' ? ' hud-mode-on' : '')
-        btn.textContent = label
-        btn.addEventListener('click', () => {
-          for (const b of this.modeButtons) b.classList.remove('hud-mode-on')
-          btn.classList.add('hud-mode-on')
-          this.callbacks?.onMode(id)
-        })
-        modesEl.appendChild(btn)
-        this.modeButtons.push(btn)
-      }
-    }
   }
 
   render(world: World): void {
@@ -188,7 +170,7 @@ export class HudImpl implements Hud {
     this.updateBanner(world)
   }
 
-  /** Rebuild the contextual action panel when the selection changes. */
+  /** Rebuild the contextual info + action panel when the selection changes. */
   private updateActions(world: World, selected: number[]): void {
     const el = this.actionsEl
     if (!el) return
@@ -198,54 +180,17 @@ export class HudImpl implements Hud {
     el.innerHTML = ''
 
     if (selected.length === 0) return
-    const own = selected.filter((id) => world.team[id] === TEAM_PLAYER)
-    if (own.length === 0) return
+    const id = selected[0]
+    const kind = world.kind[id]
+    const isOwn = world.team[id] === TEAM_PLAYER
 
-    // Single production building: train button.
-    if (own.length === 1) {
-      const kind = world.kind[own[0]]
-      if (kind in TRAIN_BY_BUILDING) {
-        const unit: UnitType = TRAIN_BY_BUILDING[kind]
-        const def = UNITS[unit]
-        const btn = document.createElement('button')
-        btn.className = 'hud-pill hud-action'
-        btn.textContent = `Train ${label(unit)} (${def.cost.gold}g ${def.cost.wood}w)`
-        btn.disabled =
-          world.gold[TEAM_PLAYER] < def.cost.gold || world.wood[TEAM_PLAYER] < def.cost.wood
-        btn.addEventListener('click', () => this.callbacks?.onTrain(unit))
-        el.appendChild(btn)
-        return
-      }
+    const info = (text: string): void => {
+      const span = document.createElement('span')
+      span.className = 'hud-pill hud-detail'
+      span.textContent = text
+      el.appendChild(span)
     }
-
-    // Units: composition summary + tailored quick actions.
-    let workers = 0
-    let melee = 0
-    let ranged = 0
-    for (const id of own) {
-      const k = world.kind[id]
-      if (k === KIND_WORKER) workers += 1
-      else if (k === KIND_MELEE) melee += 1
-      else if (k === KIND_RANGED) ranged += 1
-    }
-    if (workers + melee + ranged === 0) return
-
-    // Composition pill (info only).
-    const parts: string[] = []
-    if (workers > 0) parts.push(`${workers} Worker${workers > 1 ? 's' : ''}`)
-    if (melee > 0) parts.push(`${melee} Melee`)
-    if (ranged > 0) parts.push(`${ranged} Ranged`)
-    const info = document.createElement('span')
-    info.className = 'hud-pill hud-info'
-    info.textContent = parts.join(' · ')
-    el.appendChild(info)
-
-    // Quick actions tailored to the selection.
-    const quick = (
-      text: string,
-      fn: () => void,
-      disabled = false,
-    ): void => {
+    const action = (text: string, fn: () => void, disabled = false): void => {
       const btn = document.createElement('button')
       btn.className = 'hud-pill hud-action'
       btn.textContent = text
@@ -253,18 +198,99 @@ export class HudImpl implements Hud {
       btn.addEventListener('click', fn)
       el.appendChild(btn)
     }
-    quick('Move', () => this.callbacks?.onMode('move'))
-    quick('Attack', () => this.callbacks?.onMode('attack'))
-    if (workers > 0) {
-      // Build menu for workers (uses the first selected worker).
-      for (const type of PLAYER_BUILDABLE) {
-        const def = BUILDINGS[type]
-        quick(
-          `${label(type)} (${def.cost.gold}g ${def.cost.wood}w)`,
-          () => this.callbacks?.onBuildType(type),
-          !canAfford(world, TEAM_PLAYER, type),
-        )
+    const unitTypeOf = (k: number): UnitType =>
+      k === KIND_WORKER ? 'worker' : k === KIND_MELEE ? 'melee' : 'ranged'
+
+    // --- Resource nodes: info only ---
+    if (kind === KIND_TREE || kind === KIND_GOLDMINE) {
+      const name = kind === KIND_TREE ? 'Tree' : 'Gold Mine'
+      const res = kind === KIND_TREE ? 'wood' : 'gold'
+      info(`${name}`)
+      info(`${Math.floor(world.amount[id])} ${res} remaining`)
+      return
+    }
+
+    // --- Units ---
+    if (kind === KIND_WORKER || kind === KIND_MELEE || kind === KIND_RANGED) {
+      const utype = unitTypeOf(kind)
+      const def = UNITS[utype]
+      const hp = Math.floor(world.health[id])
+      const owner = isOwn ? '' : 'Enemy '
+
+      if (selected.length === 1) {
+        info(`${owner}${label(utype)} · HP ${hp}/${def.hp}`)
+        info(`Dmg ${def.damage} · Range ${def.range} · Sight ${def.sight}`)
+      } else {
+        // Multiple: composition summary.
+        let workers = 0
+        let melee = 0
+        let ranged = 0
+        for (const sid of selected) {
+          const k = world.kind[sid]
+          if (k === KIND_WORKER) workers += 1
+          else if (k === KIND_MELEE) melee += 1
+          else if (k === KIND_RANGED) ranged += 1
+        }
+        const parts: string[] = []
+        if (workers > 0) parts.push(`${workers} Worker${workers > 1 ? 's' : ''}`)
+        if (melee > 0) parts.push(`${melee} Melee`)
+        if (ranged > 0) parts.push(`${ranged} Ranged`)
+        info(parts.join(' · '))
       }
+
+      if (!isOwn) return // Enemies: info only.
+
+      // Own units: contextual commands.
+      action('Move', () => this.callbacks?.onMode('move'))
+      action('Attack', () => this.callbacks?.onMode('attack'))
+      const hasWorker = selected.some((sid) => world.kind[sid] === KIND_WORKER)
+      if (hasWorker) {
+        action('Gather', () => this.callbacks?.onMode('gather'))
+        for (const type of PLAYER_BUILDABLE) {
+          const bdef = BUILDINGS[type]
+          action(
+            `${label(type)} (${bdef.cost.gold}g ${bdef.cost.wood}w)`,
+            () => this.callbacks?.onBuildType(type),
+            !canAfford(world, TEAM_PLAYER, type),
+          )
+        }
+      }
+      return
+    }
+
+    // --- Buildings ---
+    if (
+      kind === KIND_HALL ||
+      kind === KIND_BARRACKS ||
+      kind === KIND_ARCHERY ||
+      kind === KIND_FARM
+    ) {
+      const btype = BUILDING_TYPE_BY_KIND[kind]
+      const def = BUILDINGS[btype]
+      const hp = Math.floor(world.health[id])
+      const owner = isOwn ? '' : 'Enemy '
+      info(`${owner}${def.name} · HP ${hp}/${def.hp}`)
+
+      if (world.buildProgress[id] < world.buildTotal[id]) {
+        const pct = Math.floor((world.buildProgress[id] / world.buildTotal[id]) * 100)
+        info(`Under construction · ${pct}%`)
+      }
+      if (def.supply > 0) info(`Provides +${def.supply} supply`)
+      if (def.trains.length > 0) info(`Trains: ${def.trains.map((t) => label(t)).join(', ')}`)
+
+      if (!isOwn) return // Enemies: info only.
+
+      if (kind in TRAIN_BY_BUILDING) {
+        const unit: UnitType = TRAIN_BY_BUILDING[kind]
+        const udef = UNITS[unit]
+        action(
+          `Train ${label(unit)} (${udef.cost.gold}g ${udef.cost.wood}w)`,
+          () => this.callbacks?.onTrain(unit),
+          world.gold[TEAM_PLAYER] < udef.cost.gold || world.wood[TEAM_PLAYER] < udef.cost.wood,
+        )
+        action('Set Rally', () => this.callbacks?.onMode('move'))
+      }
+      return
     }
   }
 
