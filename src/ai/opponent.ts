@@ -18,6 +18,10 @@ import {
 import { orderBuild, orderGather } from '../systems/gather.ts'
 import { orderMove } from '../systems/movement.ts'
 import { enqueueTrain } from '../systems/production.ts'
+import {
+  BUILDING_TYPE_BY_KIND,
+  placeStructure,
+} from '../world/construction.ts'
 import { canSee, isExplored } from '../world/visibility.ts'
 
 const THINK_EVERY = 1.0 // seconds between decisions
@@ -26,13 +30,6 @@ const WORKERS_BEFORE_ARMY = 5 // Economy first: no military buildings before thi
 const ATTACK_ARMY = 8 // Soldiers needed before attacking.
 const DEFENSE_RADIUS = 28 // Enemies this close to the hall pull the army home.
 const WOOD_SHARE = 0.4 // Fraction of workers assigned to wood (the rest mine gold).
-
-const BUILDING_TYPE_BY_KIND: Record<number, BuildingType> = {
-  [KIND_HALL]: 'hall',
-  [KIND_BARRACKS]: 'barracks',
-  [KIND_ARCHERY]: 'archery',
-  [KIND_FARM]: 'farm',
-}
 
 /**
  * Built-in opponent. It plays by the rules: every action goes through the same
@@ -247,37 +244,6 @@ export class OpponentAI implements System {
 const SEARCH_POINTS: { x: number; z: number }[] = []
 for (const x of [-60, -30, 0, 30, 60]) {
   for (const z of [-50, 0, 50]) SEARCH_POINTS.push({ x, z })
-}
-
-/**
- * Place an unbuilt structure, charging its cost immediately.
- * The caller sends a worker with orderBuild() to construct it.
- */
-export function placeStructure(
-  world: World,
-  team: 0 | 1,
-  type: BuildingType,
-  x: number,
-  z: number,
-): { ok: boolean; id: number } {
-  const def = BUILDINGS[type]
-  if (world.gold[team] < def.cost.gold || world.wood[team] < def.cost.wood) {
-    return { ok: false, id: NO_TARGET }
-  }
-  if (!isAreaFree(world, x, z, def.radius)) return { ok: false, id: NO_TARGET }
-  world.gold[team] -= def.cost.gold
-  world.wood[team] -= def.cost.wood
-  const entity = world.spawnBuilding(type, team, x, z, false)
-  return { ok: true, id: entity.id }
-}
-
-function isAreaFree(world: World, x: number, z: number, radius: number): boolean {
-  for (const id of world.entities.keys()) {
-    if (world.radius[id] <= 0) continue
-    const d = Math.hypot(world.positionX[id] - x, world.positionZ[id] - z)
-    if (d < world.radius[id] + radius + 1) return false
-  }
-  return true
 }
 
 function structuresOf(world: World, team: 0 | 1, kind: number, builtOnly: boolean): number[] {
