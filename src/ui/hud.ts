@@ -29,6 +29,8 @@ export interface HudCallbacks {
   onTrain(type: UnitType): void
   onSelectBuilding(kind: number): void
   onNewGame(): void
+  onSelectIdleWorkers(): void
+  onStop(): void
   onPause(): void
   onSave(): void
   onLoad(): void
@@ -90,6 +92,7 @@ export class HudImpl implements Hud {
         <div class="hud-bar" id="hud-difficulty"></div>
       </div>
       <div class="hud-bar hud-buildings" id="hud-buildings"></div>
+      <div class="hud-bar hud-utility" id="hud-utility"><button class="hud-pill hud-action" id="hud-idle">Idle Workers</button></div>
       <div class="hud-bar hud-actions" id="hud-actions"></div>
       <div class="hud-banner" id="hud-banner" hidden></div>`
     this.goldEl = parent.querySelector('#hud-gold')
@@ -98,6 +101,8 @@ export class HudImpl implements Hud {
     this.infoEl = parent.querySelector('#hud-info')
     this.actionsEl = parent.querySelector('#hud-actions')
     this.buildingsEl = parent.querySelector('#hud-buildings')
+    const idleBtn = parent.querySelector('#hud-idle')
+    if (idleBtn) idleBtn.addEventListener('click', () => this.callbacks?.onSelectIdleWorkers())
     this.bannerEl = parent.querySelector('#hud-banner')
     // Menu toggle.
     const menuBtn = parent.querySelector('#hud-menu-btn')
@@ -282,6 +287,7 @@ export class HudImpl implements Hud {
       // Own units: contextual commands.
       action('Move', () => this.callbacks?.onMode('move'))
       action('Attack', () => this.callbacks?.onMode('attack'))
+      action('Stop', () => this.callbacks?.onStop())
       const hasWorker = selected.some((sid) => world.kind[sid] === KIND_WORKER)
       if (hasWorker) {
         action('Gather', () => this.callbacks?.onMode('gather'))
