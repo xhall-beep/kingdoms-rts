@@ -2,7 +2,10 @@ import type { World } from '../core/World'
 import {
   HARVEST_GOLD,
   HARVEST_WOOD,
+  KIND_ARCHERY,
+  KIND_BARRACKS,
   KIND_GOLDMINE,
+  KIND_HALL,
   KIND_RANGED,
   KIND_TREE,
   KIND_WORKER,
@@ -12,8 +15,9 @@ import type { BuildingType } from '../data/buildings.ts'
 import type { Command } from '../session/commands.ts'
 import type { Renderer } from '../render/renderer'
 import { placeStructure } from '../world/construction.ts'
-import { orderAttack } from '../systems/combat'
+import { orderAttack, orderAttackMove } from '../systems/combat'
 import { orderBuild, orderGather } from '../systems/gather'
+import { setRally } from '../systems/production.ts'
 import { orderMove } from '../systems/movement'
 
 export type InputMode = 'selection' | 'move' | 'attack' | 'gather' | 'build'
@@ -156,11 +160,26 @@ export class InputControllerImpl implements InputController {
     const p = renderer.screenToWorld(sx, sy)
     const target = this.entityAt(p.x, p.z)
     if (this.mode === 'move') {
-      for (const id of this.selected) orderMove(world, id, p.x, p.z)
-      this.emit({ type: 'move', step: 0, unitIds: [...this.selected], x: p.x, z: p.z })
-    } else if (this.mode === 'attack' && target !== -1) {
-      for (const id of this.selected) orderAttack(world, id, target)
-      this.emit({ type: 'attack', step: 0, unitIds: [...this.selected], targetId: target })
+      if (this.selected.length === 1 && this.isProductionBuilding(world, this.selected[0])) {
+        setRally(world, this.selected[0], p.x, p.z)
+        this.emit({ type: 'rally', step: 0, buildingId: this.selected[0], x: p.x, z: p.z })
+      } else {
+        for (const id of this.selected) orderMove(world, id, p.x, p.z)
+        this.emit({ type: 'move', step: 0, unitIds: [...this.selected], x: p.x, z: p.z })
+      }
+    } else if (this.mode === 'attack') {
+      if (target !== -1 && world.team[target] !== TEAM_PLAYER) {
+        for (const id of this.selected) orderAttack(world, id, target)
+        this.emit({ type: 'attack', step: 0, unitIds: [...this.selected], targetId: target })
+      } else {
+        const fighters = this.selected.filter(
+          (id) => world.kind[id] === KIND_MELEE || world.kind[id] === KIND_RANGED,
+        )
+        for (const id of fighters) orderAttackMove(world, id, p.x, p.z)
+        if (fighters.length > 0) {
+          this.emit({ type: 'attackmove', step: 0, unitIds: fighters, x: p.x, z: p.z })
+        }
+      }
     } else if (this.mode === 'gather' && target !== -1) {
       this.assignGather(world, target)
     } else if (this.mode === 'build' && this.pendingBuilding !== null) {
@@ -203,6 +222,11 @@ export class InputControllerImpl implements InputController {
     const movers = this.selected.filter((id) => world.kind[id] <= KIND_RANGED)
     for (const id of movers) orderMove(world, id, p.x, p.z)
     this.emit({ type: 'move', step: 0, unitIds: movers, x: p.x, z: p.z })
+  }
+
+  private isProductionBuilding(world: World, id: number): boolean {
+    const k = world.kind[id]
+    return k === KIND_HALL || k === KIND_BARRACKS || k === KIND_ARCHERY
   }
 
   private assignGather(world: World, node: number): void {
