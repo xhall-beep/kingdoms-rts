@@ -26,6 +26,8 @@ export interface HudCallbacks {
   onSave(): void
   onLoad(): void
   onDifficulty(d: AIDifficulty): void
+  onReplay(): void
+  onReplaySpeed(speed: number): void
 }
 
 const MODES: { id: InputMode; label: string }[] = [
@@ -98,6 +100,31 @@ export class HudImpl implements Hud {
         btn.addEventListener('click', fn)
         sessionEl.appendChild(btn)
       }
+      const replayBtn = document.createElement('button')
+      replayBtn.className = 'hud-pill hud-mode'
+      replayBtn.textContent = 'Replay'
+      replayBtn.addEventListener('click', () => {
+        this.callbacks?.onReplay()
+        const inReplay = replayBtn.textContent === 'Replay'
+        replayBtn.textContent = inReplay ? 'Exit' : 'Replay'
+        speedRow.hidden = !inReplay
+      })
+      sessionEl.appendChild(replayBtn)
+      const speedRow = document.createElement('div')
+      speedRow.className = 'hud-bar hud-session'
+      speedRow.hidden = true
+      for (const s of [1, 2, 4]) {
+        const btn = document.createElement('button')
+        btn.className = 'hud-pill hud-mode' + (s === 1 ? ' hud-mode-on' : '')
+        btn.textContent = `${s}x`
+        btn.addEventListener('click', () => {
+          for (const b of speedRow.querySelectorAll('button')) b.classList.remove('hud-mode-on')
+          btn.classList.add('hud-mode-on')
+          this.callbacks?.onReplaySpeed(s)
+        })
+        speedRow.appendChild(btn)
+      }
+      sessionEl.appendChild(speedRow)
       for (const d of ['easy', 'normal', 'hard'] as AIDifficulty[]) {
         const btn = document.createElement('button')
         btn.className = 'hud-pill hud-mode' + (d === 'normal' ? ' hud-mode-on' : '')
