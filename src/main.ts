@@ -12,6 +12,8 @@ import { ProductionSystemImpl } from './systems/production'
 import { enqueueTrain } from './systems/production'
 import { VictorySystemImpl } from './systems/victory'
 import { VisionSystemImpl } from './systems/vision'
+import { CommandLog } from './session/commands.ts'
+import { hasSave, loadIntoWorld, readSave, writeSave } from './session/save-load.ts'
 import { HudImpl } from './ui/hud'
 import type { HudCallbacks } from './ui/hud'
 
@@ -83,6 +85,10 @@ export function initializeGame(): GameComposition {
 
   const composition = composeGame(canvas)
   seedScenario(composition.engine.world)
+  const commandLog = new CommandLog()
+  composition.inputController.setCommandListener((cmd) => {
+    commandLog.record({ ...cmd, step: composition.engine.getSimulationSteps() })
+  })
   composition.renderer.centerOn(-40, -40, 8)
   composition.renderer.resize(canvas.clientWidth || 1280, canvas.clientHeight || 720)
   const hudCallbacks: HudCallbacks = {
@@ -90,11 +96,52 @@ export function initializeGame(): GameComposition {
     onBuildType: (type) => composition.inputController.setPendingBuilding(type),
     onTrain: (type) => {
       const selected = composition.inputController.getSelected()
-      if (selected.length === 1) enqueueTrain(composition.engine.world, selected[0], type)
+      if (selected.length !== 1) return
+      const buildingId = selected[0]
+      if (enqueueTrain(composition.engine.world, buildingId, type)) {
+        commandLog.record({
+          type: 'train',
+          step: composition.engine.getSimulationSteps(),
+          buildingId,
+          unit: type,
+        })
+      }
+    },
+    onPause: () => {
+      const engine = composition.engine
+      if (engine.isPaused()) engine.resume()
+      else engine.pause()
+    },
+    onSave: () => {
+      writeSave(
+        composition.engine.world,
+        composition.engine.getSimulationSteps(),
+        commandLog.getCommands(),
+      )
+    },
+    onLoad: () => {
+      const save = readSave()
+      if (!save) return
+      const { commands } = loadIntoWorld(composition.engine.world, save)
+      commandLog.fromJSON(commands)
+      composition.inputController.setCommandListener((cmd) => {
+        commandLog.record({ ...cmd, step: composition.engine.getSimulationSteps() })
+      })
     },
   }
   composition.hud.mount(hudRoot, hudCallbacks)
   composition.engine.start()
+
+  // Autosave every 30 seconds so a closed tab never loses much.
+  setInterval(() => {
+    if (composition.engine.world.winner === -1) {
+      writeSave(
+        composition.engine.world,
+        composition.engine.getSimulationSteps(),
+        commandLog.getCommands(),
+      )
+    }
+  }, 30_000)
 
   // Render loop: draw the world for the player, then refresh the HUD.
   const frame = (): void => {
