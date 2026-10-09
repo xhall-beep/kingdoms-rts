@@ -353,3 +353,21 @@ code {
 .hud-gold b { color: #f5c542; }
 .hud-wood b { color: #7fd08a; }
 .hud-info { margin-left: auto; opacity: 0.85; }
+
+.hud-modes {
+  margin-top: 8px;
+}
+
+.hud-mode {
+  cursor: pointer;
+  font: inherit;
+  pointer-events: auto;
+  min-height: 44px;
+  padding: 6px 16px;
+}
+
+.hud-mode-on {
+  background: #f5c542;
+  color: #102b2b;
+  border-color: #f5c542;
+}
