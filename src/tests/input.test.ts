@@ -4,6 +4,7 @@
  */
 import { TEAM_PLAYER, KIND_WORKER } from '../core/World.ts'
 import { makeWorld } from './setup.ts'
+import { orderMove, orderStop } from '../systems/movement.ts'
 import { InputControllerImpl } from '../input/input-controller.ts'
 import { suite, test, assert, assertEqual } from './harness.ts'
 
@@ -90,4 +91,32 @@ test('deselect via empty selectBuilding then getSelected', () => {
   // Selecting a non-existent kind keeps current selection (no-op).
   input.selectBuilding(99)
   assertEqual(input.getSelected().length, 1, 'selection unchanged on no-op')
+})
+
+suite('idle workers and stop')
+test('selectIdleWorkers selects idle workers', () => {
+  const { world, input } = setup()
+  // All seed workers start idle.
+  input.selectIdleWorkers()
+  const sel = input.getSelected()
+  assert(sel.length > 0, 'should select idle workers')
+  for (const id of sel) {
+    assert(world.kind[id] === KIND_WORKER, 'only workers selected')
+  }
+})
+
+test('orderStop halts moving units', () => {
+  const { world } = setup()
+  let workerId = -1
+  for (const id of world.entities.keys()) {
+    if (world.team[id] === TEAM_PLAYER && world.kind[id] === KIND_WORKER) {
+      workerId = id
+      break
+    }
+  }
+  orderMove(world, workerId, 50, 50)
+  assert(world.moving[workerId] === 1, 'worker is moving')
+  orderStop(world, workerId)
+  assert(world.moving[workerId] === 0, 'worker stopped')
+  assert(world.state[workerId] === 0, 'worker idle')
 })
