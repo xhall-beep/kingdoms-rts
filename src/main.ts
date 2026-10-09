@@ -1,4 +1,6 @@
+import { OpponentAI } from './ai/opponent'
 import { Engine } from './core/Engine'
+import { TEAM_ENEMY } from './core/World'
 import { InputControllerImpl } from './input/input-controller'
 import { Renderer } from './render/renderer'
 import { seedScenario } from './scenario'
@@ -7,6 +9,7 @@ import { CombatSystemImpl } from './systems/combat'
 import { GatherSystemImpl } from './systems/gather'
 import { MovementSystemImpl } from './systems/movement'
 import { ProductionSystemImpl } from './systems/production'
+import { VisionSystemImpl } from './systems/vision'
 import { HudImpl } from './ui/hud'
 
 export interface GameComposition {
@@ -19,6 +22,8 @@ export interface GameComposition {
     combat: CombatSystemImpl
     gather: GatherSystemImpl
     production: ProductionSystemImpl
+    vision: VisionSystemImpl
+    opponent: OpponentAI
   }
 }
 
@@ -28,12 +33,16 @@ export function composeGame(): GameComposition {
     production: new ProductionSystemImpl(),
     gather: new GatherSystemImpl(),
     combat: new CombatSystemImpl(),
+    vision: new VisionSystemImpl(),
+    opponent: new OpponentAI(TEAM_ENEMY),
     movement: new MovementSystemImpl(),
   }
   // Decisions first, steering integration last.
   engine.world.registerSystem(systems.production)
   engine.world.registerSystem(systems.gather)
   engine.world.registerSystem(systems.combat)
+  engine.world.registerSystem(systems.vision)
+  engine.world.registerSystem(systems.opponent)
   engine.world.registerSystem(systems.movement)
   return {
     engine,
