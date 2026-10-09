@@ -9,6 +9,7 @@ import {
   TEAM_PLAYER,
 } from '../core/World'
 import type { BuildingType } from '../data/buildings.ts'
+import type { Command } from '../session/commands.ts'
 import type { Renderer } from '../render/renderer'
 import { placeStructure } from '../world/construction.ts'
 import { orderAttack } from '../systems/combat'
@@ -38,6 +39,7 @@ export class InputControllerImpl implements InputController {
   private dragStart: { x: number; y: number } | null = null
   private panning = false
   private pendingBuilding: BuildingType | null = null
+  private commandListener: ((cmd: Command) => void) | null = null
 
   attach(canvas: HTMLCanvasElement, world: World, renderer: Renderer): void {
     this.world = world
@@ -74,6 +76,15 @@ export class InputControllerImpl implements InputController {
 
   getPendingBuilding(): BuildingType | null {
     return this.pendingBuilding
+  }
+
+  /** Receive every player-issued command (for the command log / replays). */
+  setCommandListener(listener: ((cmd: Command) => void) | null): void {
+    this.commandListener = listener
+  }
+
+  private emit(cmd: Command): void {
+    this.commandListener?.(cmd)
   }
 
   private onDown(e: PointerEvent): void {
@@ -146,8 +157,10 @@ export class InputControllerImpl implements InputController {
     const target = this.entityAt(p.x, p.z)
     if (this.mode === 'move') {
       for (const id of this.selected) orderMove(world, id, p.x, p.z)
+      this.emit({ type: 'move', step: 0, unitIds: [...this.selected], x: p.x, z: p.z })
     } else if (this.mode === 'attack' && target !== -1) {
       for (const id of this.selected) orderAttack(world, id, target)
+      this.emit({ type: 'attack', step: 0, unitIds: [...this.selected], targetId: target })
     } else if (this.mode === 'gather' && target !== -1) {
       this.assignGather(world, target)
     } else if (this.mode === 'build' && this.pendingBuilding !== null) {
@@ -166,6 +179,7 @@ export class InputControllerImpl implements InputController {
     const placed = placeStructure(world, TEAM_PLAYER, type, x, z)
     if (placed.ok) {
       orderBuild(world, worker, placed.id)
+      this.emit({ type: 'build', step: 0, workerId: worker, building: type, x, z, siteId: placed.id })
       // Stay in build mode for placing more; the HUD can cancel.
     }
   }
@@ -179,23 +193,27 @@ export class InputControllerImpl implements InputController {
     const target = this.entityAt(p.x, p.z, true)
     if (target !== -1 && world.team[target] !== TEAM_PLAYER && world.isAttackable(target)) {
       for (const id of this.selected) orderAttack(world, id, target)
+      this.emit({ type: 'attack', step: 0, unitIds: [...this.selected], targetId: target })
       return
     }
     if (target !== -1 && (world.kind[target] === KIND_TREE || world.kind[target] === KIND_GOLDMINE)) {
       this.assignGather(world, target)
       return
     }
-    for (const id of this.selected) {
-      if (world.kind[id] <= KIND_RANGED) orderMove(world, id, p.x, p.z)
-    }
+    const movers = this.selected.filter((id) => world.kind[id] <= KIND_RANGED)
+    for (const id of movers) orderMove(world, id, p.x, p.z)
+    this.emit({ type: 'move', step: 0, unitIds: movers, x: p.x, z: p.z })
   }
 
   private assignGather(world: World, node: number): void {
     const want = world.kind[node] === KIND_TREE ? HARVEST_WOOD : HARVEST_GOLD
-    for (const id of this.selected) {
-      if (world.kind[id] !== KIND_WORKER) continue
+    const workers = this.selected.filter((id) => world.kind[id] === KIND_WORKER)
+    for (const id of workers) {
       world.harvestKind[id] = want
       orderGather(world, id)
+    }
+    if (workers.length > 0) {
+      this.emit({ type: 'gather', step: 0, unitIds: workers, nodeId: node })
     }
   }
 
