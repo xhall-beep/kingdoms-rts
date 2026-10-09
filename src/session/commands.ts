@@ -12,6 +12,7 @@ import type { UnitType } from '../data/units.ts'
 export type Command =
   | { type: 'move'; step: number; unitIds: number[]; x: number; z: number }
   | { type: 'attack'; step: number; unitIds: number[]; targetId: number }
+  | { type: 'attackmove'; step: number; unitIds: number[]; x: number; z: number }
   | { type: 'gather'; step: number; unitIds: number[]; nodeId: number }
   | {
       type: 'build'
@@ -23,6 +24,7 @@ export type Command =
       siteId: number
     }
   | { type: 'train'; step: number; buildingId: number; unit: UnitType }
+  | { type: 'rally'; step: number; buildingId: number; x: number; z: number }
 
 export class CommandLog {
   private commands: Command[] = []
