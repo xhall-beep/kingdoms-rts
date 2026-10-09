@@ -422,3 +422,7 @@ code {
   color: #fee2e2;
   border: 3px solid #ef4444;
 }
+
+.hud-session {
+  margin-top: 8px;
+}
