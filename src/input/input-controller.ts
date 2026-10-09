@@ -223,8 +223,8 @@ export class InputControllerImpl implements InputController {
     const b = renderer.screenToWorld(Math.max(x0, x1), Math.max(y0, y1))
     const minX = Math.min(a.x, b.x)
     const maxX = Math.max(a.x, b.x)
-    const minZ = Math.min(a.y, b.y)
-    const maxZ = Math.max(a.y, b.y)
+    const minZ = Math.min(a.z, b.z)
+    const maxZ = Math.max(a.z, b.z)
     const inside: number[] = []
     for (const id of world.entities.keys()) {
       if (world.team[id] !== TEAM_PLAYER) continue
