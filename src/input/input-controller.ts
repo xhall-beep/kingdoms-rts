@@ -1,4 +1,5 @@
 import type { World } from '../core/World'
+import { orderStop } from '../systems/movement.ts'
 import {
   HARVEST_GOLD,
   HARVEST_WOOD,
@@ -16,6 +17,7 @@ import {
   KIND_WORKER,
   TEAM_PLAYER,
 } from '../core/World'
+import { orderStop } from '../systems/movement.ts'
 import type { BuildingType } from '../data/buildings.ts'
 import type { Command } from '../session/commands.ts'
 import type { Renderer } from '../render/renderer'
@@ -124,6 +126,17 @@ export class InputControllerImpl implements InputController {
     }
     this.selected = idle
     renderer.setSelection(this.selected)
+  }
+
+  /** Stop all selected units: cancel movement, attacks, and other orders. */
+  stopSelected(): void {
+    const world = this.world
+    if (!world) return
+    for (const id of this.selected) {
+      if (world.team[id] === TEAM_PLAYER && world.kind[id] <= KIND_RANGED) {
+        orderStop(world, id)
+      }
+    }
   }
 
   /** All building kinds the player currently owns (for the quick-select bar). */
