@@ -17,6 +17,7 @@ import { ReplayPlayer } from './session/replay.ts'
 import {
   deserializeWorld,
   loadIntoWorld,
+  clearSave,
   readSave,
   serializeWorld,
   writeSave,
@@ -161,6 +162,10 @@ export function initializeGame(): GameComposition {
     },
     onReplaySpeed: (speed: number) => {
       replayPlayer.setSpeed(speed)
+    },
+    onNewGame: () => {
+      clearSave()
+      location.reload()
     },
     onLoad: () => {
       const save = readSave()
