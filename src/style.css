@@ -294,3 +294,62 @@ code {
     border-right-color: var(--border);
   }
 }
+
+/* ---- Kingdoms RTS game shell ---- */
+.game-shell {
+  position: fixed;
+  inset: 0;
+  background: #0c1410;
+  overflow: hidden;
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+}
+
+.game-stage {
+  position: absolute;
+  inset: 0;
+}
+
+#game-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+#hud-root {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  pointer-events: none;
+  padding: 10px;
+}
+
+.hud-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.hud-pill {
+  background: rgba(16, 43, 43, 0.9);
+  border: 2px solid rgba(255, 243, 212, 0.2);
+  border-radius: 999px;
+  color: #fff3d4;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
+.hud-pill b {
+  color: #fff;
+  margin-left: 4px;
+}
+
+.hud-gold b { color: #f5c542; }
+.hud-wood b { color: #7fd08a; }
+.hud-info { margin-left: auto; opacity: 0.85; }
