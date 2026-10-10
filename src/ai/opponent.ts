@@ -57,9 +57,12 @@ const DIFFICULTY: Record<AIDifficulty, DifficultyTuning> = {
  * and only attacks the enemy hall once it has explored that spot. Until then it
  * marches toward the mirror of its own hall, then searches the map.
  */
+export type AIPersonality = 'aggressor' | 'defender' | 'expander'
+
 export class OpponentAI implements System {
   private readonly team: 0 | 1
   private readonly tuning: DifficultyTuning
+  private readonly personality!: AIPersonality
   private timer = 0
   private gameTime = 0 // seconds elapsed
   private scoutId: number | null = null
@@ -307,15 +310,37 @@ export class OpponentAI implements System {
     return true
   }
 
+  /** How many soldiers to keep at home as garrison (scales with game time + personality). */
+  private getGarrisonSize(): number {
+    let base = 0
+    if (this.gameTime >= 300) base = 3
+    else if (this.gameTime >= 120) base = 2
+    // Personalities adjust
+    if (this.personality === 'defender') base += 2
+    if (this.personality === 'aggressor') base = Math.max(0, base - 1)
+    return base
+  }
+
   /** Once strong enough, idle soldiers march on the enemy hall (or search for it). */
   private attack(world: World, hall: number, soldiers: number[]): void {
-    const forced = this.gameTime > 240 && soldiers.length >= 3 // 4 min: attack with what you have
-    if (!forced && soldiers.length < this.tuning.attackArmy) return
+    const garrisonSize = this.getGarrisonSize()
+    const available = soldiers.length - garrisonSize
+    const forced = this.gameTime > 240 && available >= 3 // 4 min: attack with what you have
+    if (!forced && available < this.tuning.attackArmy) return
     const idle = soldiers.filter((id) => world.state[id] === STATE_IDLE)
-    if (idle.length === 0) return
-    const target = this.findTarget(world, hall, idle)
+    // Reserve garrison: keep the closest soldiers to hall at home
+    const hx = world.positionX[hall]
+    const hz = world.positionZ[hall]
+    const sorted = [...idle].sort((a, b) => {
+      const da = Math.hypot(world.positionX[a] - hx, world.positionZ[a] - hz)
+      const db = Math.hypot(world.positionX[b] - hx, world.positionZ[b] - hz)
+      return da - db
+    })
+    const attackers = sorted.slice(garrisonSize)
+    if (attackers.length === 0) return
+    const target = this.findTarget(world, hall, attackers)
     if (target === null) return
-    for (const id of idle) orderAttackMove(world, id, target.x, target.z)
+    for (const id of attackers) orderAttackMove(world, id, target.x, target.z)
   }
 
   /** Where to send the army: the enemy hall if explored, else the mirror guess, else search. */
