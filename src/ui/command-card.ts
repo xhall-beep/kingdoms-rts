@@ -199,7 +199,6 @@ export function renderCommandCard(
       cmd('Stop', () => cb.onStop(), false, 'S')
       if (kind === KIND_WORKER) {
         cmd('Gather', () => cb.onMode('gather'), false, 'G')
-        cmd('Build', () => cb.onMode('build'), false, 'B')
         // Build options as separate buttons
         for (const btype of PLAYER_BUILDABLE) {
           const bdef = BUILDINGS[btype]
