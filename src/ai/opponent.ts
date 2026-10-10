@@ -14,9 +14,10 @@ import {
   NO_TARGET,
   NO_TRAINING,
   STATE_IDLE,
-} from '../core/World'
+  KIND_GOLDMINE} from '../core/World'
 import { orderBuild, orderGather } from '../systems/gather.ts'
 import { orderAttackMove } from '../systems/combat.ts'
+import { orderMove } from '../systems/movement.ts'
 import { enqueueTrain } from '../systems/production.ts'
 import {
   BUILDING_TYPE_BY_KIND,
@@ -61,6 +62,8 @@ export class OpponentAI implements System {
   private readonly tuning: DifficultyTuning
   private timer = 0
   private gameTime = 0 // seconds elapsed
+  private scoutId: number | null = null
+  private scoutTargets: { x: number; z: number }[] = []
 
   constructor(team: 0 | 1, difficulty: AIDifficulty = 'normal') {
     this.team = team
@@ -82,6 +85,8 @@ export class OpponentAI implements System {
 
     this.trainWorkers(world, hall, workers.length)
     this.assignWorkers(world, workers)
+    this.scout(world, hall, workers)
+    this.expandBase(world, hall, workers)
     const reserveGold = this.expand(world, hall, workers)
     this.trainSoldiers(world, workers.length, reserveGold)
     if (!this.defend(world, hall, soldiers)) this.attack(world, hall, soldiers)
@@ -117,6 +122,92 @@ export class OpponentAI implements System {
    * Returns the gold cost to reserve from soldier training while saving
    * for the planned building (0 when nothing is planned).
    */
+  /** Build a second Town Hall near untapped resources when the main base depletes. */
+  private expandBase(world: World, _hall: number, workers: number[]): void {
+    // Only consider expansion after 5 minutes, and only once
+    if (this.gameTime < 300) return
+    const halls = structuresOf(world, this.team, KIND_HALL, true)
+    if (halls.length >= 2) return // Already expanded
+    if (world.gold[this.team] < 400) return // Need savings for the hall
+
+    // Find a gold mine far from our existing halls
+    let best: number | null = null
+    let bestDist = 60 // Minimum distance from existing halls
+    for (const id of world.entities.keys()) {
+      if (world.kind[id] !== KIND_GOLDMINE) continue
+      if (world.amount[id] < 500) continue // Need a rich node
+      let minHallDist = Infinity
+      for (const h of halls) {
+        const d = Math.hypot(world.positionX[id] - world.positionX[h], world.positionZ[id] - world.positionZ[h])
+        minHallDist = Math.min(minHallDist, d)
+      }
+      if (minHallDist > bestDist) {
+        bestDist = minHallDist
+        best = id
+      }
+    }
+
+    if (best !== null) {
+      // Send a worker to build a hall near this gold mine
+      const gx = world.positionX[best]
+      const gz = world.positionZ[best]
+      const worker = workers.find((id) => world.state[id] === STATE_IDLE)
+      if (worker !== undefined) {
+        const placed = placeStructure(world, this.team, 'hall', gx + 10, gz + 10)
+        if (placed.ok) {
+          orderBuild(world, worker, placed.id)
+        }
+      }
+    }
+  }
+
+  /** Send a worker to scout the map and find the enemy base. */
+  private scout(world: World, hall: number, workers: number[]): void {
+    // Only scout early game, and only if we don't know where the enemy is
+    if (this.gameTime > 180) return // Stop scouting after 3 minutes
+    const enemyTeam = (this.team === 0 ? 1 : 0) as 0 | 1
+    const enemyHall = structuresOf(world, enemyTeam, KIND_HALL, false)[0]
+    if (enemyHall !== undefined) {
+      const ex = world.positionX[enemyHall]
+      const ez = world.positionZ[enemyHall]
+      if (isExplored(world, this.team, ex, ez)) return // Already found them
+    }
+
+    // Check if our scout is still alive and scouting
+    if (this.scoutId !== null) {
+      if (!world.entities.has(this.scoutId) || world.health[this.scoutId] <= 0) {
+        this.scoutId = null
+      } else if (world.state[this.scoutId] === STATE_IDLE && this.scoutTargets.length > 0) {
+        // Scout arrived, send to next target
+        const t = this.scoutTargets.shift()!
+        orderMove(world, this.scoutId, t.x, t.z)
+        return
+      } else if (world.state[this.scoutId] !== STATE_IDLE) {
+        return // Still moving
+      }
+    }
+
+    // Need a new scout
+    if (this.scoutId === null && workers.length >= 3 && this.scoutTargets.length === 0) {
+      // Generate scout targets (map corners and center)
+      const hx = world.positionX[hall]
+      const hz = world.positionZ[hall]
+      // Scout away from our base
+      this.scoutTargets = [
+        { x: -hx, z: -hz }, // Mirror position (likely enemy base)
+        { x: -hx * 0.5, z: hz * 0.5 },
+        { x: hx * 0.5, z: -hz * 0.5 },
+      ]
+      // Pick a worker (not the one building)
+      const scout = workers.find((id) => world.state[id] === STATE_IDLE)
+      if (scout !== undefined) {
+        this.scoutId = scout
+        const t = this.scoutTargets.shift()!
+        orderMove(world, scout, t.x, t.z)
+      }
+    }
+  }
+
   private expand(world: World, hall: number, workers: number[]): number {
     const team = this.team
     const all = (kind: number): number => structuresOf(world, team, kind, false).length
