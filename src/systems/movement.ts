@@ -1,5 +1,5 @@
 import type { System, World } from '../core/World'
-import { HARVEST_OFF, KIND_WORKER, NO_TARGET, STATE_IDLE, STATE_MOVE } from '../core/World'
+import { HARVEST_OFF, KIND_WORKER, NO_TARGET, STATE_IDLE, STATE_MOVE , STATE_PATROL, STATE_HOLD} from '../core/World'
 
 /**
  * Steering: every entity flagged `moving` walks toward (targetX, targetZ) at
@@ -62,4 +62,24 @@ export function orderMove(world: World, id: number, x: number, z: number): void 
   if (world.kind[id] === KIND_WORKER) {
     world.harvestKind[id] = HARVEST_OFF
   }
+}
+
+/** Patrol between current position and target. Engages enemies encountered. */
+export function orderPatrol(world: World, id: number, x: number, z: number): void {
+  // Store origin in resume fields
+  world.resumeX[id] = world.positionX[id]
+  world.resumeZ[id] = world.positionZ[id]
+  world.targetX[id] = x
+  world.targetZ[id] = z
+  world.stopDist[id] = 0.5
+  world.moving[id] = 1
+  world.state[id] = STATE_PATROL
+}
+
+/** Hold position: attack enemies in range but don't move. */
+export function orderHold(world: World, id: number): void {
+  world.moving[id] = 0
+  world.velocityX[id] = 0
+  world.velocityZ[id] = 0
+  world.state[id] = STATE_HOLD
 }
