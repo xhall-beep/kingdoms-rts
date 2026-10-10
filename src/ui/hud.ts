@@ -1,7 +1,6 @@
 import { BUILDINGS } from '../data/buildings.ts'
 import { FACTIONS, FACTION_IDS } from '../data/factions.ts'
 import type { BuildingType } from '../data/buildings.ts'
-import { UNITS } from '../data/units.ts'
 import type { UnitType } from '../data/units.ts'
 import type { AIDifficulty } from '../ai/opponent.ts'
 import type { InputMode } from '../input/input-controller'
@@ -10,15 +9,12 @@ import {
   KIND_ARCHERY,
   KIND_BARRACKS,
   KIND_FARM,
-  KIND_GOLDMINE,
   KIND_HALL,
-  KIND_MELEE,
-  KIND_RANGED,
-  KIND_TREE,
   KIND_WORKER,
   TEAM_PLAYER,
 } from '../core/World'
-import { BUILDING_TYPE_BY_KIND, PLAYER_BUILDABLE, canAfford } from '../world/construction.ts'
+import { BUILDING_TYPE_BY_KIND } from '../world/construction.ts'
+import { renderCommandCard } from './command-card.ts'
 
 export interface Hud {
   render(world: World): void
@@ -43,11 +39,6 @@ export interface HudCallbacks {
 
 
 /** Which unit each production building trains. */
-const TRAIN_BY_BUILDING: Record<number, UnitType> = {
-  [KIND_HALL]: 'worker',
-  [KIND_BARRACKS]: 'melee',
-  [KIND_ARCHERY]: 'ranged',
-}
 
 /**
  * DOM HUD: resource bar, command mode buttons, a contextual action panel
@@ -264,128 +255,21 @@ export class HudImpl implements Hud {
   }
 
   /** Rebuild the contextual info + action panel when the selection changes. */
+  /** Render the RTS command card for the current selection. */
   private updateActions(world: World, selected: number[]): void {
     const el = this.actionsEl
     if (!el) return
-    const key = `${selected.join(',')}|${Math.floor(world.gold[TEAM_PLAYER])}|${Math.floor(world.wood[TEAM_PLAYER])}`
+    // Key includes HP so the card refreshes as damage is taken.
+    const hpKey = selected.length > 0 ? Math.floor(world.health[selected[0]]) : 0
+    const key = `${selected.join(',')}|${Math.floor(world.gold[TEAM_PLAYER])}|${Math.floor(world.wood[TEAM_PLAYER])}|${hpKey}`
     if (key === this.lastActionsKey) return
     this.lastActionsKey = key
-    el.innerHTML = ''
-
-    if (selected.length === 0) return
-    const id = selected[0]
-    const kind = world.kind[id]
-    const isOwn = world.team[id] === TEAM_PLAYER
-
-    const info = (text: string): void => {
-      const span = document.createElement('span')
-      span.className = 'hud-pill hud-detail'
-      span.textContent = text
-      el.appendChild(span)
-    }
-    const action = (text: string, fn: () => void, disabled = false): void => {
-      const btn = document.createElement('button')
-      btn.className = 'hud-pill hud-action'
-      btn.textContent = text
-      btn.disabled = disabled
-      btn.addEventListener('click', fn)
-      el.appendChild(btn)
-    }
-    const unitTypeOf = (k: number): UnitType =>
-      k === KIND_WORKER ? 'worker' : k === KIND_MELEE ? 'melee' : 'ranged'
-
-    // --- Resource nodes: info only ---
-    if (kind === KIND_TREE || kind === KIND_GOLDMINE) {
-      const name = kind === KIND_TREE ? 'Tree' : 'Gold Mine'
-      const res = kind === KIND_TREE ? 'wood' : 'gold'
-      info(`${name}`)
-      info(`${Math.floor(world.amount[id])} ${res} remaining`)
-      return
-    }
-
-    // --- Units ---
-    if (kind === KIND_WORKER || kind === KIND_MELEE || kind === KIND_RANGED) {
-      const utype = unitTypeOf(kind)
-      const def = UNITS[utype]
-      const hp = Math.floor(world.health[id])
-      const owner = isOwn ? '' : 'Enemy '
-
-      if (selected.length === 1) {
-        info(`${owner}${label(utype)} · HP ${hp}/${def.hp}`)
-        info(`Dmg ${def.damage} · Range ${def.range} · Sight ${def.sight}`)
-      } else {
-        // Multiple: composition summary.
-        let workers = 0
-        let melee = 0
-        let ranged = 0
-        for (const sid of selected) {
-          const k = world.kind[sid]
-          if (k === KIND_WORKER) workers += 1
-          else if (k === KIND_MELEE) melee += 1
-          else if (k === KIND_RANGED) ranged += 1
-        }
-        const parts: string[] = []
-        if (workers > 0) parts.push(`${workers} Worker${workers > 1 ? 's' : ''}`)
-        if (melee > 0) parts.push(`${melee} Melee`)
-        if (ranged > 0) parts.push(`${ranged} Ranged`)
-        info(parts.join(' · '))
-      }
-
-      if (!isOwn) return // Enemies: info only.
-
-      // Own units: contextual commands.
-      action('Move', () => this.callbacks?.onMode('move'))
-      action('Attack', () => this.callbacks?.onMode('attack'))
-      action('Stop', () => this.callbacks?.onStop())
-      const hasWorker = selected.some((sid) => world.kind[sid] === KIND_WORKER)
-      if (hasWorker) {
-        action('Gather', () => this.callbacks?.onMode('gather'))
-        for (const type of PLAYER_BUILDABLE) {
-          const bdef = BUILDINGS[type]
-          action(
-            `${label(type)} (${bdef.cost.gold}g ${bdef.cost.wood}w)`,
-            () => this.callbacks?.onBuildType(type),
-            !canAfford(world, TEAM_PLAYER, type),
-          )
-        }
-      }
-      return
-    }
-
-    // --- Buildings ---
-    if (
-      kind === KIND_HALL ||
-      kind === KIND_BARRACKS ||
-      kind === KIND_ARCHERY ||
-      kind === KIND_FARM
-    ) {
-      const btype = BUILDING_TYPE_BY_KIND[kind]
-      const def = BUILDINGS[btype]
-      const hp = Math.floor(world.health[id])
-      const owner = isOwn ? '' : 'Enemy '
-      info(`${owner}${def.name} · HP ${hp}/${def.hp}`)
-
-      if (world.buildProgress[id] < world.buildTotal[id]) {
-        const pct = Math.floor((world.buildProgress[id] / world.buildTotal[id]) * 100)
-        info(`Under construction · ${pct}%`)
-      }
-      if (def.supply > 0) info(`Provides +${def.supply} supply`)
-      if (def.trains.length > 0) info(`Trains: ${def.trains.map((t) => label(t)).join(', ')}`)
-
-      if (!isOwn) return // Enemies: info only.
-
-      if (kind in TRAIN_BY_BUILDING) {
-        const unit: UnitType = TRAIN_BY_BUILDING[kind]
-        const udef = UNITS[unit]
-        action(
-          `Train ${label(unit)} (${udef.cost.gold}g ${udef.cost.wood}w)`,
-          () => this.callbacks?.onTrain(unit),
-          world.gold[TEAM_PLAYER] < udef.cost.gold || world.wood[TEAM_PLAYER] < udef.cost.wood,
-        )
-        action('Set Rally', () => this.callbacks?.onMode('move'))
-      }
-      return
-    }
+    renderCommandCard(el, world, selected, {
+      onMode: (mode) => this.callbacks?.onMode(mode as never),
+      onStop: () => this.callbacks?.onStop(),
+      onBuildType: (type) => this.callbacks?.onBuildType(type as never),
+      onTrain: (type) => this.callbacks?.onTrain(type as never),
+    })
   }
 
   private updateBanner(world: World): void {
@@ -399,8 +283,4 @@ export class HudImpl implements Hud {
     el.textContent = world.winner === 0 ? 'Victory!' : 'Defeat'
     el.className = 'hud-banner ' + (world.winner === 0 ? 'hud-win' : 'hud-lose')
   }
-}
-
-function label(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1)
 }
