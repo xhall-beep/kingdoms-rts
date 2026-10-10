@@ -66,6 +66,7 @@ export class InputControllerImpl implements InputController {
 
   setMode(mode: InputMode): void {
     this.mode = mode
+    this.updateModeBanner()
   }
 
   getMode(): InputMode {
@@ -159,9 +160,27 @@ export class InputControllerImpl implements InputController {
   }
 
   /** Choose which building the next 'build'-mode tap will place. */
+  /** Show/hide a build-mode banner. */
+  private updateModeBanner(): void {
+    let banner = document.getElementById('build-mode-banner')
+    if (this.mode === 'build' && this.pendingBuilding) {
+      if (!banner) {
+        banner = document.createElement('div')
+        banner.id = 'build-mode-banner'
+        banner.style.cssText = 'position:fixed;top:60px;left:50%;transform:translateX(-50%);background:#f5c542;color:#102b2b;padding:8px 16px;border-radius:8px;font-weight:bold;z-index:9999;pointer-events:none;'
+        document.body.appendChild(banner)
+      }
+      banner.textContent = `Tap map to place ${this.pendingBuilding}`
+      banner.hidden = false
+    } else if (banner) {
+      banner.hidden = true
+    }
+  }
+
   setPendingBuilding(type: BuildingType | null): void {
     this.pendingBuilding = type
     if (type !== null) this.setMode('build')
+    this.updateModeBanner()
   }
 
   getPendingBuilding(): BuildingType | null {
