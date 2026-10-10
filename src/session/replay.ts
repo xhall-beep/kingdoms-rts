@@ -7,7 +7,7 @@ import {
 } from '../core/World'
 import { orderAttack, orderAttackMove } from '../systems/combat.ts'
 import { orderBuild, orderGather } from '../systems/gather.ts'
-import { orderMove } from '../systems/movement.ts'
+import { orderMove, orderPatrol } from '../systems/movement.ts'
 import { enqueueTrain, setRally } from '../systems/production.ts'
 import { placeStructure } from '../world/construction.ts'
 import type { Command } from './commands.ts'
@@ -135,6 +135,11 @@ export class ReplayPlayer {
       case 'rally':
         if (world.entities.has(cmd.buildingId)) {
           setRally(world, cmd.buildingId, cmd.x, cmd.z)
+        }
+        break
+      case 'patrol':
+        for (const id of cmd.unitIds) {
+          if (world.entities.has(id)) orderPatrol(world, id, cmd.x, cmd.z)
         }
         break
     }
