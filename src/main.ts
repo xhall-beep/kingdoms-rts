@@ -4,6 +4,7 @@ import { TEAM_ENEMY, TEAM_PLAYER } from './core/World'
 import { InputControllerImpl } from './input/input-controller'
 import { Renderer } from './render/renderer'
 import { seedScenario } from './scenario'
+import type { FactionId } from './data/factions.ts'
 import './style.css'
 import { CombatSystemImpl } from './systems/combat'
 import { GatherSystemImpl } from './systems/gather'
@@ -93,7 +94,9 @@ export function initializeGame(): GameComposition {
   }
 
   const composition = composeGame(canvas)
-  seedScenario(composition.engine.world)
+  const playerFaction = (localStorage.getItem('krts-player-faction') || 'human') as FactionId
+  const enemyFaction = (localStorage.getItem('krts-enemy-faction') || 'orc') as FactionId
+  seedScenario(composition.engine.world, playerFaction, enemyFaction)
   const commandLog = new CommandLog()
   composition.inputController.setCommandListener((cmd) => {
     commandLog.record({ ...cmd, step: composition.engine.getSimulationSteps() })
