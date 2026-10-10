@@ -505,7 +505,7 @@ code {
 .hud-tutorial button{margin-top:12px;min-height:44px;padding:8px 24px;font:inherit;font-weight:700;background:#f5c542;color:#102b2b;border:none;border-radius:8px;cursor:pointer}
 
 /* --- RTS Command Card --- */
-.cmd-card{background:#0f2b2bf2;border:2px solid #f5c54233;border-radius:16px;padding:12px;margin-top:8px;max-width:100%}
+.cmd-card{pointer-events:auto;background:#0f2b2bf2;border:2px solid #f5c54233;border-radius:16px;padding:12px;margin-top:8px;max-width:100%}
 .cmd-header{display:flex;gap:12px;align-items:center;margin-bottom:10px}
 .cmd-portrait{width:56px;height:56px;min-width:56px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;color:#fff;border:2px solid #ffffff33}
 .cmd-title-wrap{flex:1;min-width:0}
