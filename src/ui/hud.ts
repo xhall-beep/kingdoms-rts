@@ -109,6 +109,16 @@ export class HudImpl implements Hud {
     const idleBtn = parent.querySelector('#hud-idle')
     if (idleBtn) idleBtn.addEventListener('click', () => this.callbacks?.onSelectIdleWorkers())
     this.bannerEl = parent.querySelector('#hud-banner')
+    // First-launch tutorial.
+    const tutorialEl = parent.querySelector('#hud-tutorial')
+    const tutorialClose = parent.querySelector('#hud-tutorial-close')
+    if (tutorialEl && tutorialClose && !localStorage.getItem('krts-tutorial-seen')) {
+      tutorialEl.hidden = false
+      tutorialClose.addEventListener('click', () => {
+        tutorialEl.hidden = true
+        localStorage.setItem('krts-tutorial-seen', '1')
+      })
+    }
     // Faction pickers.
     const playerSel = parent.querySelector<HTMLSelectElement>('#hud-player-faction')
     const enemySel = parent.querySelector<HTMLSelectElement>('#hud-enemy-faction')
