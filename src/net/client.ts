@@ -1,11 +1,17 @@
 /**
- * PvP WebSocket client.
+ * PvP WebSocket client (Phase 2).
  *
  * Connects to the Cloudflare Worker relay, joins a room via code,
- * and exchanges turn bundles with the opponent.
+ * and exchanges turn bundles with the opponent. Uses the binary wire
+ * protocol (encodeMessage/decodeMessage); bundles are base64-wrapped
+ * in the JSON WebSocket frames the relay expects.
  */
-
-import type { TurnBundle } from './protocol.ts'
+import {
+  encodeMessage,
+  decodeMessage,
+  MsgKind,
+} from './protocol.ts'
+import type { InputMsg, HashMsg } from './protocol.ts'
 
 export interface PvPClientConfig {
   serverUrl: string // e.g. "wss://kingdoms-pvp.workers.dev"
@@ -13,14 +19,28 @@ export interface PvPClientConfig {
   playerName: string
   onAssigned: (slot: 0 | 1) => void
   onMatchStart: (players: { slot: 0 | 1; name: string }[]) => void
-  onTurnBundle: (bundle: TurnBundle) => void
+  onTurnBundle: (bundle: InputMsg) => void
+  onHash: (msg: HashMsg) => void
   onOpponentDisconnected: () => void
   onPlayerJoined: (count: number) => void
 }
 
+function toBase64(bytes: Uint8Array): string {
+  let s = ''
+  for (let i = 0; i < bytes.length; i += 1) s += String.fromCharCode(bytes[i])
+  return btoa(s)
+}
+
+function fromBase64(s: string): Uint8Array {
+  const bin = atob(s)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i)
+  return out
+}
+
 export class PvPClient {
   private ws: WebSocket | null = null
-  private config: PvPClientConfig
+  private readonly config: PvPClientConfig
   private slot: 0 | 1 | null = null
 
   constructor(config: PvPClientConfig) {
@@ -32,7 +52,7 @@ export class PvPClient {
     const httpUrl = serverUrl.replace('wss://', 'https://').replace('ws://', 'http://')
     const res = await fetch(`${httpUrl}/api/room/create`, { method: 'POST' })
     if (!res.ok) throw new Error('Failed to create room')
-    const data = await res.json() as { code: string }
+    const data = (await res.json()) as { code: string }
     return data.code
   }
 
@@ -51,16 +71,27 @@ export class PvPClient {
     }
   }
 
-  /** Send a turn bundle to the opponent (via relay). */
-  sendBundle(bundle: TurnBundle): void {
+  /** Send an input bundle to the opponent (via relay). */
+  sendBundle(bundle: InputMsg): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return
-    this.ws.send(JSON.stringify({ kind: 'turn', bundle }))
+    this.ws.send(JSON.stringify({ kind: 'turn', data: toBase64(encodeMessage(bundle)) }))
   }
 
-  /** Send a raw message. */
-  send(msg: object): void {
+  /** Send a state hash (desync detection). */
+  sendHash(msg: HashMsg): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return
-    this.ws.send(JSON.stringify(msg))
+    this.ws.send(JSON.stringify({ kind: 'hash', data: toBase64(encodeMessage(msg)) }))
+  }
+
+  /** Send a ping for RTT measurement. */
+  sendPing(tSendMs: number): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return
+    this.ws.send(
+      JSON.stringify({
+        kind: 'ping',
+        data: toBase64(encodeMessage({ kind: MsgKind.Ping, seq: 0, tSendMs })),
+      }),
+    )
   }
 
   disconnect(): void {
@@ -73,30 +104,32 @@ export class PvPClient {
   }
 
   private handleMessage(data: string): void {
-    let msg: any
+    let msg: { kind?: string; data?: string; slot?: 0 | 1; players?: { slot: 0 | 1; name: string }[]; count?: number }
     try {
-      msg = JSON.parse(data)
+      msg = JSON.parse(data) as typeof msg
     } catch {
       return
     }
 
     switch (msg.kind) {
       case 'assigned':
-        this.slot = msg.slot
-        this.config.onAssigned(msg.slot)
+        this.slot = msg.slot ?? null
+        if (this.slot !== null) this.config.onAssigned(this.slot)
         break
       case 'match_start':
-        this.config.onMatchStart(msg.players)
+        this.config.onMatchStart(msg.players ?? [])
         break
       case 'player_joined':
-        this.config.onPlayerJoined(msg.count)
+        this.config.onPlayerJoined(msg.count ?? 0)
         break
       case 'turn':
-        this.config.onTurnBundle(msg.bundle)
+      case 'hash': {
+        if (!msg.data) return
+        const decoded = decodeMessage(fromBase64(msg.data))
+        if (decoded.kind === MsgKind.Input) this.config.onTurnBundle(decoded)
+        else if (decoded.kind === MsgKind.Hash) this.config.onHash(decoded)
         break
-      case 'hash':
-        this.config.onTurnBundle({ turn: msg.turn, inputs: [null, null], hash: msg.hash } as any)
-        break
+      }
       case 'opponent_disconnected':
         this.config.onOpponentDisconnected()
         break
@@ -106,19 +139,36 @@ export class PvPClient {
 
 /** Get or create a persistent player ID. */
 export function getPlayerId(): string {
-  let id = localStorage.getItem('krts-player-id')
+  let id: string | null = null
+  try {
+    id = localStorage.getItem('krts-player-id')
+  } catch {
+    id = null
+  }
   if (!id) {
-    id = crypto.randomUUID()
-    localStorage.setItem('krts-player-id', id)
+    id = Math.random().toString(36).slice(2) + Date.now().toString(36)
+    try {
+      localStorage.setItem('krts-player-id', id)
+    } catch {
+      // ignore (private mode)
+    }
   }
   return id
 }
 
 /** Get or set player display name. */
 export function getPlayerName(): string {
-  return localStorage.getItem('krts-player-name') || 'Player'
+  try {
+    return localStorage.getItem('krts-player-name') || 'Player'
+  } catch {
+    return 'Player'
+  }
 }
 
 export function setPlayerName(name: string): void {
-  localStorage.setItem('krts-player-name', name)
+  try {
+    localStorage.setItem('krts-player-name', name)
+  } catch {
+    // ignore
+  }
 }
