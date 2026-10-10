@@ -1,4 +1,5 @@
 import { BUILDINGS } from '../data/buildings.ts'
+import { FACTIONS, FACTION_IDS } from '../data/factions.ts'
 import type { BuildingType } from '../data/buildings.ts'
 import { UNITS } from '../data/units.ts'
 import type { UnitType } from '../data/units.ts'
@@ -90,6 +91,10 @@ export class HudImpl implements Hud {
           <button class="hud-pill hud-mode" data-speed="4">4x</button>
         </div>
         <div class="hud-bar" id="hud-difficulty"></div>
+        <div class="hud-bar">
+          <label class="hud-pill">You: <select id="hud-player-faction"></select></label>
+          <label class="hud-pill">Foe: <select id="hud-enemy-faction"></select></label>
+        </div>
       </div>
       <div class="hud-bar hud-buildings" id="hud-buildings"></div>
       <div class="hud-bar hud-utility" id="hud-utility"><button class="hud-pill hud-action" id="hud-idle">Idle Workers</button></div>
@@ -104,6 +109,31 @@ export class HudImpl implements Hud {
     const idleBtn = parent.querySelector('#hud-idle')
     if (idleBtn) idleBtn.addEventListener('click', () => this.callbacks?.onSelectIdleWorkers())
     this.bannerEl = parent.querySelector('#hud-banner')
+    // Faction pickers.
+    const playerSel = parent.querySelector<HTMLSelectElement>('#hud-player-faction')
+    const enemySel = parent.querySelector<HTMLSelectElement>('#hud-enemy-faction')
+    if (playerSel && enemySel) {
+      const savedPlayer = localStorage.getItem('krts-player-faction') || 'human'
+      const savedEnemy = localStorage.getItem('krts-enemy-faction') || 'orc'
+      for (const fid of FACTION_IDS) {
+        const opt1 = document.createElement('option')
+        opt1.value = fid
+        opt1.textContent = FACTIONS[fid].name
+        if (fid === savedPlayer) opt1.selected = true
+        playerSel.appendChild(opt1)
+        const opt2 = document.createElement('option')
+        opt2.value = fid
+        opt2.textContent = FACTIONS[fid].name
+        if (fid === savedEnemy) opt2.selected = true
+        enemySel.appendChild(opt2)
+      }
+      playerSel.addEventListener('change', () => {
+        localStorage.setItem('krts-player-faction', playerSel.value)
+      })
+      enemySel.addEventListener('change', () => {
+        localStorage.setItem('krts-enemy-faction', enemySel.value)
+      })
+    }
     // Menu toggle.
     const menuBtn = parent.querySelector('#hud-menu-btn')
     const menuEl = parent.querySelector<HTMLElement>('#hud-menu')
