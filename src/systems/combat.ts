@@ -5,6 +5,8 @@ import {
   NO_TARGET,
   STATE_ATTACK,
   STATE_ATTACKMOVE,
+  STATE_PATROL,
+  STATE_HOLD,
   STATE_IDLE,
   STATE_MOVE,
 } from '../core/World'
@@ -15,6 +17,23 @@ import {
  * Workers do not fight. Deaths are collected and removed after the sweep so
  * no system iterates a mutating entity set.
  */
+/**
+ * Counter system: unit type advantages.
+ * - Melee crushes workers (1.5x) but resists ranged (takes 0.7x from ranged)
+ * - Ranged kites melee effectively but is fragile up close
+ * - Workers are weak fighters vs everything
+ */
+function getCounterMultiplier(world: World, attacker: number, target: number): number {
+  const aKind = world.kind[attacker]
+  const tKind = world.kind[target]
+  // KIND_WORKER=0, KIND_MELEE=1, KIND_RANGED=2 (from World.ts)
+  if (aKind === 1 && tKind === 0) return 1.5 // Melee vs Worker: slaughter
+  if (aKind === 2 && tKind === 1) return 0.7 // Ranged vs Melee: resisted
+  if (aKind === 1 && tKind === 2) return 1.25 // Melee vs Ranged: crush if close
+  if (aKind === 0) return 0.6 // Worker vs anything: weak
+  return 1.0
+}
+
 export class CombatSystemImpl implements System {
   update(world: World, dt: number): void {
     const dead: number[] = []
@@ -38,6 +57,20 @@ export class CombatSystemImpl implements System {
         world.resumeX[id] = NaN
         world.resumeZ[id] = NaN
       }
+      // Patrol reached destination: swap origin/destination and continue.
+      if (
+        world.state[id] === STATE_PATROL &&
+        world.moving[id] === 0 &&
+        world.targetId[id] === NO_TARGET
+      ) {
+        const ox = world.resumeX[id]
+        const oz = world.resumeZ[id]
+        world.resumeX[id] = world.targetX[id]
+        world.resumeZ[id] = world.targetZ[id]
+        world.targetX[id] = ox
+        world.targetZ[id] = oz
+        world.moving[id] = 1
+      }
 
       if (world.cooldown[id] > 0) world.cooldown[id] -= dt
 
@@ -46,8 +79,17 @@ export class CombatSystemImpl implements System {
         // Auto-acquire: idle soldiers defend themselves, attack-move engages
         // on the march. Plain move orders (STATE_MOVE) walk through.
         const stance = world.state[id]
-        if (stance === STATE_IDLE || stance === STATE_ATTACKMOVE || stance === STATE_ATTACK) {
+        if (stance === STATE_IDLE || stance === STATE_ATTACKMOVE || stance === STATE_ATTACK || stance === STATE_PATROL || stance === STATE_HOLD) {
           target = findNearestEnemy(world, id)
+          // Hold position: only engage if enemy is within weapon range + small buffer
+          if (stance === STATE_HOLD && target !== NO_TARGET) {
+            const d = Math.hypot(
+              world.positionX[target] - world.positionX[id],
+              world.positionZ[target] - world.positionZ[id],
+            )
+            const weaponRange = world.attackRange[id] + world.radius[target]
+            if (d > weaponRange + 3) target = NO_TARGET
+          }
         } else {
           target = NO_TARGET
         }
@@ -82,7 +124,7 @@ export class CombatSystemImpl implements System {
         world.state[id] = STATE_ATTACK
         if (world.cooldown[id] <= 0) {
           world.cooldown[id] = world.cooldownTotal[id]
-          const dmg = world.damage[id]
+          const dmg = world.damage[id] * getCounterMultiplier(world, id, target)
           world.health[target] -= dmg
           world.damageNumbers.push({
             x: world.positionX[target],
