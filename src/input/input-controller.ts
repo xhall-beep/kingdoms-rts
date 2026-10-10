@@ -400,12 +400,14 @@ export class InputControllerImpl implements InputController {
     } else if (this.mode === 'attack') {
       if (target !== -1 && world.team[target] !== TEAM_PLAYER) {
         for (const id of this.selected) orderAttack(world, id, target)
+        this.renderer?.pingAttack(world.positionX[target], world.positionZ[target])
         this.emit({ type: 'attack', step: 0, unitIds: [...this.selected], targetId: target })
       } else {
         const fighters = this.selected.filter(
           (id) => world.kind[id] === KIND_MELEE || world.kind[id] === KIND_RANGED,
         )
         for (const id of fighters) orderAttackMove(world, id, p.x, p.z)
+        this.renderer?.pingAttack(p.x, p.z)
         if (fighters.length > 0) {
           this.emit({ type: 'attackmove', step: 0, unitIds: fighters, x: p.x, z: p.z })
         }
