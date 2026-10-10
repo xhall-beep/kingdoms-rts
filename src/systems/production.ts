@@ -2,6 +2,7 @@ import { BUILDINGS } from '../data/buildings.ts'
 import type { BuildingType } from '../data/buildings.ts'
 import { FACTIONS } from '../data/factions.ts'
 import { UNITS } from '../data/units.ts'
+import { UPGRADES, type UpgradeType } from '../data/upgrades.ts'
 import type { UnitType } from '../data/units.ts'
 import { TICK_RATE } from '../core/time.ts'
 import type { System, World } from '../core/World'
@@ -105,4 +106,21 @@ export function setRally(world: World, buildingId: number, x: number, z: number)
   if (kind !== KIND_HALL && kind !== KIND_BARRACKS && kind !== KIND_ARCHERY) return
   world.rallyX[buildingId] = x
   world.rallyZ[buildingId] = z
+}
+
+/** Research an upgrade at a building. Returns true if successful. */
+export function researchUpgrade(world: World, buildingId: number, type: UpgradeType): boolean {
+  const team = world.team[buildingId] as 0 | 1
+  const def = UPGRADES[type]
+  const currentLvl = type === 'meleeDmg' ? world.meleeDmgLvl[team]
+    : type === 'meleeHp' ? world.meleeHpLvl[team]
+    : world.rangedDmgLvl[team]
+  if (currentLvl >= def.maxLevel) return false
+  if (world.gold[team] < def.cost.gold || world.wood[team] < def.cost.wood) return false
+  world.gold[team] -= def.cost.gold
+  world.wood[team] -= def.cost.wood
+  if (type === 'meleeDmg') world.meleeDmgLvl[team]++
+  else if (type === 'meleeHp') world.meleeHpLvl[team]++
+  else world.rangedDmgLvl[team]++
+  return true
 }
