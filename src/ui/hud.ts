@@ -110,7 +110,7 @@ export class HudImpl implements Hud {
     if (idleBtn) idleBtn.addEventListener('click', () => this.callbacks?.onSelectIdleWorkers())
     this.bannerEl = parent.querySelector('#hud-banner')
     // First-launch tutorial.
-    const tutorialEl = parent.querySelector('#hud-tutorial')
+    const tutorialEl = parent.querySelector<HTMLElement>('#hud-tutorial')
     const tutorialClose = parent.querySelector('#hud-tutorial-close')
     if (tutorialEl && tutorialClose && !localStorage.getItem('krts-tutorial-seen')) {
       tutorialEl.hidden = false
