@@ -72,6 +72,7 @@ export function renderCommandCard(
 
   const card = document.createElement('div')
   card.className = 'cmd-card'
+  card.style.pointerEvents = 'auto'
 
   // --- Header: portrait + name + HP ---
   const header = document.createElement('div')
@@ -204,7 +205,7 @@ export function renderCommandCard(
           const bdef = BUILDINGS[btype]
           const afford = canAfford(world, TEAM_PLAYER, btype)
           cmd(
-            `${bdef.name} ${bdef.cost.gold}g`,
+            `${bdef.name} ${bdef.cost.gold}g ${bdef.cost.wood}w`,
             () => cb.onBuildType(btype),
             !afford,
           )
