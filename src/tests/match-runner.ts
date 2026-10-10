@@ -28,6 +28,8 @@ export function runMatch(
   playerDifficulty: AIDifficulty = 'normal',
   enemyDifficulty: AIDifficulty = 'normal',
   maxSteps = 60 * 60 * 20, // 20 minutes max
+  playerFaction: string = 'human',
+  enemyFaction: string = 'orc',
 ): MatchResult {
   const world = new World()
   world.registerSystem(new GatherSystemImpl())
@@ -39,7 +41,7 @@ export function runMatch(
   // AI for both teams (player team AI simulates a player).
   world.registerSystem(new OpponentAI(0, playerDifficulty))
   world.registerSystem(new OpponentAI(1, enemyDifficulty))
-  seedScenario(world)
+  seedScenario(world, playerFaction as never, enemyFaction as never)
 
   let steps = 0
   const start = Date.now()
