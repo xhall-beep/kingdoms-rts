@@ -100,6 +100,19 @@ export class Renderer {
     }
   }
 
+  private ghostBuilding: string | null = null
+  private ghostX = 0
+  private ghostZ = 0
+  private ghostValid = true
+
+  /** Set the building placement ghost preview. */
+  setGhost(building: string | null, x: number, z: number, valid: boolean): void {
+    this.ghostBuilding = building
+    this.ghostX = x
+    this.ghostZ = z
+    this.ghostValid = valid
+  }
+
   render(world: World, team: 0 | 1): void {
     this.frame += 1
     const { ctx, canvas } = this
@@ -113,6 +126,22 @@ export class Renderer {
     this.drawFog(world, team)
     this.drawSelectionBox()
     this.drawDamageNumbers(world)
+    this.drawGhost()
+  }
+
+  /** Semi-transparent building placement preview. */
+  private drawGhost(): void {
+    if (!this.ghostBuilding) return
+    const { ctx } = this
+    const p = this.toScreen(this.ghostX, this.ghostZ)
+    const size = 40 // approx building footprint in px
+    ctx.globalAlpha = 0.5
+    ctx.fillStyle = this.ghostValid ? '#4ade80' : '#ef4444'
+    ctx.fillRect(p.x - size / 2, p.y - size / 2, size, size)
+    ctx.globalAlpha = 1
+    ctx.strokeStyle = this.ghostValid ? '#22c55e' : '#dc2626'
+    ctx.lineWidth = 2
+    ctx.strokeRect(p.x - size / 2, p.y - size / 2, size, size)
   }
 
   /** Floating combat text. Visual-only; ages and fades. */
