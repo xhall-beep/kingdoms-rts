@@ -113,11 +113,17 @@ export class Renderer {
     this.ghostValid = valid
   }
 
-  private moveIndicators: { x: number; z: number; ttl: number }[] = []
+  private moveIndicators: { x: number; z: number; ttl: number; color: string }[] = []
 
   /** Show a move-order marker at world position. */
   pingMove(x: number, z: number): void {
-    this.moveIndicators.push({ x, z, ttl: 1.0 })
+    this.moveIndicators.push({ x, z, ttl: 1.0, color: '#4ade80' })
+    if (this.moveIndicators.length > 10) this.moveIndicators.shift()
+  }
+
+  /** Show an attack-order marker at world position. */
+  pingAttack(x: number, z: number): void {
+    this.moveIndicators.push({ x, z, ttl: 1.0, color: '#ef4444' })
     if (this.moveIndicators.length > 10) this.moveIndicators.shift()
   }
 
@@ -151,7 +157,7 @@ export class Renderer {
       const size = 12 * (1.5 - m.ttl * 0.5) // shrink as it fades
       ctx.save()
       ctx.globalAlpha = alpha
-      ctx.strokeStyle = '#4ade80'
+      ctx.strokeStyle = m.color
       ctx.lineWidth = 2
       ctx.beginPath()
       ctx.arc(p.x, p.y, size, 0, Math.PI * 2)
