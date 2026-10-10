@@ -113,6 +113,14 @@ export class Renderer {
     this.ghostValid = valid
   }
 
+  private moveIndicators: { x: number; z: number; ttl: number }[] = []
+
+  /** Show a move-order marker at world position. */
+  pingMove(x: number, z: number): void {
+    this.moveIndicators.push({ x, z, ttl: 1.0 })
+    if (this.moveIndicators.length > 10) this.moveIndicators.shift()
+  }
+
   render(world: World, team: 0 | 1): void {
     this.frame += 1
     const { ctx, canvas } = this
@@ -128,6 +136,36 @@ export class Renderer {
     this.drawDamageNumbers(world)
     this.drawGhost()
     this.drawRallyPoints(world)
+    this.drawMoveIndicators()
+  }
+
+  private drawMoveIndicators(): void {
+    const { ctx } = this
+    const keep: typeof this.moveIndicators = []
+    for (const m of this.moveIndicators) {
+      m.ttl -= 0.016 // ~1 frame at 60fps
+      if (m.ttl <= 0) continue
+      keep.push(m)
+      const p = this.toScreen(m.x, m.z)
+      const alpha = Math.min(1, m.ttl * 2)
+      const size = 12 * (1.5 - m.ttl * 0.5) // shrink as it fades
+      ctx.save()
+      ctx.globalAlpha = alpha
+      ctx.strokeStyle = '#4ade80'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, size, 0, Math.PI * 2)
+      ctx.stroke()
+      // X mark
+      ctx.beginPath()
+      ctx.moveTo(p.x - 5, p.y - 5)
+      ctx.lineTo(p.x + 5, p.y + 5)
+      ctx.moveTo(p.x + 5, p.y - 5)
+      ctx.lineTo(p.x - 5, p.y + 5)
+      ctx.stroke()
+      ctx.restore()
+    }
+    this.moveIndicators = keep
   }
 
   /** Show rally point lines for selected production buildings. */
