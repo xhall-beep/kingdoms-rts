@@ -42,9 +42,9 @@ interface DifficultyTuning {
  * ambitiously it makes decisions.
  */
 const DIFFICULTY: Record<AIDifficulty, DifficultyTuning> = {
-  easy: { thinkEvery: 2.0, workerTarget: 7, workersBeforeArmy: 6, attackArmy: 12, defenseRadius: 20 },
-  normal: { thinkEvery: 1.0, workerTarget: 10, workersBeforeArmy: 5, attackArmy: 8, defenseRadius: 28 },
-  hard: { thinkEvery: 0.5, workerTarget: 12, workersBeforeArmy: 4, attackArmy: 6, defenseRadius: 36 },
+  easy: { thinkEvery: 2.0, workerTarget: 7, workersBeforeArmy: 6, attackArmy: 8, defenseRadius: 20 },
+  normal: { thinkEvery: 1.0, workerTarget: 10, workersBeforeArmy: 5, attackArmy: 5, defenseRadius: 28 },
+  hard: { thinkEvery: 0.5, workerTarget: 12, workersBeforeArmy: 4, attackArmy: 4, defenseRadius: 36 },
 }
 
 /**
@@ -60,6 +60,7 @@ export class OpponentAI implements System {
   private readonly team: 0 | 1
   private readonly tuning: DifficultyTuning
   private timer = 0
+  private gameTime = 0 // seconds elapsed
 
   constructor(team: 0 | 1, difficulty: AIDifficulty = 'normal') {
     this.team = team
@@ -68,6 +69,7 @@ export class OpponentAI implements System {
 
   update(world: World, dt: number): void {
     this.timer += dt
+    this.gameTime += dt
     if (this.timer < this.tuning.thinkEvery) return
     this.timer = 0
 
@@ -216,7 +218,8 @@ export class OpponentAI implements System {
 
   /** Once strong enough, idle soldiers march on the enemy hall (or search for it). */
   private attack(world: World, hall: number, soldiers: number[]): void {
-    if (soldiers.length < this.tuning.attackArmy) return
+    const forced = this.gameTime > 240 && soldiers.length >= 3 // 4 min: attack with what you have
+    if (!forced && soldiers.length < this.tuning.attackArmy) return
     const idle = soldiers.filter((id) => world.state[id] === STATE_IDLE)
     if (idle.length === 0) return
     const target = this.findTarget(world, hall, idle)
