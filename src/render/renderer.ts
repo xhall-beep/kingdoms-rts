@@ -112,6 +112,33 @@ export class Renderer {
     }
     this.drawFog(world, team)
     this.drawSelectionBox()
+    this.drawDamageNumbers(world)
+  }
+
+  /** Floating combat text. Visual-only; ages and fades. */
+  private drawDamageNumbers(world: World): void {
+    const { ctx } = this
+    const keep: typeof world.damageNumbers = []
+    for (const dn of world.damageNumbers) {
+      dn.age += 1
+      if (dn.age > 40) continue // ~0.66s at 60fps
+      keep.push(dn)
+      const p = this.toScreen(dn.x, dn.z)
+      const alpha = 1 - dn.age / 40
+      const yOff = dn.age * 0.8 // float upward
+      ctx.globalAlpha = alpha
+      ctx.font = 'bold 14px system-ui, sans-serif'
+      ctx.textAlign = 'center'
+      // Enemy damage = red, player damage = white
+      ctx.fillStyle = dn.team === 1 ? '#ff6b6b' : '#ffffff'
+      ctx.strokeStyle = 'rgba(0,0,0,0.7)'
+      ctx.lineWidth = 3
+      const txt = `-${dn.amount}`
+      ctx.strokeText(txt, p.x, p.y - yOff)
+      ctx.fillText(txt, p.x, p.y - yOff)
+      ctx.globalAlpha = 1
+    }
+    world.damageNumbers = keep
   }
 
   private drawSelectionBox(): void {
