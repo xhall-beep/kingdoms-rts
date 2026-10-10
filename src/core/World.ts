@@ -229,6 +229,11 @@ export class World {
     this.nextEntityId = id
   }
 
+  /** Exposed for deterministic state hashing (future entity ids depend on it). */
+  getNextEntityId(): number {
+    return this.nextEntityId
+  }
+
   removeEntity(entity: Entity): void {
     const id = entity.id
     const kind = this.kind[id]

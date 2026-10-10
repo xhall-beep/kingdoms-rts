@@ -72,4 +72,17 @@ export class FogGrid {
       }
     }
   }
+
+  /**
+   * Pending demotions (cells VISIBLE this update, demoted next beginUpdate).
+   * Part of deterministic sim state: must be snapshotted and hashed for
+   * lockstep, otherwise peers diverge on the next vision update.
+   */
+  snapshotVisibleNow(): number[] {
+    return [...this.visibleNow]
+  }
+
+  restoreVisibleNow(indices: number[]): void {
+    this.visibleNow = [...indices]
+  }
 }

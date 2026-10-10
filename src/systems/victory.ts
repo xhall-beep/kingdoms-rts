@@ -9,6 +9,15 @@ import { KIND_FARM } from '../core/World'
 export class VictorySystemImpl implements System {
   private timer = 0
 
+  /** Internal check timer is sim state (lockstep snapshot/hash). */
+  getTimer(): number {
+    return this.timer
+  }
+
+  setTimer(t: number): void {
+    this.timer = t
+  }
+
   update(world: World, dt: number): void {
     if (world.winner !== -1) return
     this.timer += dt
