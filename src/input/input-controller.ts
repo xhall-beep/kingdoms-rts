@@ -394,6 +394,7 @@ export class InputControllerImpl implements InputController {
         this.emit({ type: 'rally', step: 0, buildingId: this.selected[0], x: p.x, z: p.z })
       } else {
         for (const id of this.selected) orderMove(world, id, p.x, p.z)
+        this.renderer?.pingMove(p.x, p.z)
         this.emit({ type: 'move', step: 0, unitIds: [...this.selected], x: p.x, z: p.z })
       }
     } else if (this.mode === 'attack') {
@@ -451,6 +452,7 @@ export class InputControllerImpl implements InputController {
     }
     const movers = this.selected.filter((id) => world.kind[id] <= KIND_RANGED)
     for (const id of movers) orderMove(world, id, p.x, p.z)
+    this.renderer?.pingMove(p.x, p.z)
     this.emit({ type: 'move', step: 0, unitIds: movers, x: p.x, z: p.z })
     if (movers.length > 0) sfx.move()
   }
