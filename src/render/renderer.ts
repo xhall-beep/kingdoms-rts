@@ -127,6 +127,39 @@ export class Renderer {
     this.drawSelectionBox()
     this.drawDamageNumbers(world)
     this.drawGhost()
+    this.drawRallyPoints(world)
+  }
+
+  /** Show rally point lines for selected production buildings. */
+  private drawRallyPoints(world: World): void {
+    const { ctx } = this
+    for (const id of this.selected) {
+      const k = world.kind[id]
+      // Only production buildings have rally points
+      if (k !== 1 && k !== 2 && k !== 3) continue // KIND_HALL, BARRACKS, ARCHERY
+      const rx = world.rallyX[id]
+      const rz = world.rallyZ[id]
+      if (rx === 0 && rz === 0) continue
+      const from = this.toScreen(world.positionX[id], world.positionZ[id])
+      const to = this.toScreen(rx, rz)
+      // Dashed line from building to rally
+      ctx.save()
+      ctx.setLineDash([6, 4])
+      ctx.strokeStyle = '#f5c542'
+      ctx.lineWidth = 2
+      ctx.globalAlpha = 0.7
+      ctx.beginPath()
+      ctx.moveTo(from.x, from.y)
+      ctx.lineTo(to.x, to.y)
+      ctx.stroke()
+      // Flag marker at destination
+      ctx.setLineDash([])
+      ctx.fillStyle = '#f5c542'
+      ctx.beginPath()
+      ctx.arc(to.x, to.y, 6, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.restore()
+    }
   }
 
   /** Semi-transparent building placement preview. */
