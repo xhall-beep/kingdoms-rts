@@ -10,7 +10,8 @@ import { CombatSystemImpl } from './systems/combat'
 import { GatherSystemImpl } from './systems/gather'
 import { MovementSystemImpl } from './systems/movement'
 import { ProductionSystemImpl } from './systems/production'
-import { enqueueTrain } from './systems/production'
+import { enqueueTrain, researchUpgrade } from './systems/production'
+import type { UpgradeType } from './data/upgrades.ts'
 import { VictorySystemImpl } from './systems/victory'
 import { VisionSystemImpl } from './systems/vision'
 import { CommandLog } from './session/commands.ts'
@@ -114,6 +115,13 @@ export function initializeGame(): GameComposition {
     onSelectBuilding: (kind) => composition.inputController.selectBuilding(kind),
     onSelectIdleWorkers: () => composition.inputController.selectIdleWorkers(),
     onStop: () => composition.inputController.stopSelected(),
+    onHold: () => composition.inputController.holdSelected(),
+    onResearch: (type) => {
+      const selected = composition.inputController.getSelected()
+      if (selected.length !== 1) return
+      const buildingId = selected[0]
+      researchUpgrade(composition.engine.world, buildingId, type as UpgradeType)
+    },
     onTrain: (type) => {
       const selected = composition.inputController.getSelected()
       if (selected.length !== 1) return
