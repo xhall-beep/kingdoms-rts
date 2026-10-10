@@ -78,7 +78,6 @@ export function runMatch(
 }
 
 /** CLI entry: run matches and print results. */
-// @ts-expect-error — process available in node
 const _g = globalThis as unknown as { process?: { argv: string[] } }
 if (typeof _g.process !== 'undefined' && _g.process.argv[1]?.includes('match')) {
   const args = _g.process!.argv.slice(2)
