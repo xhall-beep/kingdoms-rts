@@ -24,10 +24,12 @@ export interface HudCallbacks {
   onMode(mode: InputMode): void
   onBuildType(type: BuildingType): void
   onTrain(type: UnitType): void
+  onResearch(type: string): void
   onSelectBuilding(kind: number): void
   onNewGame(): void
   onSelectIdleWorkers(): void
   onStop(): void
+  onHold(): void
   onPause(): void
   onSave(): void
   onLoad(): void
@@ -267,8 +269,10 @@ export class HudImpl implements Hud {
     renderCommandCard(el, world, selected, {
       onMode: (mode) => this.callbacks?.onMode(mode as never),
       onStop: () => this.callbacks?.onStop(),
+      onHold: () => this.callbacks?.onHold(),
       onBuildType: (type) => this.callbacks?.onBuildType(type as never),
       onTrain: (type) => this.callbacks?.onTrain(type as never),
+      onResearch: (type) => this.callbacks?.onResearch(type),
     })
   }
 
