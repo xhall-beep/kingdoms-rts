@@ -19,10 +19,12 @@ import { PLAYER_BUILDABLE, canAfford } from '../world/construction.ts'
 import { FACTIONS } from '../data/factions.ts'
 
 export interface CommandCardCallbacks {
-  onMode(mode: 'move' | 'attack' | 'gather' | 'build'): void
+  onMode(mode: 'move' | 'attack' | 'gather' | 'build' | 'patrol'): void
   onStop(): void
+  onHold(): void
   onBuildType(type: string): void
   onTrain(type: string): void
+  onResearch(type: string): void
   onSetRally?(): void
 }
 
@@ -211,8 +213,8 @@ export function renderCommandCard(
           )
         }
       } else {
-        cmd('Patrol', () => cb.onMode('move'), false, 'P') // placeholder: patrol = move
-        cmd('Hold', () => cb.onStop(), false, 'H')
+        cmd('Patrol', () => cb.onMode('patrol'), false, 'P')
+        cmd('Hold', () => cb.onHold(), false, 'H')
       }
     } else if (isBuilding) {
       // Train buttons
@@ -224,6 +226,26 @@ export function renderCommandCard(
           world.gold[TEAM_PLAYER] >= udef.cost.gold &&
           world.wood[TEAM_PLAYER] >= udef.cost.wood
         cmd(`${utype[0].toUpperCase() + utype.slice(1)} ${udef.cost.gold}g`, () => cb.onTrain(utype), !afford)
+      }
+      // Upgrade buttons
+      if (kind === KIND_BARRACKS) {
+        const dmgLvl = world.meleeDmgLvl[TEAM_PLAYER]
+        const hpLvl = world.meleeHpLvl[TEAM_PLAYER]
+        if (dmgLvl < 3) {
+          const afford = world.gold[TEAM_PLAYER] >= 100 && world.wood[TEAM_PLAYER] >= 50
+          cmd(`Weapon +${dmgLvl + 1} 100g`, () => cb.onResearch('meleeDmg'), !afford)
+        }
+        if (hpLvl < 3) {
+          const afford = world.gold[TEAM_PLAYER] >= 100 && world.wood[TEAM_PLAYER] >= 50
+          cmd(`Armor +${hpLvl + 1} 100g`, () => cb.onResearch('meleeHp'), !afford)
+        }
+      }
+      if (kind === KIND_ARCHERY) {
+        const dmgLvl = world.rangedDmgLvl[TEAM_PLAYER]
+        if (dmgLvl < 3) {
+          const afford = world.gold[TEAM_PLAYER] >= 100 && world.wood[TEAM_PLAYER] >= 50
+          cmd(`Ranged +${dmgLvl + 1} 100g`, () => cb.onResearch('rangedDmg'), !afford)
+        }
       }
       if (cb.onSetRally) cmd('Rally', () => cb.onSetRally!(), false, 'R')
     }
