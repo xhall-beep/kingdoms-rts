@@ -203,6 +203,14 @@ export function initializeGame(): GameComposition {
     const dt = Math.min(0.1, (now - lastFrame) / 1000)
     lastFrame = now
     if (replaying) replayPlayer.update(dt)
+    // Update building placement ghost.
+    const ghost = composition.inputController.getGhostPosition()
+    const pending = composition.inputController.getPendingBuilding()
+    if (ghost && pending) {
+      composition.renderer.setGhost(pending, ghost.x, ghost.z, true)
+    } else {
+      composition.renderer.setGhost(null, 0, 0, true)
+    }
     composition.renderer.render(composition.engine.world, TEAM_PLAYER)
     composition.hud.update(composition.engine.world, composition.inputController.getSelected())
     requestAnimationFrame(frame)
