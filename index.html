@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <title>Kingdoms RTS</title>
+<meta name="description" content="A real-time strategy game featuring factions, unit combat, resource gathering, and base building." />
 <style>:root {
   --text: #6b6375;
   --text-h: #08060d;
@@ -504,7 +505,7 @@ code {
   background: rgba(80, 60, 30, 0.8);
 }
 
-.hud-tutorial{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:auto;background:#102b2bf2;border:3px solid #f5c542;border-radius:16px;padding:24px;max-width:320px;color:#fff3d4;z-index:9999}
+.hud-tutorial{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#102b2bf2;border:3px solid #f5c542;border-radius:16px;padding:24px;max-width:320px;color:#fff3d4;z-index:100}
 .hud-tutorial[hidden]{display:none}
 .hud-tutorial h2{margin:0 0 12px;color:#f5c542}
 .hud-tutorial p{margin:8px 0;font-size:14px;line-height:1.4}
@@ -530,7 +531,7 @@ code {
 .cmd-btn-label{line-height:1.2}
 .cmd-btn-hotkey{font-size:10px;color:#f5c54288;font-weight:400}
 
-.hud-tutorial{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#102b2bf2;border:3px solid #f5c542;border-radius:16px;padding:24px;max-width:320px;color:#fff3d4;z-index:100}
+.hud-tutorial{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#102b2bf2;border:3px solid #f5c542;border-radius:16px;padding:24px;max-width:320px;color:#fff3d4;z-index:9999;pointer-events:auto}
 .hud-tutorial[hidden]{display:none}
 .hud-tutorial h2{margin:0 0 12px;color:#f5c542;font-size:20px}
 .hud-tutorial p{margin:8px 0;font-size:14px;line-height:1.4}
