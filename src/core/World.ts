@@ -28,6 +28,8 @@ export const STATE_RETURN = 3
 export const STATE_ATTACK = 4
 export const STATE_BUILD = 5
 export const STATE_ATTACKMOVE = 6
+export const STATE_PATROL = 7
+export const STATE_HOLD = 8
 
 export const TEAM_PLAYER = 0
 export const TEAM_ENEMY = 1
@@ -153,6 +155,9 @@ export class World {
   // ---- economy & factions per team (index 0 = player, 1 = enemy) ----
   gold: number[] = [0, 0]
   wood: number[] = [0, 0]
+  meleeDmgLvl: number[] = [0, 0]
+  meleeHpLvl: number[] = [0, 0]
+  rangedDmgLvl: number[] = [0, 0]
   supplyUsed: number[] = [0, 0]
   supplyCap: number[] = [0, 0]
   factionOfTeam: [FactionId, FactionId] = ['human', 'human']
@@ -298,9 +303,18 @@ export class World {
     this.kind[id] = KIND_BY_UNIT[type]
     this.team[id] = team
     const hp = Math.round(def.hp * mods.hp)
-    this.health[id] = hp
-    this.maxHealth[id] = hp
-    this.damage[id] = def.damage * mods.damage
+    // Apply upgrade bonuses
+    let bonusHp = 0
+    let bonusDmg = 0
+    if (type === 'melee') {
+      bonusHp = this.meleeHpLvl[team] * 25
+      bonusDmg = this.meleeDmgLvl[team] * 3
+    } else if (type === 'ranged') {
+      bonusDmg = this.rangedDmgLvl[team] * 3
+    }
+    this.health[id] = hp + bonusHp
+    this.maxHealth[id] = hp + bonusHp
+    this.damage[id] = def.damage * mods.damage + bonusDmg
     this.attackRange[id] = def.range
     this.sight[id] = def.sight
     this.cooldown[id] = 0
