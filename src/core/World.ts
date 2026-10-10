@@ -78,6 +78,14 @@ export interface WorldOptions {
   capacity?: number
 }
 
+export interface DamageNumber {
+  x: number
+  z: number
+  amount: number
+  team: number
+  age: number
+}
+
 export class World {
   // ---- spatial (struct of arrays) ----
   readonly positionX: Float32Array
@@ -91,6 +99,9 @@ export class World {
   readonly kind: Uint8Array
   readonly team: Uint8Array
   readonly state: Uint8Array
+
+  /** Visual-only damage numbers; not part of sim state, not serialized. */
+  damageNumbers: DamageNumber[] = []
 
   // ---- combat ----
   readonly health: Float32Array
