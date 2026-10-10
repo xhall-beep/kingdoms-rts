@@ -99,7 +99,16 @@ export class HudImpl implements Hud {
       <div class="hud-bar hud-buildings" id="hud-buildings"></div>
       <div class="hud-bar hud-utility" id="hud-utility"><button class="hud-pill hud-action" id="hud-idle">Idle Workers</button></div>
       <div class="hud-bar hud-actions" id="hud-actions"></div>
-      <div class="hud-banner" id="hud-banner" hidden></div>`
+      <div class="hud-banner" id="hud-banner" hidden></div>
+      <div class="hud-tutorial" id="hud-tutorial" hidden>
+        <h2>How to Play</h2>
+        <p><b>Tap</b> your unit or building to select it.</p>
+        <p><b>Tap</b> again to deselect.</p>
+        <p>With units selected: <b>tap ground</b> to move, <b>tap enemy</b> to attack, <b>tap trees/gold</b> to gather.</p>
+        <p><b>Drag</b> to box-select. <b>Two fingers</b> to pan.</p>
+        <p>Use the <b>menu</b> to build, train, save, and pick factions.</p>
+        <button id="hud-tutorial-close">Got it!</button>
+      </div>`
     this.goldEl = parent.querySelector('#hud-gold')
     this.woodEl = parent.querySelector('#hud-wood')
     this.supplyEl = parent.querySelector('#hud-supply')
