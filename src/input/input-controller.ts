@@ -51,6 +51,7 @@ export class InputControllerImpl implements InputController {
   private boxSelecting = false
   private pointers = new Map<number, { x: number; y: number }>()
   private pendingBuilding: BuildingType | null = null
+  private ghostPos: { x: number; z: number } | null = null
   private commandListener: ((cmd: Command) => void) | null = null
 
   attach(canvas: HTMLCanvasElement, world: World, renderer: Renderer): void {
@@ -167,6 +168,11 @@ export class InputControllerImpl implements InputController {
     return this.pendingBuilding
   }
 
+  /** Current ghost preview position in world coords (build mode). */
+  getGhostPosition(): { x: number; z: number } | null {
+    return this.ghostPos
+  }
+
   /** Receive every player-issued command (for the command log / replays). */
   setCommandListener(listener: ((cmd: Command) => void) | null): void {
     this.commandListener = listener
@@ -195,6 +201,13 @@ export class InputControllerImpl implements InputController {
     if (!this.pointers.has(e.pointerId)) return
     this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY })
     if (!this.renderer) return
+    // Update build ghost preview.
+    if (this.mode === 'build' && this.pendingBuilding) {
+      const p = this.renderer.screenToWorld(e.offsetX, e.offsetY)
+      this.ghostPos = { x: p.x, z: p.z }
+    } else {
+      this.ghostPos = null
+    }
 
     if (this.pointers.size >= 2) {
       // Two-finger pan.
@@ -382,7 +395,7 @@ export class InputControllerImpl implements InputController {
     } else if (this.mode === 'build' && this.pendingBuilding !== null) {
       this.placeBuilding(p.x, p.z)
     }
-    if (this.mode !== 'build') this.setMode('selection')
+    if (this.mode !== 'build') { this.setMode('selection'); this.ghostPos = null }
   }
 
   /** Place the pending building at a world point and send a selected worker. */
