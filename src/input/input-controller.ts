@@ -24,9 +24,9 @@ import { placeStructure } from '../world/construction.ts'
 import { orderAttack, orderAttackMove } from '../systems/combat'
 import { orderBuild, orderGather } from '../systems/gather'
 import { setRally } from '../systems/production.ts'
-import { orderMove } from '../systems/movement'
+import { orderMove, orderHold, orderPatrol } from '../systems/movement'
 
-export type InputMode = 'selection' | 'move' | 'attack' | 'gather' | 'build'
+export type InputMode = 'selection' | 'move' | 'attack' | 'gather' | 'build' | 'patrol'
 
 export interface InputController {
   setMode(mode: InputMode): void
@@ -138,6 +138,16 @@ export class InputControllerImpl implements InputController {
         orderStop(world, id)
       }
     }
+  }
+
+  /** Order selected units to hold position. */
+  holdSelected(): void {
+    const world = this.world
+    if (!world) return
+    for (const id of this.selected) {
+      orderHold(world, id)
+    }
+    sfx.move()
   }
 
   /** All building kinds the player currently owns (for the quick-select bar). */
@@ -416,6 +426,9 @@ export class InputControllerImpl implements InputController {
       this.assignGather(world, target)
     } else if (this.mode === 'build' && this.pendingBuilding !== null) {
       this.placeBuilding(p.x, p.z)
+    } else if (this.mode === 'patrol') {
+      for (const id of this.selected) orderPatrol(world, id, p.x, p.z)
+      this.emit({ type: 'patrol', step: 0, unitIds: [...this.selected], x: p.x, z: p.z })
     }
     if (this.mode !== 'build') { this.setMode('selection'); this.ghostPos = null }
   }
