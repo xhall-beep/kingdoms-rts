@@ -190,7 +190,7 @@ export function renderCommandCard(
         hk.textContent = hotkey
         btn.appendChild(hk)
       }
-      btn.addEventListener('click', fn)
+      btn.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); fn() })
       grid.appendChild(btn)
     }
 
