@@ -156,6 +156,8 @@ const CmdTag = {
   Train: 5,
   Rally: 6,
   Patrol: 7,
+  Stop: 8,
+  Hold: 9,
 } as const
 type CmdTag = (typeof CmdTag)[keyof typeof CmdTag]
 
@@ -182,6 +184,9 @@ function cmdSize(cmd: Command): number {
       return 1 + varintSize(cmd.buildingId) + 1
     case 'rally':
       return 1 + varintSize(cmd.buildingId) + 4 + 4
+    case 'stop':
+    case 'hold':
+      return 1 + idsSize(cmd.unitIds)
   }
 }
 
@@ -252,6 +257,14 @@ function writeCommand(view: DataView, o: number, cmd: Command): number {
       view.setFloat32(o, cmd.x, true); o += 4
       view.setFloat32(o, cmd.z, true); o += 4
       return o
+    case 'stop':
+      view.setUint8(o++, CmdTag.Stop)
+      o = writeIds(view, o, cmd.unitIds)
+      return o
+    case 'hold':
+      view.setUint8(o++, CmdTag.Hold)
+      o = writeIds(view, o, cmd.unitIds)
+      return o
   }
 }
 
@@ -304,6 +317,14 @@ function readCommand(view: DataView, o: number): { cmd: Command; next: number } 
       const x = view.getFloat32(o, true); o += 4
       const z = view.getFloat32(o, true); o += 4
       return { cmd: { type: 'patrol', step: 0, unitIds: u.ids, x, z }, next: o }
+    }
+    case CmdTag.Stop: {
+      const u = readIds(view, o); o = u.next
+      return { cmd: { type: 'stop', step: 0, unitIds: u.ids }, next: o }
+    }
+    case CmdTag.Hold: {
+      const u = readIds(view, o); o = u.next
+      return { cmd: { type: 'hold', step: 0, unitIds: u.ids }, next: o }
     }
     default:
       throw new Error(`unknown command tag ${tag}`)

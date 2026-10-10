@@ -13,7 +13,7 @@ import {
 } from '../core/World.ts'
 import { orderAttack, orderAttackMove } from '../systems/combat.ts'
 import { orderBuild, orderGather } from '../systems/gather.ts'
-import { orderMove, orderPatrol } from '../systems/movement.ts'
+import { orderMove, orderPatrol, orderStop, orderHold } from '../systems/movement.ts'
 import { enqueueTrain, setRally } from '../systems/production.ts'
 import { placeStructure } from '../world/construction.ts'
 import type { Command } from '../session/commands.ts'
@@ -73,6 +73,16 @@ export function applyCommand(world: World, cmd: Command): void {
     case 'patrol':
       for (const id of cmd.unitIds) {
         if (world.entities.has(id)) orderPatrol(world, id, cmd.x, cmd.z)
+      }
+      break
+    case 'stop':
+      for (const id of cmd.unitIds) {
+        if (world.entities.has(id)) orderStop(world, id)
+      }
+      break
+    case 'hold':
+      for (const id of cmd.unitIds) {
+        if (world.entities.has(id)) orderHold(world, id)
       }
       break
   }

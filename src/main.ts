@@ -27,6 +27,12 @@ import {
 import type { AIDifficulty } from './ai/opponent'
 import { HudImpl } from './ui/hud'
 import type { HudCallbacks } from './ui/hud'
+import { MatchmakingUI } from './ui/matchmaking.ts'
+import { PvPClient, getPlayerId } from './net/client.ts'
+import { PvPSession, WsLink } from './net/pvp-session.ts'
+import { encodeMessage } from './net/protocol.ts'
+import { World } from './core/World.ts'
+import type { Command } from './session/commands.ts'
 
 export interface GameComposition {
   engine: Engine
@@ -43,6 +49,26 @@ export interface GameComposition {
     opponent: OpponentAI
   }
 }
+
+/** Live PvP server (wss; the client derives https for room creation). */
+export const PVP_SERVER_URL = 'wss://kingdoms-pvp.stephen-x-hall.workers.dev'
+
+/** PvP factions: slot 0 plays human, slot 1 plays orc (the tested balanced pair). */
+export const PVP_FACTIONS = ['human', 'orc'] as const
+
+interface PvPState {
+  session: PvPSession
+  client: PvPClient
+  link: WsLink
+  slot: 0 | 1
+  engine: Engine
+  opponentName: string
+}
+
+/** Non-null while a live 1v1 is running. */
+let pvpState: PvPState | null = null
+/** Set by startPvPMatch so incoming bundles reach the lockstep peer. */
+let pvpLink: WsLink | null = null
 
 export function composeGame(canvas: HTMLCanvasElement): GameComposition {
   const engine = new Engine()
@@ -116,16 +142,21 @@ export function initializeGame(): GameComposition {
     onSelectIdleWorkers: () => composition.inputController.selectIdleWorkers(),
     onStop: () => composition.inputController.stopSelected(),
     onHold: () => composition.inputController.holdSelected(),
-    onResearch: (type) => {
-      const selected = composition.inputController.getSelected()
-      if (selected.length !== 1) return
-      const buildingId = selected[0]
-      researchUpgrade(composition.engine.world, buildingId, type as UpgradeType)
-    },
     onTrain: (type) => {
       const selected = composition.inputController.getSelected()
       if (selected.length !== 1) return
       const buildingId = selected[0]
+      if (pvpState) {
+        // Lockstep PvP: training goes through the turn queue, not the local world.
+        const cmd: Command = {
+          type: 'train',
+          step: 0,
+          buildingId,
+          unit: type,
+        }
+        pvpState.session.queueCommand(cmd)
+        return
+      }
       if (enqueueTrain(composition.engine.world, buildingId, type)) {
         commandLog.record({
           type: 'train',
@@ -134,6 +165,15 @@ export function initializeGame(): GameComposition {
           unit: type,
         })
       }
+    },
+    onResearch: (type) => {
+      // Research upgrades are single-player only: they are not network commands,
+      // so applying them in PvP would desync the two simulations.
+      if (pvpState) return
+      const selected = composition.inputController.getSelected()
+      if (selected.length !== 1) return
+      const buildingId = selected[0]
+      researchUpgrade(composition.engine.world, buildingId, type as UpgradeType)
     },
     onPause: () => {
       const engine = composition.engine
@@ -180,6 +220,11 @@ export function initializeGame(): GameComposition {
       clearSave()
       location.reload()
     },
+    onPvP: () => {
+      if (pvpState) return // already in a live match
+      matchmaking.show()
+      matchmaking.showMenu()
+    },
     onLoad: () => {
       const save = readSave()
       if (!save) return
@@ -193,8 +238,24 @@ export function initializeGame(): GameComposition {
   composition.hud.mount(hudRoot, hudCallbacks)
   composition.engine.start()
 
+  // Matchmaking overlay (hidden until the PvP button is tapped).
+  const matchmaking = new MatchmakingUI()
+  matchmaking.mount(hudRoot, {
+    onFindMatch: (name) => void findMatch(matchmaking, composition, name),
+    onJoinRoom: (name, code) => joinRoom(matchmaking, composition, name, code),
+    onCancel: () => {
+      pvpLink = null
+      activeClient?.disconnect()
+      activeClient = null
+      matchmaking.showMenu()
+    },
+    onClose: () => matchmaking.hide(),
+  })
+
   // Autosave every 30 seconds so a closed tab never loses much.
-  setInterval(() => {
+  // Cleared when a live PvP match starts (the SP world is retired).
+  const autosaveId = setInterval(() => {
+    if (pvpState) return
     if (composition.engine.world.winner === -1) {
       writeSave(
         composition.engine.world,
@@ -203,6 +264,7 @@ export function initializeGame(): GameComposition {
       )
     }
   }, 30_000)
+  void autosaveId
 
   // Render loop: draw the world for the player, then refresh the HUD.
   let lastFrame = performance.now()
@@ -210,7 +272,14 @@ export function initializeGame(): GameComposition {
     const now = performance.now()
     const dt = Math.min(0.1, (now - lastFrame) / 1000)
     lastFrame = now
-    if (replaying) replayPlayer.update(dt)
+    const world = pvpState ? pvpState.engine.world : composition.engine.world
+    const viewTeam = pvpState ? pvpState.slot : TEAM_PLAYER
+    if (pvpState) {
+      // Lockstep drives the sim in PvP: pump before rendering.
+      pvpState.session.pump(now)
+    } else if (replaying) {
+      replayPlayer.update(dt)
+    }
     // Update building placement ghost.
     const ghost = composition.inputController.getGhostPosition()
     const pending = composition.inputController.getPendingBuilding()
@@ -219,12 +288,179 @@ export function initializeGame(): GameComposition {
     } else {
       composition.renderer.setGhost(null, 0, 0, true)
     }
-    composition.renderer.render(composition.engine.world, TEAM_PLAYER)
-    composition.hud.update(composition.engine.world, composition.inputController.getSelected())
+    composition.renderer.render(world, viewTeam)
+    composition.hud.update(world, composition.inputController.getSelected())
+    // PvP stall indicator: "waiting for opponent" when the peer starves.
+    if (pvpState) updatePvPStatus()
     requestAnimationFrame(frame)
   }
   requestAnimationFrame(frame)
   return composition
+}
+
+/** The live client for the current matchmaking attempt (null when idle). */
+let activeClient: PvPClient | null = null
+
+/** Create a room and wait for an opponent. */
+async function findMatch(
+  mm: MatchmakingUI,
+  composition: GameComposition,
+  name: string,
+): Promise<void> {
+  mm.showCreating()
+  try {
+    const code = await PvPClient.createRoom(PVP_SERVER_URL)
+    joinRoom(mm, composition, name, code, true)
+  } catch {
+    mm.showError('Could not create a room. Check your connection and try again.')
+  }
+}
+
+/** Join a room by code (or the code we just created). */
+function joinRoom(
+  mm: MatchmakingUI,
+  composition: GameComposition,
+  name: string,
+  code: string,
+  isHost = false,
+): void {
+  const clean = code.trim().toUpperCase()
+  if (!/^[A-Z0-9]{6}$/.test(clean)) {
+    mm.showError("That code doesn't look right — it should be 6 characters.")
+    return
+  }
+  activeClient?.disconnect()
+  pvpLink = null
+  let slot: 0 | 1 | null = null
+  const client = new PvPClient({
+    serverUrl: PVP_SERVER_URL,
+    playerId: getPlayerId(),
+    playerName: name,
+    onAssigned: (s) => {
+      slot = s
+    },
+    onMatchStart: (players) => {
+      if (slot === null) return
+      const opponent = players.find((pl) => pl.slot !== slot)
+      startPvPMatch(mm, composition, client, slot, opponent?.name ?? 'Opponent')
+    },
+    onTurnBundle: (bundle) => pvpLink?.receive(encodeMessage(bundle)),
+    onHash: (msg) => pvpLink?.receive(encodeMessage(msg)),
+    onOpponentDisconnected: () => handleOpponentDisconnect(mm),
+    onPlayerJoined: (count) => mm.setPlayerCount(count),
+  })
+  activeClient = client
+  if (isHost) mm.showWaiting(clean)
+  else mm.showJoining(clean)
+  client.connect(clean)
+}
+
+/**
+ * Both players are in: retire the single-player game and start the
+ * deterministic lockstep 1v1. Slot 0 plays human, slot 1 plays orc.
+ */
+function startPvPMatch(
+  mm: MatchmakingUI,
+  composition: GameComposition,
+  client: PvPClient,
+  slot: 0 | 1,
+  opponentName: string,
+): void {
+  mm.hide()
+  // Retire single-player: stop its loop (autosave checks pvpState and skips).
+  composition.engine.stop()
+
+  // Fresh deterministic world for the 1v1.
+  const world = new World()
+  seedScenario(world, PVP_FACTIONS[0], PVP_FACTIONS[1])
+  const engine = new Engine({ world })
+  // Every system except the AI opponent — both teams are human.
+  engine.world.registerSystem(new ProductionSystemImpl())
+  engine.world.registerSystem(new GatherSystemImpl())
+  engine.world.registerSystem(new CombatSystemImpl())
+  engine.world.registerSystem(new VisionSystemImpl())
+  engine.world.registerSystem(new VictorySystemImpl())
+  engine.world.registerSystem(new MovementSystemImpl())
+
+  // Input now goes through the lockstep queue; enemy checks use our slot.
+  const ic = composition.inputController
+  ic.setWorld(world)
+  ic.setLocalTeam(slot)
+  ic.setDeferredExecution(true)
+
+  composition.hud.setLocalTeam(slot)
+  // Center the camera on our base.
+  composition.renderer.centerOn(slot === 0 ? -40 : 40, slot === 0 ? -40 : 40, 8)
+
+  const link = new WsLink((kind, data) => client.sendRaw(kind, data))
+  pvpLink = link
+  const session = new PvPSession(slot, world, link, {
+    onStall: () => {
+      // The frame loop shows the stall pill (see updatePvPStatus).
+    },
+    onDesync: (turn) => {
+      // Should not happen with identical seeds + inputs; log for diagnosis.
+      console.warn(`[pvp] desync detected at turn ${turn}`)
+    },
+  })
+  ic.setCommandListener((cmd) => session.queueCommand(cmd))
+
+  pvpState = { session, client, link, slot, engine, opponentName }
+}
+
+/** Stall-pill bookkeeping for updatePvPStatus (module state, no namespace). */
+const pvpStallState = { lastTurn: -1, lastAdvance: 0 }
+
+/** Show a "waiting for opponent" pill while the lockstep peer starves. */
+let stallPill: HTMLElement | null = null
+function updatePvPStatus(): void {
+  const hudRoot = document.querySelector('#hud-root')
+  if (!hudRoot) return
+  if (!stallPill) {
+    stallPill = document.createElement('div')
+    stallPill.className = 'hud-pill hud-pvp-stall'
+    stallPill.textContent = '⏳ Waiting for opponent…'
+    stallPill.hidden = true
+    hudRoot.appendChild(stallPill)
+  }
+  // Cheap stall signal: our turn hasn't advanced in a while.
+  const turn = pvpState?.session.currentTurn ?? 0
+  const starved =
+    turn === pvpStallState.lastTurn && performance.now() - pvpStallState.lastAdvance > 3000
+  if (turn !== pvpStallState.lastTurn) {
+    pvpStallState.lastTurn = turn
+    pvpStallState.lastAdvance = performance.now()
+  }
+  stallPill.hidden = !starved || !pvpState
+}
+
+/** The other side left. Offer rematch or a clean exit. */
+function handleOpponentDisconnect(mm: MatchmakingUI): void {
+  if (!pvpState) {
+    // Left while waiting: just refresh the count display.
+    mm.setPlayerCount(1)
+    return
+  }
+  const st = pvpState
+  st.client.disconnect()
+  pvpLink = null
+  activeClient = null
+  pvpState = null
+  if (stallPill) stallPill.hidden = true
+  pvpStallState.lastTurn = -1
+  pvpStallState.lastAdvance = 0
+  mm.show()
+  mm.showDisconnected(
+    () => {
+      // Rematch: fresh room, same name.
+      mm.showMenu()
+    },
+    () => {
+      // Back to single-player.
+      location.reload()
+    },
+  )
+  void st
 }
 
 initializeGame()

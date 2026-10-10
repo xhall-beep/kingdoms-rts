@@ -18,7 +18,6 @@ import type { Command } from '../session/commands.ts'
 import { MsgKind, encodeMessage, decodeMessage } from './protocol.ts'
 import type { InputMsg, HashMsg } from './protocol.ts'
 import { STEPS_PER_TURN, DEFAULT_INPUT_DELAY_TURNS, HASH_EVERY_TURNS } from './protocol.ts'
-import type { ReliableLink } from './transport.ts'
 
 export interface LockstepConfig {
   /** Turns per second (default TURN_HZ). */
@@ -47,6 +46,16 @@ export interface PumpStats {
   currentTurn: number
 }
 
+/**
+ * Minimal transport surface the lockstep peer needs. ReliableLink satisfies
+ * this; so does the WebSocket adapter used for live PvP (TCP already gives
+ * us reliable, ordered delivery).
+ */
+export interface TurnTransport {
+  onMessage: ((data: Uint8Array) => void) | null
+  send(payload: Uint8Array, nowMs: number): void
+}
+
 export class LockstepPeer {
   readonly playerIndex: number
   readonly peerCount: number
@@ -54,7 +63,7 @@ export class LockstepPeer {
   private readonly inputDelay: number
   private readonly hashEvery: number
   private readonly stallWarnMs: number
-  private readonly link: ReliableLink
+  private readonly link: TurnTransport
   private readonly cb: TurnCallbacks
 
   private turn = 0
@@ -77,7 +86,7 @@ export class LockstepPeer {
   constructor(
     playerIndex: number,
     peerCount: number,
-    link: ReliableLink,
+    link: TurnTransport,
     cb: TurnCallbacks,
     config: LockstepConfig = {},
   ) {

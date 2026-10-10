@@ -36,6 +36,7 @@ export interface HudCallbacks {
   onDifficulty(d: AIDifficulty): void
   onReplay(): void
   onReplaySpeed(speed: number): void
+  onPvP(): void
 }
 
 
@@ -59,6 +60,12 @@ export class HudImpl implements Hud {
   private bannerEl: HTMLElement | null = null
   private callbacks: HudCallbacks | null = null
   private lastActionsKey = ''
+  /** Team treated as "us" for resources/selection/banner (PvP: our slot). */
+  private localTeam: 0 | 1 = TEAM_PLAYER
+
+  setLocalTeam(team: 0 | 1): void {
+    this.localTeam = team
+  }
 
   mount(parent: HTMLElement, callbacks?: HudCallbacks): void {
     this.callbacks = callbacks ?? null
@@ -67,7 +74,7 @@ export class HudImpl implements Hud {
         <span class="hud-pill hud-gold">Gold <b id="hud-gold">0</b></span>
         <span class="hud-pill hud-wood">Wood <b id="hud-wood">0</b></span>
         <span class="hud-pill">Supply <b id="hud-supply">0/0</b></span>
-        <span class="hud-pill hud-info" id="hud-info"></span><button class="hud-pill hud-menu-btn" id="hud-menu-btn">☰</button>
+        <span class="hud-pill hud-info" id="hud-info"></span><button class="hud-pill hud-pvp-btn" id="hud-pvp-btn">⚔️ PvP</button><button class="hud-pill hud-menu-btn" id="hud-menu-btn">☰</button>
       </div>
       
       <div class="hud-menu" id="hud-menu" hidden>
@@ -147,6 +154,8 @@ export class HudImpl implements Hud {
       })
     }
     // Menu toggle.
+    const pvpBtn = parent.querySelector('#hud-pvp-btn')
+    if (pvpBtn) pvpBtn.addEventListener('click', () => this.callbacks?.onPvP())
     const menuBtn = parent.querySelector('#hud-menu-btn')
     const menuEl = parent.querySelector<HTMLElement>('#hud-menu')
     if (menuBtn && menuEl) {
@@ -206,16 +215,16 @@ export class HudImpl implements Hud {
   }
 
   update(world: World, selected: number[]): void {
-    if (this.goldEl) this.goldEl.textContent = String(Math.floor(world.gold[TEAM_PLAYER]))
-    if (this.woodEl) this.woodEl.textContent = String(Math.floor(world.wood[TEAM_PLAYER]))
+    if (this.goldEl) this.goldEl.textContent = String(Math.floor(world.gold[this.localTeam]))
+    if (this.woodEl) this.woodEl.textContent = String(Math.floor(world.wood[this.localTeam]))
     if (this.supplyEl) {
-      this.supplyEl.textContent = `${world.supplyUsed[TEAM_PLAYER]}/${world.supplyCap[TEAM_PLAYER]}`
+      this.supplyEl.textContent = `${world.supplyUsed[this.localTeam]}/${world.supplyCap[this.localTeam]}`
     }
     if (this.infoEl) {
       let workers = 0
       let army = 0
       for (const id of world.entities.keys()) {
-        if (world.team[id] !== TEAM_PLAYER) continue
+        if (world.team[id] !== this.localTeam) continue
         if (world.kind[id] === KIND_WORKER) workers += 1
         else if (world.kind[id] <= 2) army += 1
       }
@@ -233,7 +242,7 @@ export class HudImpl implements Hud {
     // Count owned buildings by kind.
     const counts = new Map<number, number>()
     for (const id of world.entities.keys()) {
-      if (world.team[id] !== TEAM_PLAYER) continue
+      if (world.team[id] !== this.localTeam) continue
       const k = world.kind[id]
       if (k === KIND_HALL || k === KIND_BARRACKS || k === KIND_ARCHERY || k === KIND_FARM) {
         counts.set(k, (counts.get(k) ?? 0) + 1)
@@ -263,7 +272,7 @@ export class HudImpl implements Hud {
     if (!el) return
     // Key includes HP so the card refreshes as damage is taken.
     const hpKey = selected.length > 0 ? Math.floor(world.health[selected[0]]) : 0
-    const key = `${selected.join(',')}|${Math.floor(world.gold[TEAM_PLAYER])}|${Math.floor(world.wood[TEAM_PLAYER])}|${hpKey}`
+    const key = `${selected.join(',')}|${Math.floor(world.gold[this.localTeam])}|${Math.floor(world.wood[this.localTeam])}|${hpKey}`
     if (key === this.lastActionsKey) return
     this.lastActionsKey = key
     renderCommandCard(el, world, selected, {
@@ -284,7 +293,8 @@ export class HudImpl implements Hud {
       return
     }
     el.hidden = false
-    el.textContent = world.winner === 0 ? 'Victory!' : 'Defeat'
-    el.className = 'hud-banner ' + (world.winner === 0 ? 'hud-win' : 'hud-lose')
+    const won = world.winner === this.localTeam
+    el.textContent = won ? 'Victory!' : 'Defeat'
+    el.className = 'hud-banner ' + (won ? 'hud-win' : 'hud-lose')
   }
 }

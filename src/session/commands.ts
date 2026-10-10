@@ -26,6 +26,8 @@ export type Command =
   | { type: 'train'; step: number; buildingId: number; unit: UnitType }
   | { type: 'rally'; step: number; buildingId: number; x: number; z: number }
   | { type: 'patrol'; step: number; unitIds: number[]; x: number; z: number }
+  | { type: 'stop'; step: number; unitIds: number[] }
+  | { type: 'hold'; step: number; unitIds: number[] }
 
 export class CommandLog {
   private commands: Command[] = []
