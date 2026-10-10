@@ -82,7 +82,15 @@ export class CombatSystemImpl implements System {
         world.state[id] = STATE_ATTACK
         if (world.cooldown[id] <= 0) {
           world.cooldown[id] = world.cooldownTotal[id]
-          world.health[target] -= world.damage[id]
+          const dmg = world.damage[id]
+          world.health[target] -= dmg
+          world.damageNumbers.push({
+            x: world.positionX[target],
+            z: world.positionZ[target],
+            amount: Math.round(dmg),
+            team: world.team[target],
+            age: 0,
+          })
           if (world.health[target] <= 0 && !dead.includes(target)) dead.push(target)
         }
       } else {
