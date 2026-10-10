@@ -34,7 +34,7 @@ export interface InputController {
   handlePointer(position: readonly [number, number]): void
 }
 
-const PICK_RADIUS_PX = 28 // minimum tap target in screen pixels (finger-friendly)
+const PICK_RADIUS_PX = 40 // minimum tap target in screen pixels (finger-friendly)
 
 /**
  * Pointer input: left-click selects, left-drag pans, wheel zooms,
