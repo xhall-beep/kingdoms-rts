@@ -2,6 +2,7 @@ import { BUILDINGS } from '../data/buildings.ts'
 import { UNITS } from '../data/units.ts'
 import type { System, World } from '../core/World'
 import {
+  HARVEST_ANY,
   HARVEST_GOLD,
   HARVEST_WOOD,
   KIND_ARCHERY,
@@ -62,15 +63,16 @@ export type AIPersonality = 'aggressor' | 'defender' | 'expander'
 export class OpponentAI implements System {
   private readonly team: 0 | 1
   private readonly tuning: DifficultyTuning
-  private readonly personality!: AIPersonality
+  private readonly personality: AIPersonality
   private timer = 0
   private gameTime = 0 // seconds elapsed
   private scoutId: number | null = null
   private scoutTargets: { x: number; z: number }[] = []
 
-  constructor(team: 0 | 1, difficulty: AIDifficulty = 'normal') {
+  constructor(team: 0 | 1, difficulty: AIDifficulty = 'normal', personality: AIPersonality = 'expander') {
     this.team = team
     this.tuning = DIFFICULTY[difficulty]
+    this.personality = personality
   }
 
   update(world: World, dt: number): void {
@@ -100,16 +102,22 @@ export class OpponentAI implements System {
     if (workerCount + queued < this.tuning.workerTarget) enqueueTrain(world, hall, 'worker')
   }
 
-  /** Idle workers go back to harvesting, keeping roughly WOOD_SHARE on wood. */
+  /**
+   * Workers harvest, keeping roughly WOOD_SHARE on wood. Workers the gather
+   * system auto-assigned (HARVEST_ANY) are converted proactively: waiting for
+   * them to go IDLE first loses the race to the gather system every tick and
+   * leaves the economy hypersensitive to spawn geometry.
+   */
   private assignWorkers(world: World, workers: number[]): void {
     let onWood = 0
     for (const id of workers) {
-      if (world.state[id] === STATE_IDLE) continue
       if (world.harvestKind[id] === HARVEST_WOOD) onWood += 1
     }
     const woodWanted = Math.ceil(workers.length * WOOD_SHARE)
     for (const id of workers) {
-      if (world.state[id] !== STATE_IDLE) continue
+      const needsAssignment =
+        world.state[id] === STATE_IDLE || world.harvestKind[id] === HARVEST_ANY
+      if (!needsAssignment) continue
       if (onWood < woodWanted) {
         world.harvestKind[id] = HARVEST_WOOD
         onWood += 1
@@ -201,8 +209,14 @@ export class OpponentAI implements System {
         { x: -hx * 0.5, z: hz * 0.5 },
         { x: hx * 0.5, z: -hz * 0.5 },
       ]
-      // Pick a worker (not the one building)
-      const scout = workers.find((id) => world.state[id] === STATE_IDLE)
+      // Pick a worker: prefer an idle one, else pull one off harvesting. The
+      // gather system grabs idle workers before our think tick, so waiting
+      // for an idle worker means scouting never happens. An explicit move
+      // order sets the worker to HARVEST_OFF; it goes back to work when done.
+      const scout =
+        workers.find((id) => world.state[id] === STATE_IDLE) ??
+        workers.find((id) => world.carryAmount[id] === 0) ??
+        workers[0]
       if (scout !== undefined) {
         this.scoutId = scout
         const t = this.scoutTargets.shift()!

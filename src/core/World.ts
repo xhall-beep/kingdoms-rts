@@ -344,8 +344,11 @@ export class World {
     this.sight[id] = def.sight
     this.buildTotal[id] = def.buildTicks / TICK_RATE
     this.buildProgress[id] = built ? this.buildTotal[id] : 0
-    this.rallyX[id] = x
-    this.rallyZ[id] = z + def.radius + 4
+    // Default rally points toward the map center so both teams' workers start
+    // from symmetric positions. A fixed +z offset favored whichever team sat
+    // at +z, handing it ~2.3x gold income in the first 25 seconds.
+    this.rallyX[id] = x - Math.sign(x) * (def.radius + 4)
+    this.rallyZ[id] = z - Math.sign(z) * (def.radius + 4)
     this.state[id] = STATE_IDLE
     this.setPosition(entity, x, 0, z)
     if (built) this.supplyCap[team] += def.supply
