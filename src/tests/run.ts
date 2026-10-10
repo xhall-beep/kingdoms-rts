@@ -5,5 +5,5 @@ import './input.test.ts'
 import './session.test.ts'
 
 const ok = report()
-// @ts-expect-error — process is available in node
-process.exit(ok ? 0 : 1)
+const _p = (globalThis as unknown as { process?: { exit(c: number): void } }).process
+if (_p) _p.exit(ok ? 0 : 1)
