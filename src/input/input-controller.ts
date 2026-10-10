@@ -19,6 +19,7 @@ import { orderStop } from '../systems/movement.ts'
 import type { BuildingType } from '../data/buildings.ts'
 import type { Command } from '../session/commands.ts'
 import type { Renderer } from '../render/renderer'
+import { sfx } from '../ui/feedback.ts'
 import { placeStructure } from '../world/construction.ts'
 import { orderAttack, orderAttackMove } from '../systems/combat'
 import { orderBuild, orderGather } from '../systems/gather'
@@ -291,8 +292,10 @@ export class InputControllerImpl implements InputController {
       // Own entity: select it; tapping the sole selection deselects.
       if (this.selected.length === 1 && this.selected[0] === hit) {
         this.selected = []
+        sfx.deselect()
       } else {
         this.selected = [hit]
+        sfx.select()
       }
       renderer.setSelection(this.selected)
       return
@@ -305,8 +308,10 @@ export class InputControllerImpl implements InputController {
     } else {
       if (this.selected.length === 1 && this.selected[0] === hit) {
         this.selected = []
+        sfx.deselect()
       } else {
         this.selected = [hit]
+        sfx.select()
       }
       renderer.setSelection(this.selected)
     }
@@ -405,6 +410,7 @@ export class InputControllerImpl implements InputController {
     if (target !== -1 && world.team[target] !== TEAM_PLAYER && world.isAttackable(target)) {
       for (const id of this.selected) orderAttack(world, id, target)
       this.emit({ type: 'attack', step: 0, unitIds: [...this.selected], targetId: target })
+      sfx.attack()
       return
     }
     if (target !== -1 && (world.kind[target] === KIND_TREE || world.kind[target] === KIND_GOLDMINE)) {
@@ -414,6 +420,7 @@ export class InputControllerImpl implements InputController {
     const movers = this.selected.filter((id) => world.kind[id] <= KIND_RANGED)
     for (const id of movers) orderMove(world, id, p.x, p.z)
     this.emit({ type: 'move', step: 0, unitIds: movers, x: p.x, z: p.z })
+    if (movers.length > 0) sfx.move()
   }
 
   private isProductionBuilding(world: World, id: number): boolean {
@@ -430,6 +437,7 @@ export class InputControllerImpl implements InputController {
     }
     if (workers.length > 0) {
       this.emit({ type: 'gather', step: 0, unitIds: workers, nodeId: node })
+      sfx.gather()
     }
   }
 
