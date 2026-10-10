@@ -1,11 +1,12 @@
 import { TEAM_ENEMY, TEAM_PLAYER, World } from './core/World'
+import type { FactionId } from './data/factions.ts'
 
 /**
  * Minimal deterministic skirmish seed: two finished halls, four workers each,
  * and mirrored resource fields. Starting stock lets both sides train at once.
  */
-export function seedScenario(world: World): void {
-  world.factionOfTeam = ['human', 'orc']
+export function seedScenario(world: World, playerFaction: FactionId = 'human', enemyFaction: FactionId = 'orc'): void {
+  world.factionOfTeam = [playerFaction, enemyFaction]
 
   // Player base (south-west).
   world.spawnBuilding('hall', TEAM_PLAYER, -40, -40, true)
