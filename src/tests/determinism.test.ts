@@ -51,14 +51,13 @@ function makeScript(seed: number): Array<{ tick: number; run: (w: World) => void
   return script
 }
 
-function runWorld(script: Array<{ tick: number; run: (w: World) => void }>, stepSize: number): string[] {
+function runWorld(script: Array<{ tick: number; run: (w: World) => void }>): string[] {
   const world = makeWorld()
   const hashes: string[] = []
   let scriptIdx = 0
 
-  // Always interleave commands per-tick for correctness; stepSize only
-  // controls how we batch the update() calls (tests accumulator robustness).
-  // For true determinism testing, commands must execute at exact ticks.
+  // Commands interleave per-tick; update() runs every tick at exact ticks
+  // for true determinism testing.
   for (let tick = 0; tick < TICKS; tick++) {
     while (scriptIdx < script.length && script[scriptIdx].tick === tick) {
       script[scriptIdx].run(world)
@@ -76,8 +75,8 @@ suite('determinism: long-run hash parity')
 
 test('identical runs produce identical hashes (3600 ticks)', () => {
   const script = makeScript(12345)
-  const hashes1 = runWorld(script, 1)
-  const hashes2 = runWorld(makeScript(12345), 1)
+  const hashes1 = runWorld(script)
+  const hashes2 = runWorld(makeScript(12345))
 
   assertEqual(hashes1.length, hashes2.length, 'same number of hash samples')
   assert(hashes1.length === TICKS / HASH_EVERY, `expected ${TICKS / HASH_EVERY} samples`)
@@ -110,8 +109,8 @@ test('hash is stable across repeated runs with combat', () => {
     script.sort((a, b) => a.tick - b.tick)
     return script
   }
-  const hashes1 = runWorld(mkHeavyScript(), 1)
-  const hashes2 = runWorld(mkHeavyScript(), 1)
+  const hashes1 = runWorld(mkHeavyScript())
+  const hashes2 = runWorld(mkHeavyScript())
   assertEqual(hashes1.length, hashes2.length, 'same samples')
   for (let i = 0; i < hashes1.length; i++) {
     assertEqual(hashes1[i], hashes2[i], `heavy combat mismatch at sample ${i}`)
@@ -119,8 +118,8 @@ test('hash is stable across repeated runs with combat', () => {
 })
 
 test('different seeds produce different hashes (test is sensitive)', () => {
-  const hashes1 = runWorld(makeScript(11111), 1)
-  const hashes2 = runWorld(makeScript(22222), 1)
+  const hashes1 = runWorld(makeScript(11111))
+  const hashes2 = runWorld(makeScript(22222))
 
   let differences = 0
   for (let i = 0; i < hashes1.length; i++) {
