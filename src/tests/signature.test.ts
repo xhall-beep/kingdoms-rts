@@ -181,7 +181,7 @@ test('human upgrades cost less', () => {
   // Give plenty of resources
   world.gold[TEAM_PLAYER] = 10000
   world.wood[TEAM_PLAYER] = 10000
-  const hall = world.spawnBuilding('hall', TEAM_PLAYER, 0, 0)
+  const hall = world.spawnBuilding('hall', TEAM_PLAYER, 0, 0, true)
 
   const def = UPGRADES['meleeDmg']
   const factor = FACTIONS.human.signature!.adaptable!.upgradeCostFactor
@@ -199,7 +199,7 @@ test('non-human pays full upgrade cost', () => {
   world.factionOfTeam[TEAM_PLAYER] = 'orc'
   world.gold[TEAM_PLAYER] = 10000
   world.wood[TEAM_PLAYER] = 10000
-  const hall = world.spawnBuilding('hall', TEAM_PLAYER, 0, 0)
+  const hall = world.spawnBuilding('hall', TEAM_PLAYER, 0, 0, true)
 
   const def = UPGRADES['meleeDmg']
   const goldBefore = world.gold[TEAM_PLAYER]
