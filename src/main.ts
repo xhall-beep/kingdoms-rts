@@ -26,6 +26,7 @@ import {
 } from './session/save-load.ts'
 import type { AIDifficulty } from './ai/opponent'
 import { HudImpl } from './ui/hud'
+import { PvPGame } from './net/pvp-game.ts'
 import type { HudCallbacks } from './ui/hud'
 
 export interface GameComposition {
@@ -179,6 +180,17 @@ export function initializeGame(): GameComposition {
     onNewGame: () => {
       clearSave()
       location.reload()
+    },
+    onPvPMatchStart: (slot, opponentName, client) => {
+      if (!client) {
+        console.error('PvP match started without a client')
+        return
+      }
+      console.log(`PvP match starting: slot=${slot}, opponent=${opponentName}`)
+      const pvpGame = new PvPGame({ composition, client, slot })
+      pvpGame.start()
+      // Store for cleanup on new game
+      ;(composition as unknown as { pvpGame: PvPGame }).pvpGame = pvpGame
     },
     onLoad: () => {
       const save = readSave()
