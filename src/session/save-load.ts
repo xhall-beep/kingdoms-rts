@@ -84,6 +84,7 @@ export function deserializeWorld(world: World, save: WorldSave): void {
   world.entities.clear()
   for (const id of save.entities) world.entities.set(id, { id })
   world.setNextEntityId(maxId + 1)
+  world.rebuildFreeIds(maxId)
   world.gold = [...save.gold]
   world.wood = [...save.wood]
   world.supplyUsed = [...save.supplyUsed]

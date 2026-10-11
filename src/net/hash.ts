@@ -78,6 +78,7 @@ export function hashWorldState(world: World): bigint {
   const ids = [...world.entities.keys()].sort((a, b) => a - b)
   for (const id of ids) h = mixWord(h, id)
   h = mixWord(h, world.getNextEntityId())
+  h = mixWord(h, world.getFreeIdCount())
 
   // Struct-of-arrays state.
   h = mixFloatArray(h, world.positionX)

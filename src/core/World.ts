@@ -174,6 +174,12 @@ export class World {
 
   private nextEntityId = 1
   private readonly capacity: number
+  /**
+   * Recycled entity IDs, LIFO. Populated by removeEntity, consumed by
+   * createEntity. Allocation order is deterministic: both lockstep peers
+   * see the same removals/creations in the same order.
+   */
+  private readonly freeIds: number[] = []
 
   constructor(options: WorldOptions = {}) {
     this.capacity = options.capacity ?? 1_024
@@ -220,11 +226,18 @@ export class World {
   }
 
   createEntity(): Entity {
-    if (this.nextEntityId > this.capacity) {
-      throw new Error('World capacity exceeded')
+    let id: number
+    const recycled = this.freeIds.pop()
+    if (recycled !== undefined) {
+      id = recycled
+    } else {
+      if (this.nextEntityId > this.capacity) {
+        throw new Error('World capacity exceeded')
+      }
+      id = this.nextEntityId++
     }
 
-    const entity = { id: this.nextEntityId++ } as Entity
+    const entity = { id } as Entity
     this.entities.set(entity.id, entity)
     return entity
   }
@@ -234,9 +247,26 @@ export class World {
     this.nextEntityId = id
   }
 
+  /**
+   * Rebuild the free-ID list after loading a save: every id below maxId
+   * that isn't a live entity is recyclable. Pushed descending so pop()
+   * yields the lowest free id first (deterministic).
+   */
+  rebuildFreeIds(maxId: number): void {
+    this.freeIds.length = 0
+    for (let id = maxId; id >= 1; id--) {
+      if (!this.entities.has(id)) this.freeIds.push(id)
+    }
+  }
+
   /** Exposed for deterministic state hashing (future entity ids depend on it). */
   getNextEntityId(): number {
     return this.nextEntityId
+  }
+
+  /** Number of recycled IDs waiting for reuse (hashed for determinism). */
+  getFreeIdCount(): number {
+    return this.freeIds.length
   }
 
   removeEntity(entity: Entity): void {
@@ -251,7 +281,15 @@ export class World {
         this.supplyCap[team] -= BUILDINGS[BUILDING_BY_KIND[kind]].supply
       }
     }
+    // Clear cross-entity references BEFORE the id is recycled: a stale
+    // targetId would otherwise silently retarget to the id's next owner.
+    for (const other of this.entities.keys()) {
+      if (other !== id && this.targetId[other] === id) {
+        this.targetId[other] = NO_TARGET
+      }
+    }
     this.entities.delete(id)
+    this.freeIds.push(id)
   }
 
   removeEntityById(id: number): void {

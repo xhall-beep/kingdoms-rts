@@ -2,10 +2,10 @@
  * Faction signature mechanic tests — verifies Undead reanimation works
  * deterministically and doesn't affect other factions.
  */
-import { World, TEAM_PLAYER, TEAM_ENEMY, KIND_MELEE } from '../core/World.ts'
+import { TEAM_PLAYER, TEAM_ENEMY } from '../core/World.ts'
 import { FACTIONS } from '../data/factions.ts'
-import { suite, test, assert, assertEqual } from './harness.ts'
-import { makeWorld, stepWorld, STEP } from './setup.ts'
+import { suite, test, assert } from './harness.ts'
+import { makeWorld, STEP } from './setup.ts'
 
 suite('signature: undead reanimation')
 
