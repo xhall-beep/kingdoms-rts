@@ -116,6 +116,10 @@ export class PvPClient {
     return this.slot
   }
 
+  get playerId(): string {
+    return this.config.playerId
+  }
+
   private handleMessage(data: string): void {
     let msg: { kind?: string; data?: string; slot?: 0 | 1; players?: { slot: 0 | 1; name: string }[]; count?: number }
     try {
