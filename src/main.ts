@@ -194,13 +194,34 @@ export function initializeGame(): GameComposition {
       clearSave()
       location.reload()
     },
-    onPvPMatchStart: (slot, opponentName, client) => {
+    onPvPMatchStart: (slot, opponentName, client, opponentId) => {
       if (!client) {
         console.error('PvP match started without a client')
         return
       }
       console.log(`PvP match starting: slot=${slot}, opponent=${opponentName}`)
-      const pvpGame = new PvPGame({ composition, client, slot })
+      const pvpGame = new PvPGame({
+        composition,
+        client,
+        slot,
+        onMatchEnd: (won) => {
+          // Report result to matchmaker for rating update (fire-and-forget)
+          const httpUrl = 'https://kingdoms-pvp.stephen-x-hall.workers.dev'
+          const myId = client.playerId
+          const oppId = opponentId || ''
+          const winnerId = won ? myId : oppId
+          const loserId = won ? oppId : myId
+          if (winnerId && loserId && winnerId !== loserId) {
+            fetch(`${httpUrl}/api/match/result`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ winnerId, loserId }),
+            }).catch(() => { /* offline or server unreachable — rating stays */ })
+          }
+          // TODO: show match-end UI with rating change
+          console.log(`Match over: ${won ? 'victory' : 'defeat'}`)
+        },
+      })
       pvpGame.start()
       // Store for cleanup on new game
       ;(composition as unknown as { pvpGame: PvPGame }).pvpGame = pvpGame
