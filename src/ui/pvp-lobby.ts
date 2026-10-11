@@ -18,6 +18,7 @@ export class PvPLobby {
   private root: HTMLElement | null = null
   private client: PvPClient | null = null
   private callbacks: PvPLobbyCallbacks | null = null
+  private queueWs: WebSocket | null = null
 
   mount(parent: HTMLElement, callbacks: PvPLobbyCallbacks): void {
     this.callbacks = callbacks
@@ -32,6 +33,14 @@ export class PvPLobby {
             <input type="text" id="pvp-name" maxlength="16"
                    value="${getPlayerName()}" placeholder="Your name" />
           </label>
+        </div>
+        <div class="pvp-row">
+          <button class="hud-pill hud-mode pvp-quick" id="pvp-quick">⚡ Quick Match</button>
+        </div>
+        <div class="pvp-row" id="pvp-queue-display" hidden>
+          <p class="pvp-searching">🔍 Searching for opponent...</p>
+          <p id="pvp-queue-count"></p>
+          <button class="hud-pill" id="pvp-cancel">Cancel</button>
         </div>
         <div class="pvp-row">
           <button class="hud-pill hud-mode" id="pvp-create">Create Room</button>
@@ -83,6 +92,10 @@ export class PvPLobby {
       }
     })
 
+    const quickBtn = this.root.querySelector('#pvp-quick')
+    const cancelBtn = this.root.querySelector('#pvp-cancel')
+    quickBtn?.addEventListener('click', () => this.joinQueue())
+    cancelBtn?.addEventListener('click', () => this.leaveQueue())
     createBtn?.addEventListener('click', () => this.createRoom())
     joinBtn?.addEventListener('click', () => {
       const code = joinCodeInput?.value.trim().toUpperCase()
@@ -162,9 +175,92 @@ export class PvPLobby {
     if (el) el.textContent = msg
   }
 
+  /** Join the Quick Match queue. */
+  private joinQueue(): void {
+    const nameInput = this.root?.querySelector<HTMLInputElement>('#pvp-name')
+    const name = nameInput?.value.trim() || getPlayerName()
+    setPlayerName(name)
+
+    // Show queue UI
+    const queueDisplay = this.root?.querySelector<HTMLElement>('#pvp-queue-display')
+    if (queueDisplay) queueDisplay.hidden = false
+    this.setStatus('Connecting to matchmaker...')
+
+    const wsUrl = `${SERVER_URL}/api/queue/ws?playerId=${encodeURIComponent(getPlayerId())}&name=${encodeURIComponent(name)}`
+    this.queueWs = new WebSocket(wsUrl)
+
+    this.queueWs.onmessage = (event) => {
+      let msg: { kind?: string; position?: number; inQueue?: number; code?: string; slot?: 0 | 1; opponent?: { name: string } }
+      try {
+        msg = JSON.parse(event.data as string)
+      } catch {
+        return
+      }
+
+      switch (msg.kind) {
+        case 'queued':
+          this.setStatus(`In queue (position ${msg.position ?? '?'})`)
+          break
+        case 'queue_status':
+          this.updateQueueCount(msg.inQueue ?? 0)
+          break
+        case 'matched':
+          this.onQueueMatched(msg.code!, msg.slot!, msg.opponent?.name ?? 'Opponent')
+          break
+      }
+    }
+
+    this.queueWs.onclose = () => {
+      this.queueWs = null
+      const qd = this.root?.querySelector<HTMLElement>('#pvp-queue-display')
+      if (qd) qd.hidden = true
+    }
+
+    this.queueWs.onerror = () => {
+      this.setStatus('Could not reach matchmaker')
+      const qd = this.root?.querySelector<HTMLElement>('#pvp-queue-display')
+      if (qd) qd.hidden = true
+    }
+  }
+
+  /** Leave the Quick Match queue. */
+  private leaveQueue(): void {
+    if (this.queueWs) {
+      try {
+        this.queueWs.send(JSON.stringify({ kind: 'leave' }))
+        this.queueWs.close()
+      } catch { /* ignore */ }
+      this.queueWs = null
+    }
+    const qd = this.root?.querySelector<HTMLElement>('#pvp-queue-display')
+    if (qd) qd.hidden = true
+    this.setStatus('')
+  }
+
+  /** Called when the matchmaker pairs us. Joins the assigned room. */
+  private onQueueMatched(code: string, _slot: 0 | 1, opponentName: string): void {
+    // Hide queue UI
+    const qd = this.root?.querySelector<HTMLElement>('#pvp-queue-display')
+    if (qd) qd.hidden = true
+    this.queueWs = null
+
+    this.setStatus(`Matched vs ${opponentName}! Joining...`)
+    // Connect to the room using the existing flow
+    this.connect(code)
+  }
+
+  private updateQueueCount(count: number): void {
+    const el = this.root?.querySelector('#pvp-queue-count')
+    if (el) el.textContent = count === 1 ? '1 player waiting' : `${count} players waiting`
+  }
+
   disconnect(): void {
     this.client?.disconnect()
     this.client = null
+    if (this.queueWs) {
+      try { this.queueWs.close() } catch { /* ignore */ }
+      this.queueWs = null
+    }
   }
 
   /** Get the active PvP client (for game integration). */
