@@ -12,7 +12,7 @@ import {
   KIND_WORKER,
   TEAM_PLAYER,
 } from '../core/World'
-import { UNITS } from '../data/units.ts'
+import { getUnits } from '../data/stats.ts'
 import type { UnitType } from '../data/units.ts'
 import { BUILDINGS } from '../data/buildings.ts'
 import { PLAYER_BUILDABLE, canAfford } from '../world/construction.ts'
@@ -149,7 +149,7 @@ export function renderCommandCard(
   if (isUnit) {
     const utype: UnitType =
       kind === KIND_WORKER ? 'worker' : kind === KIND_MELEE ? 'melee' : 'ranged'
-    const def = UNITS[utype]
+    const def = getUnits()[utype]
     stat('Damage', String(def.damage))
     stat('Range', String(def.range))
     stat('Sight', String(def.sight))
@@ -221,7 +221,7 @@ export function renderCommandCard(
       const trainable: UnitType[] =
         kind === KIND_HALL ? ['worker'] : kind === KIND_BARRACKS ? ['melee'] : kind === KIND_ARCHERY ? ['ranged'] : []
       for (const utype of trainable) {
-        const udef = UNITS[utype]
+        const udef = getUnits()[utype]
         const afford =
           world.gold[TEAM_PLAYER] >= udef.cost.gold &&
           world.wood[TEAM_PLAYER] >= udef.cost.wood
