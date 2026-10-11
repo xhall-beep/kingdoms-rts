@@ -27,6 +27,7 @@ import {
 import type { AIDifficulty, AIPersonality } from './ai/opponent'
 import { HudImpl } from './ui/hud'
 import { PvPGame } from './net/pvp-game.ts'
+import { loadSprites } from './render/sprites.ts'
 import type { HudCallbacks } from './ui/hud'
 
 export interface GameComposition {
@@ -273,4 +274,5 @@ export function initializeGame(): GameComposition {
   return composition
 }
 
+loadSprites() // Start loading sprite assets
 initializeGame()
