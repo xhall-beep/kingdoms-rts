@@ -161,6 +161,10 @@ export class World {
   supplyUsed: number[] = [0, 0]
   supplyCap: number[] = [0, 0]
   factionOfTeam: [FactionId, FactionId] = ['human', 'human']
+  /** Simulation tick counter (for deterministic rolls). */
+  tick = 0
+  /** Remaining ticks for reanimated units (0 = not reanimated). */
+  readonly reanimateTicks: Int32Array
 
   /** Match outcome: -1 = ongoing, 0 = player (team 0) wins, 1 = enemy wins. */
   winner: -1 | 0 | 1 = -1
@@ -180,6 +184,7 @@ export class World {
     this.velocityX = new Float32Array(length)
     this.velocityY = new Float32Array(length)
     this.velocityZ = new Float32Array(length)
+    this.reanimateTicks = new Int32Array(length)
     this.kind = new Uint8Array(length)
     this.team = new Uint8Array(length)
     this.state = new Uint8Array(length)
@@ -261,6 +266,18 @@ export class World {
   }
 
   update(deltaSeconds: number): void {
+    this.tick++
+    // Expire reanimated units
+    for (let id = 0; id < this.reanimateTicks.length; id++) {
+      if (this.reanimateTicks[id] > 0 && this.entities.has(id)) {
+        this.reanimateTicks[id]--
+        if (this.reanimateTicks[id] === 0) {
+          // Reanimated unit crumbles — remove without death effects
+          this.reanimateTicks[id] = -1 // Mark as expired, skip re-roll
+          this.removeEntityById(id)
+        }
+      }
+    }
     for (const system of this.systems) {
       system.update(this, deltaSeconds)
     }

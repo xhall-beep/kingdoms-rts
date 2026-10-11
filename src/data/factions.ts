@@ -36,6 +36,17 @@ export interface Modifiers {
   gather: number;  // Worker harvesting speed.
 }
 
+/**
+ * Faction signature mechanic — the unique system that defines how a faction
+ * plays differently, beyond stat multipliers. Data-driven; systems check
+ * for the presence of each signature key.
+ */
+export interface FactionSignature {
+  /** Undead reanimation: fallen units may rise as temporary skeletons. */
+  reanimate?: { chance: number; hpFactor: number; durationSec: number };
+  // Future signatures: momentum, woodlandSpeed, scavenging, auras, etc.
+}
+
 export interface FactionDef {
   name: string;
   colors: [number, number, number]; // primary, secondary, accent
@@ -45,6 +56,7 @@ export interface FactionDef {
   hall: string;                      // Town Hall model recipe: "base,roof,extra,extra"
   units: Record<UnitType, string>;   // Display names
   mods: Modifiers;
+  signature?: FactionSignature;
 }
 
 /** Order matches Modifiers: hp, damage, speed, cost, train, gather. */
@@ -69,7 +81,8 @@ export const FACTIONS: Record<FactionId, FactionDef> = {
     mods: m(1.15, 1.15, 0.95, 1.1, 1.1, 0.9) },
   undead: { name: 'Undead', colors: [0x5b3f8f, 0x9be7ff, 0x2a2236], skin: 0xe9e4d4, head: 'hood', hall: 'box,cone,spires,skull',
     units: { worker: 'Ghoul', melee: 'Skeleton', ranged: 'Bone Archer' },
-    mods: m(0.9, 0.95, 0.95, 0.85, 0.85, 0.9) },
+    mods: m(0.9, 0.95, 0.95, 0.85, 0.85, 0.9),
+    signature: { reanimate: { chance: 0.25, hpFactor: 0.5, durationSec: 15 } } },
   lich: { name: 'Lich', colors: [0x1d6f8f, 0x7ff0ff, 0x1a1f2e], skin: 0xdfe8e4, head: 'hood', hall: 'round,cone,crystals,spires',
     units: { worker: 'Soul Harvester', melee: 'Death Knight', ranged: 'Necromancer' },
     mods: m(0.85, 1.2, 1, 1.1, 1.05, 0.95) },

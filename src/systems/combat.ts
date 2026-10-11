@@ -1,4 +1,6 @@
 import type { System, World } from '../core/World'
+import { FACTIONS } from '../data/factions.ts'
+import { TICK_RATE } from '../core/time.ts'
 import {
   KIND_MELEE,
   KIND_RANGED,
@@ -143,7 +145,42 @@ export class CombatSystemImpl implements System {
         world.state[id] = STATE_ATTACK
       }
     }
-    for (const id of dead) world.removeEntityById(id)
+    for (const id of dead) {
+      this.tryReanimate(world, id)
+      world.removeEntityById(id)
+    }
+  }
+
+  /**
+   * Undead signature: fallen units may reanimate as temporary skeletons.
+   * Deterministic: roll uses hash(entityId, tick) so PvP stays in sync.
+   */
+  private tryReanimate(world: World, deadId: number): void {
+    const team = world.team[deadId] as 0 | 1
+    const faction = FACTIONS[world.factionOfTeam[team]]
+    const reanimate = faction.signature?.reanimate
+    if (!reanimate) return
+
+    // Skip if this was already a reanimated unit (no chain reanimation)
+    if (world.reanimateTicks[deadId] !== 0) return
+
+    // Deterministic roll: hash of entity id and tick
+    const hash = ((deadId * 2654435761) ^ (world.tick * 40503)) >>> 0
+    const roll = (hash % 10000) / 10000
+    if (roll >= reanimate.chance) return
+
+    // Spawn a skeleton (melee) at the death position
+    const x = world.positionX[deadId]
+    const z = world.positionZ[deadId]
+    const entity = world.spawnUnit('melee', team, x, z)
+    const newId = entity.id
+
+    // Apply reanimation: reduced HP, limited lifetime
+    const maxHp = world.maxHealth[newId]
+    const reHp = Math.max(1, Math.round(maxHp * reanimate.hpFactor))
+    world.health[newId] = reHp
+    world.maxHealth[newId] = reHp
+    world.reanimateTicks[newId] = Math.round(reanimate.durationSec * TICK_RATE)
   }
 }
 
