@@ -98,6 +98,8 @@ const sampleCommands: Command[] = [
   { type: 'train', step: 0, buildingId: 8, unit: 'ranged' },
   { type: 'rally', step: 0, buildingId: 8, x: 100.5, z: -100.5 },
   { type: 'patrol', step: 0, unitIds: [21], x: 1.5, z: 2.5 },
+  { type: 'stop', step: 0, unitIds: [21, 22] },
+  { type: 'hold', step: 0, unitIds: [23] },
 ]
 
 for (const cmd of sampleCommands) {

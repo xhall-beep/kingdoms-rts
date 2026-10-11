@@ -120,3 +120,40 @@ test('orderStop halts moving units', () => {
   assert(world.moving[workerId] === 0, 'worker stopped')
   assert(world.state[workerId] === 0, 'worker idle')
 })
+test('deferred mode: stopSelected emits without mutating the world', () => {
+  const { world, input } = setup()
+  let workerId = -1
+  for (const id of world.entities.keys()) {
+    if (world.team[id] === TEAM_PLAYER && world.kind[id] === KIND_WORKER) {
+      workerId = id
+      break
+    }
+  }
+  ;(input as unknown as { selected: number[] }).selected = [workerId]
+  orderMove(world, workerId, 50, 50)
+  assert(world.moving[workerId] === 1, 'worker is moving')
+
+  const emitted: { type: string }[] = []
+  input.setCommandListener((cmd) => emitted.push(cmd))
+  input.setDeferredExecution(true)
+  input.stopSelected()
+
+  assertEqual(emitted.length, 1, 'one command emitted')
+  assertEqual(emitted[0].type, 'stop', 'stop command emitted')
+  assert(world.moving[workerId] === 1, 'world NOT mutated in deferred mode')
+})
+
+test('normal mode: stopSelected still mutates immediately', () => {
+  const { world, input } = setup()
+  let workerId = -1
+  for (const id of world.entities.keys()) {
+    if (world.team[id] === TEAM_PLAYER && world.kind[id] === KIND_WORKER) {
+      workerId = id
+      break
+    }
+  }
+  ;(input as unknown as { selected: number[] }).selected = [workerId]
+  orderMove(world, workerId, 50, 50)
+  input.stopSelected()
+  assert(world.moving[workerId] === 0, 'worker stopped immediately in normal mode')
+})

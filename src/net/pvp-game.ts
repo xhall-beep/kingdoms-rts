@@ -91,6 +91,17 @@ export class PvPGame {
     this.client.setTurnBundleHandler((bundle) => this.link.receive(bundle))
     this.client.setHashHandler((msg) => this.link.receive(msg))
 
+    // Freeze the real-time engine loop: in PvP the world must advance ONLY
+    // through lockstep turns, or the two clients diverge (double-advance).
+    // Rendering continues on its own rAF loop; only sim steps are frozen.
+    this.composition.engine.pause()
+
+    // Deferred input: commands emit without mutating the world locally;
+    // they take effect when the lockstep turn executes them.
+    const localTeam = this.peer.playerIndex === 0 ? TEAM_PLAYER : TEAM_ENEMY
+    this.composition.inputController.setLocalTeam(localTeam)
+    this.composition.inputController.setDeferredExecution(true)
+
     // Disable the AI opponent — the human is the opponent now
     const world = this.composition.engine.world
     const opponentIdx = world.systems.indexOf(this.composition.systems.opponent)
@@ -98,11 +109,9 @@ export class PvPGame {
       world.systems.splice(opponentIdx, 1)
     }
 
-    // Intercept local commands: queue through lockstep instead of applying immediately
+    // Queue local commands through lockstep (no immediate local apply).
     this.composition.inputController.setCommandListener((cmd: Command) => {
-      // Tag the command with our team
-      const teamCmd = { ...cmd, team: this.peer.playerIndex === 0 ? TEAM_PLAYER : TEAM_ENEMY }
-      this.peer.queueCommand(teamCmd as Command)
+      this.peer.queueCommand(cmd)
     })
 
     // Start the turn pump (4 turns/second)
@@ -125,6 +134,9 @@ export class PvPGame {
     this.composition.engine.resume()
     // Restore base stats for single-player / campaign.
     setStatsMode('base')
+    // Restore normal single-player input behavior.
+    this.composition.inputController.setDeferredExecution(false)
+    this.composition.inputController.setLocalTeam(TEAM_PLAYER)
   }
 
   /** Execute a lockstep turn: apply all commands, step the world. */

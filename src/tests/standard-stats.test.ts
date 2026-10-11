@@ -11,13 +11,13 @@ suite('standard-stats: mode switching')
 
 test('defaults to base stats', () => {
   setStatsMode('base')
-  assertEqual(getStatsMode(), 'base')
+  assertEqual(getStatsMode(), 'base', 'mode is base')
   assert(getUnits() === UNITS, 'should return base UNITS')
 })
 
 test('switches to tournament stats in standard mode', () => {
   setStatsMode('standard')
-  assertEqual(getStatsMode(), 'standard')
+  assertEqual(getStatsMode(), 'standard', 'mode is standard')
   assert(getUnits() === STANDARD_UNITS, 'should return STANDARD_UNITS')
   assert(getUnits().worker.hp > 0, 'worker has hp')
   assert(getUnits().melee.hp > 0, 'melee has hp')

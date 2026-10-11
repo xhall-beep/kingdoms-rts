@@ -53,6 +53,29 @@ export class InputControllerImpl implements InputController {
   private pendingBuilding: BuildingType | null = null
   private ghostPos: { x: number; z: number } | null = null
   private commandListener: ((cmd: Command) => void) | null = null
+  /** Team treated as "us" for selection/enemy checks (PvP: our slot). */
+  private localTeam: 0 | 1 = TEAM_PLAYER
+  /**
+   * When true, input only emits commands without mutating the world.
+   * Used for lockstep PvP: commands take effect when the turn executes.
+   */
+  private deferred = false
+
+  /** Swap the world without rebinding canvas listeners (PvP transition). */
+  setWorld(world: World): void {
+    this.world = world
+    this.selected = []
+    this.pendingBuilding = null
+    this.ghostPos = null
+  }
+
+  setLocalTeam(team: 0 | 1): void {
+    this.localTeam = team
+  }
+
+  setDeferredExecution(deferred: boolean): void {
+    this.deferred = deferred
+  }
 
   attach(canvas: HTMLCanvasElement, world: World, renderer: Renderer): void {
     this.world = world
@@ -93,7 +116,7 @@ export class InputControllerImpl implements InputController {
     if (!world || !renderer) return
     const matches: number[] = []
     for (const id of world.entities.keys()) {
-      if (world.team[id] === TEAM_PLAYER && world.kind[id] === kind) matches.push(id)
+      if (world.team[id] === this.localTeam && world.kind[id] === kind) matches.push(id)
     }
     if (matches.length === 0) return
     // Cycle: if currently selecting one of this kind, pick the next.
@@ -117,7 +140,7 @@ export class InputControllerImpl implements InputController {
     const idle: number[] = []
     for (const id of world.entities.keys()) {
       if (
-        world.team[id] === TEAM_PLAYER &&
+        world.team[id] === this.localTeam &&
         world.kind[id] === KIND_WORKER &&
         world.state[id] === STATE_IDLE &&
         world.carryKind[id] === CARRY_NONE
@@ -133,17 +156,24 @@ export class InputControllerImpl implements InputController {
   stopSelected(): void {
     const world = this.world
     if (!world) return
-    for (const id of this.selected) {
-      if (world.team[id] === TEAM_PLAYER && world.kind[id] <= KIND_RANGED) {
-        orderStop(world, id)
-      }
+    const ids = this.selected.filter(
+      (id) => world.team[id] === this.localTeam && world.kind[id] <= KIND_RANGED,
+    )
+    if (this.deferred) {
+      if (ids.length > 0) this.emit({ type: 'stop', step: 0, unitIds: [...ids] })
+      return
     }
+    for (const id of ids) orderStop(world, id)
   }
 
   /** Order selected units to hold position. */
   holdSelected(): void {
     const world = this.world
     if (!world) return
+    if (this.deferred) {
+      if (this.selected.length > 0) this.emit({ type: 'hold', step: 0, unitIds: [...this.selected] })
+      return
+    }
     for (const id of this.selected) {
       orderHold(world, id)
     }
@@ -156,7 +186,7 @@ export class InputControllerImpl implements InputController {
     if (!world) return []
     const counts = new Map<number, number>()
     for (const id of world.entities.keys()) {
-      if (world.team[id] !== TEAM_PLAYER) continue
+      if (world.team[id] !== this.localTeam) continue
       const k = world.kind[id]
       if (k === KIND_HALL || k === KIND_BARRACKS || k === KIND_ARCHERY || k === KIND_FARM) {
         counts.set(k, (counts.get(k) ?? 0) + 1)
@@ -329,7 +359,7 @@ export class InputControllerImpl implements InputController {
       return
     }
 
-    const isOwn = world.team[hit] === TEAM_PLAYER
+    const isOwn = world.team[hit] === this.localTeam
     if (isOwn) {
       // Own entity: select it; tapping the sole selection deselects.
       if (this.selected.length === 1 && this.selected[0] === hit) {
@@ -372,7 +402,7 @@ export class InputControllerImpl implements InputController {
     const maxZ = Math.max(a.z, b.z)
     const inside: number[] = []
     for (const id of world.entities.keys()) {
-      if (world.team[id] !== TEAM_PLAYER) continue
+      if (world.team[id] !== this.localTeam) continue
       const k = world.kind[id]
       if (k !== KIND_WORKER && k !== KIND_MELEE && k !== KIND_RANGED) continue
       const x = world.positionX[id]
@@ -400,23 +430,23 @@ export class InputControllerImpl implements InputController {
     const target = this.entityAt(p.x, p.z)
     if (this.mode === 'move') {
       if (this.selected.length === 1 && this.isProductionBuilding(world, this.selected[0])) {
-        setRally(world, this.selected[0], p.x, p.z)
+        if (!this.deferred) setRally(world, this.selected[0], p.x, p.z)
         this.emit({ type: 'rally', step: 0, buildingId: this.selected[0], x: p.x, z: p.z })
       } else {
-        for (const id of this.selected) orderMove(world, id, p.x, p.z)
+        if (!this.deferred) for (const id of this.selected) orderMove(world, id, p.x, p.z)
         this.renderer?.pingMove(p.x, p.z)
         this.emit({ type: 'move', step: 0, unitIds: [...this.selected], x: p.x, z: p.z })
       }
     } else if (this.mode === 'attack') {
-      if (target !== -1 && world.team[target] !== TEAM_PLAYER) {
-        for (const id of this.selected) orderAttack(world, id, target)
+      if (target !== -1 && world.team[target] !== this.localTeam) {
+        if (!this.deferred) for (const id of this.selected) orderAttack(world, id, target)
         this.renderer?.pingAttack(world.positionX[target], world.positionZ[target])
         this.emit({ type: 'attack', step: 0, unitIds: [...this.selected], targetId: target })
       } else {
         const fighters = this.selected.filter(
           (id) => world.kind[id] === KIND_MELEE || world.kind[id] === KIND_RANGED,
         )
-        for (const id of fighters) orderAttackMove(world, id, p.x, p.z)
+        if (!this.deferred) for (const id of fighters) orderAttackMove(world, id, p.x, p.z)
         this.renderer?.pingAttack(p.x, p.z)
         if (fighters.length > 0) {
           this.emit({ type: 'attackmove', step: 0, unitIds: fighters, x: p.x, z: p.z })
@@ -427,7 +457,7 @@ export class InputControllerImpl implements InputController {
     } else if (this.mode === 'build' && this.pendingBuilding !== null) {
       this.placeBuilding(p.x, p.z)
     } else if (this.mode === 'patrol') {
-      for (const id of this.selected) orderPatrol(world, id, p.x, p.z)
+      if (!this.deferred) for (const id of this.selected) orderPatrol(world, id, p.x, p.z)
       this.emit({ type: 'patrol', step: 0, unitIds: [...this.selected], x: p.x, z: p.z })
     }
     if (this.mode !== 'build') { this.setMode('selection'); this.ghostPos = null }
@@ -440,7 +470,12 @@ export class InputControllerImpl implements InputController {
     if (!world || type === null) return
     const worker = this.selected.find((id) => world.kind[id] === KIND_WORKER)
     if (worker === undefined) return
-    const placed = placeStructure(world, TEAM_PLAYER, type, x, z)
+    if (this.deferred) {
+      // Lockstep PvP: the turn executor places the structure deterministically.
+      this.emit({ type: 'build', step: 0, workerId: worker, building: type, x, z, siteId: -1 })
+      return
+    }
+    const placed = placeStructure(world, this.localTeam, type, x, z)
     if (placed.ok) {
       orderBuild(world, worker, placed.id)
       this.emit({ type: 'build', step: 0, workerId: worker, building: type, x, z, siteId: placed.id })
@@ -455,7 +490,7 @@ export class InputControllerImpl implements InputController {
     if (!world || !renderer || this.selected.length === 0) return
     const p = renderer.screenToWorld(sx, sy)
     const target = this.entityAt(p.x, p.z, true)
-    if (target !== -1 && world.team[target] !== TEAM_PLAYER && world.isAttackable(target)) {
+    if (target !== -1 && world.team[target] !== this.localTeam && world.isAttackable(target)) {
       for (const id of this.selected) orderAttack(world, id, target)
       this.emit({ type: 'attack', step: 0, unitIds: [...this.selected], targetId: target })
       sfx.attack()
@@ -466,7 +501,7 @@ export class InputControllerImpl implements InputController {
       return
     }
     const movers = this.selected.filter((id) => world.kind[id] <= KIND_RANGED)
-    for (const id of movers) orderMove(world, id, p.x, p.z)
+    if (!this.deferred) for (const id of movers) orderMove(world, id, p.x, p.z)
     this.renderer?.pingMove(p.x, p.z)
     this.emit({ type: 'move', step: 0, unitIds: movers, x: p.x, z: p.z })
     if (movers.length > 0) sfx.move()
@@ -480,7 +515,7 @@ export class InputControllerImpl implements InputController {
   private assignGather(world: World, node: number): void {
     const want = world.kind[node] === KIND_TREE ? HARVEST_WOOD : HARVEST_GOLD
     const workers = this.selected.filter((id) => world.kind[id] === KIND_WORKER)
-    for (const id of workers) {
+    if (!this.deferred) for (const id of workers) {
       world.harvestKind[id] = want
       orderGather(world, id)
     }
@@ -498,7 +533,7 @@ export class InputControllerImpl implements InputController {
     let best = -1
     let bestDist = PICK_RADIUS_PX / renderer.getZoom()
     for (const id of world.entities.keys()) {
-      if (!anyTeam && world.team[id] !== TEAM_PLAYER) continue
+      if (!anyTeam && world.team[id] !== this.localTeam) continue
       const d = Math.hypot(world.positionX[id] - x, world.positionZ[id] - z) - world.radius[id]
       if (d < bestDist) {
         bestDist = d
