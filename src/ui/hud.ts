@@ -4,7 +4,7 @@ import { PvPLobby } from './pvp-lobby.ts'
 import type { PvPClient } from '../net/client.ts'
 import type { BuildingType } from '../data/buildings.ts'
 import type { UnitType } from '../data/units.ts'
-import type { AIDifficulty } from '../ai/opponent.ts'
+import type { AIDifficulty, AIPersonality } from '../ai/opponent.ts'
 import type { InputMode } from '../input/input-controller'
 import type { World } from '../core/World'
 import {
@@ -36,6 +36,7 @@ export interface HudCallbacks {
   onSave(): void
   onLoad(): void
   onDifficulty(d: AIDifficulty): void
+  onPersonality(p: AIPersonality): void
   onReplay(): void
   onReplaySpeed(speed: number): void
   onPvPMatchStart?: (slot: 0 | 1, opponentName: string, client: PvPClient | null) => void
@@ -91,6 +92,7 @@ export class HudImpl implements Hud {
           <button class="hud-pill hud-mode" data-speed="4">4x</button>
         </div>
         <div class="hud-bar" id="hud-difficulty"></div>
+        <div class="hud-bar" id="hud-personality"></div>
         <div class="hud-bar">
           <label class="hud-pill">You: <select id="hud-player-faction"></select></label>
           <label class="hud-pill">Foe: <select id="hud-enemy-faction"></select></label>
@@ -218,9 +220,10 @@ export class HudImpl implements Hud {
     }
     const diffEl = parent.querySelector('#hud-difficulty')
     if (diffEl) {
+      const savedDiff = (localStorage.getItem('krts-ai-difficulty') || 'normal') as AIDifficulty
       for (const d of ['easy', 'normal', 'hard'] as AIDifficulty[]) {
         const btn = document.createElement('button')
-        btn.className = 'hud-pill hud-mode' + (d === 'normal' ? ' hud-mode-on' : '')
+        btn.className = 'hud-pill hud-mode' + (d === savedDiff ? ' hud-mode-on' : '')
         btn.textContent = d.charAt(0).toUpperCase() + d.slice(1)
         btn.addEventListener('click', () => {
           for (const b of diffEl.querySelectorAll('.hud-diff')) b.classList.remove('hud-mode-on')
@@ -229,6 +232,22 @@ export class HudImpl implements Hud {
         })
         btn.classList.add('hud-diff')
         diffEl.appendChild(btn)
+      }
+    }
+    // AI personality picker (aggressor / defender / expander).
+    const persEl = parent.querySelector('#hud-personality')
+    if (persEl) {
+      const savedPers = (localStorage.getItem('krts-ai-personality') || 'expander') as AIPersonality
+      for (const p of ['aggressor', 'defender', 'expander'] as AIPersonality[]) {
+        const btn = document.createElement('button')
+        btn.className = 'hud-pill hud-mode hud-pers' + (p === savedPers ? ' hud-mode-on' : '')
+        btn.textContent = p.charAt(0).toUpperCase() + p.slice(1)
+        btn.addEventListener('click', () => {
+          for (const b of persEl.querySelectorAll('.hud-pers')) b.classList.remove('hud-mode-on')
+          btn.classList.add('hud-mode-on')
+          this.callbacks?.onPersonality(p)
+        })
+        persEl.appendChild(btn)
       }
     }
   }

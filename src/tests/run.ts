@@ -1,6 +1,7 @@
 /** Test runner entry — imports all suites, prints results, exits non-zero on failure. */
 import { report } from './harness.ts'
 import './sim.test.ts'
+import './ai-personality.test.ts'
 import './input.test.ts'
 import './session.test.ts'
 import '../net/protocol.test.ts'

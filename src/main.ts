@@ -24,7 +24,7 @@ import {
   serializeWorld,
   writeSave,
 } from './session/save-load.ts'
-import type { AIDifficulty } from './ai/opponent'
+import type { AIDifficulty, AIPersonality } from './ai/opponent'
 import { HudImpl } from './ui/hud'
 import { PvPGame } from './net/pvp-game.ts'
 import type { HudCallbacks } from './ui/hud'
@@ -96,6 +96,18 @@ export function initializeGame(): GameComposition {
   }
 
   const composition = composeGame(canvas)
+  // AI settings: persisted difficulty + personality, applied from the start.
+  let aiDifficulty = (localStorage.getItem('krts-ai-difficulty') || 'normal') as AIDifficulty
+  let aiPersonality = (localStorage.getItem('krts-ai-personality') || 'expander') as AIPersonality
+  const swapOpponent = (d: AIDifficulty, p: AIPersonality): void => {
+    const world = composition.engine.world
+    const idx = world.systems.indexOf(composition.systems.opponent)
+    const next = new OpponentAI(TEAM_ENEMY, d, p)
+    if (idx !== -1) world.systems.splice(idx, 1, next)
+    else world.systems.push(next)
+    composition.systems.opponent = next
+  }
+  swapOpponent(aiDifficulty, aiPersonality)
   const playerFaction = (localStorage.getItem('krts-player-faction') || 'human') as FactionId
   const enemyFaction = (localStorage.getItem('krts-enemy-faction') || 'orc') as FactionId
   seedScenario(composition.engine.world, playerFaction, enemyFaction)
@@ -149,13 +161,14 @@ export function initializeGame(): GameComposition {
       )
     },
     onDifficulty: (d: AIDifficulty) => {
-      const world = composition.engine.world
-      const systems = composition.systems
-      const idx = world.systems.indexOf(systems.opponent)
-      const next = new OpponentAI(TEAM_ENEMY, d)
-      if (idx !== -1) world.systems.splice(idx, 1, next)
-      else world.systems.push(next)
-      systems.opponent = next
+      aiDifficulty = d
+      localStorage.setItem('krts-ai-difficulty', d)
+      swapOpponent(aiDifficulty, aiPersonality)
+    },
+    onPersonality: (p: AIPersonality) => {
+      aiPersonality = p
+      localStorage.setItem('krts-ai-personality', p)
+      swapOpponent(aiDifficulty, aiPersonality)
     },
     onReplay: () => {
       const world = composition.engine.world

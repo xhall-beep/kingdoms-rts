@@ -11,7 +11,7 @@ import { GatherSystemImpl } from '../systems/gather.ts'
 import { ProductionSystemImpl } from '../systems/production.ts'
 import { VisionSystemImpl } from '../systems/vision.ts'
 import { VictorySystemImpl } from '../systems/victory.ts'
-import { OpponentAI, type AIDifficulty } from '../ai/opponent.ts'
+import { OpponentAI, type AIDifficulty, type AIPersonality } from '../ai/opponent.ts'
 import { STEP } from './setup.ts'
 
 export interface MatchResult {
@@ -30,6 +30,8 @@ export function runMatch(
   maxSteps = 60 * 60 * 20, // 20 minutes max
   playerFaction: string = 'human',
   enemyFaction: string = 'orc',
+  playerPersonality: AIPersonality = 'expander',
+  enemyPersonality: AIPersonality = 'expander',
 ): MatchResult {
   const world = new World()
   world.registerSystem(new GatherSystemImpl())
@@ -39,8 +41,8 @@ export function runMatch(
   world.registerSystem(new VictorySystemImpl())
   world.registerSystem(new MovementSystemImpl())
   // AI for both teams (player team AI simulates a player).
-  world.registerSystem(new OpponentAI(0, playerDifficulty))
-  world.registerSystem(new OpponentAI(1, enemyDifficulty))
+  world.registerSystem(new OpponentAI(0, playerDifficulty, playerPersonality))
+  world.registerSystem(new OpponentAI(1, enemyDifficulty, enemyPersonality))
   seedScenario(world, playerFaction as never, enemyFaction as never)
 
   let steps = 0
@@ -86,9 +88,11 @@ if (typeof _g.process !== 'undefined' && _g.process.argv[1]?.includes('match')) 
   const pDiff = (args[0] as AIDifficulty) || 'normal'
   const eDiff = (args[1] as AIDifficulty) || 'normal'
   const count = parseInt(args[2] || '1', 10)
-  console.log(`Running ${count} match(es): ${pDiff} vs ${eDiff}`)
+  const pPers = (args[3] as AIPersonality) || 'expander'
+  const ePers = (args[4] as AIPersonality) || 'expander'
+  console.log(`Running ${count} match(es): ${pDiff}/${pPers} vs ${eDiff}/${ePers}`)
   for (let i = 0; i < count; i += 1) {
-    const r = runMatch(pDiff, eDiff)
+    const r = runMatch(pDiff, eDiff, 60 * 60 * 20, 'human', 'orc', pPers, ePers)
     const mins = (r.steps / 60 / 60).toFixed(1)
     console.log(
       `Match ${i + 1}: winner=${r.winner === 0 ? 'player' : r.winner === 1 ? 'enemy' : 'timeout'} ` +

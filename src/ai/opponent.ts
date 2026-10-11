@@ -30,12 +30,14 @@ const WOOD_SHARE = 0.4 // Fraction of workers assigned to wood (the rest mine go
 
 export type AIDifficulty = 'easy' | 'normal' | 'hard'
 
-interface DifficultyTuning {
+/** Resolved decision parameters: difficulty base values plus personality mods. */
+export interface AIDecisionTuning {
   thinkEvery: number // seconds between decisions
   workerTarget: number
   workersBeforeArmy: number // economy first: no military buildings before this many workers
   attackArmy: number // soldiers needed before attacking
   defenseRadius: number // enemies this close to the hall pull the army home
+  expansionAtSec: number // seconds before a second town hall is considered (Infinity = never)
 }
 
 /**
@@ -43,10 +45,30 @@ interface DifficultyTuning {
  * and build times as the player); difficulty only changes how fast and how
  * ambitiously it makes decisions.
  */
-const DIFFICULTY: Record<AIDifficulty, DifficultyTuning> = {
-  easy: { thinkEvery: 2.0, workerTarget: 7, workersBeforeArmy: 6, attackArmy: 8, defenseRadius: 20 },
-  normal: { thinkEvery: 1.0, workerTarget: 10, workersBeforeArmy: 5, attackArmy: 5, defenseRadius: 28 },
-  hard: { thinkEvery: 0.5, workerTarget: 12, workersBeforeArmy: 4, attackArmy: 4, defenseRadius: 36 },
+const DIFFICULTY: Record<AIDifficulty, AIDecisionTuning> = {
+  easy: { thinkEvery: 2.0, workerTarget: 7, workersBeforeArmy: 6, attackArmy: 8, defenseRadius: 20, expansionAtSec: 300 },
+  normal: { thinkEvery: 1.0, workerTarget: 10, workersBeforeArmy: 5, attackArmy: 5, defenseRadius: 28, expansionAtSec: 300 },
+  hard: { thinkEvery: 0.5, workerTarget: 12, workersBeforeArmy: 4, attackArmy: 4, defenseRadius: 36, expansionAtSec: 300 },
+}
+
+interface PersonalityMods {
+  thinkEveryMult: number
+  workerTargetDelta: number
+  workersBeforeArmyDelta: number
+  attackArmyDelta: number
+  defenseRadiusDelta: number
+  expansionAtSec: number // absolute override
+}
+
+/**
+ * How each personality bends the difficulty base. The aggressor rushes with a
+ * smaller force and never expands; the defender turtles and only leaves with
+ * a real army; the expander booms the economy and grabs a second hall early.
+ */
+const PERSONALITY_MODS: Record<AIPersonality, PersonalityMods> = {
+  aggressor: { thinkEveryMult: 0.8, workerTargetDelta: -2, workersBeforeArmyDelta: -2, attackArmyDelta: -2, defenseRadiusDelta: -10, expansionAtSec: Infinity },
+  defender: { thinkEveryMult: 1.0, workerTargetDelta: 0, workersBeforeArmyDelta: 1, attackArmyDelta: 4, defenseRadiusDelta: 12, expansionAtSec: 420 },
+  expander: { thinkEveryMult: 1.0, workerTargetDelta: 2, workersBeforeArmyDelta: 0, attackArmyDelta: 1, defenseRadiusDelta: 0, expansionAtSec: 180 },
 }
 
 /**
@@ -62,8 +84,9 @@ export type AIPersonality = 'aggressor' | 'defender' | 'expander'
 
 export class OpponentAI implements System {
   private readonly team: 0 | 1
-  private readonly tuning: DifficultyTuning
-  private readonly personality: AIPersonality
+  private readonly tuning: AIDecisionTuning
+  readonly difficulty: AIDifficulty
+  readonly personality: AIPersonality
   private timer = 0
   private gameTime = 0 // seconds elapsed
   private scoutId: number | null = null
@@ -71,8 +94,23 @@ export class OpponentAI implements System {
 
   constructor(team: 0 | 1, difficulty: AIDifficulty = 'normal', personality: AIPersonality = 'expander') {
     this.team = team
-    this.tuning = DIFFICULTY[difficulty]
+    this.difficulty = difficulty
     this.personality = personality
+    const base = DIFFICULTY[difficulty]
+    const mods = PERSONALITY_MODS[personality]
+    this.tuning = {
+      thinkEvery: base.thinkEvery * mods.thinkEveryMult,
+      workerTarget: Math.max(3, base.workerTarget + mods.workerTargetDelta),
+      workersBeforeArmy: Math.max(2, base.workersBeforeArmy + mods.workersBeforeArmyDelta),
+      attackArmy: Math.max(2, base.attackArmy + mods.attackArmyDelta),
+      defenseRadius: Math.max(10, base.defenseRadius + mods.defenseRadiusDelta),
+      expansionAtSec: mods.expansionAtSec,
+    }
+  }
+
+  /** Resolved decision parameters (difficulty + personality), for tests and UI. */
+  decisionTuning(): AIDecisionTuning {
+    return { ...this.tuning }
   }
 
   update(world: World, dt: number): void {
@@ -135,8 +173,8 @@ export class OpponentAI implements System {
    */
   /** Build a second Town Hall near untapped resources when the main base depletes. */
   private expandBase(world: World, _hall: number, workers: number[]): void {
-    // Only consider expansion after 5 minutes, and only once
-    if (this.gameTime < 300) return
+    // Personality decides when (or whether) to expand at all.
+    if (this.gameTime < this.tuning.expansionAtSec) return
     const halls = structuresOf(world, this.team, KIND_HALL, true)
     if (halls.length >= 2) return // Already expanded
     if (world.gold[this.team] < 400) return // Need savings for the hall
