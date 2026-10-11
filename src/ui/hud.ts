@@ -1,5 +1,6 @@
 import { BUILDINGS } from '../data/buildings.ts'
 import { FACTIONS, FACTION_IDS } from '../data/factions.ts'
+import { PvPLobby } from './pvp-lobby.ts'
 import type { BuildingType } from '../data/buildings.ts'
 import type { UnitType } from '../data/units.ts'
 import type { AIDifficulty } from '../ai/opponent.ts'
@@ -36,6 +37,7 @@ export interface HudCallbacks {
   onDifficulty(d: AIDifficulty): void
   onReplay(): void
   onReplaySpeed(speed: number): void
+  onPvPMatchStart?: (slot: 0 | 1, opponentName: string) => void
 }
 
 
@@ -59,6 +61,7 @@ export class HudImpl implements Hud {
   private bannerEl: HTMLElement | null = null
   private callbacks: HudCallbacks | null = null
   private lastActionsKey = ''
+  private pvpLobby: PvPLobby | null = null
 
   mount(parent: HTMLElement, callbacks?: HudCallbacks): void {
     this.callbacks = callbacks ?? null
@@ -77,6 +80,9 @@ export class HudImpl implements Hud {
           <button class="hud-pill hud-mode" id="hud-load">Load</button>
           <button class="hud-pill hud-mode" id="hud-replay">Replay</button>
           <button class="hud-pill hud-mode" id="hud-newgame">New Game</button>
+        </div>
+        <div class="hud-bar">
+          <button class="hud-pill hud-mode" id="hud-pvp">⚔️ PvP</button>
         </div>
         <div class="hud-bar" id="hud-speed" hidden>
           <button class="hud-pill hud-mode hud-speed-on" data-speed="1">1x</button>
@@ -149,6 +155,31 @@ export class HudImpl implements Hud {
     // Menu toggle.
     const menuBtn = parent.querySelector('#hud-menu-btn')
     const menuEl = parent.querySelector<HTMLElement>('#hud-menu')
+    // PvP lobby
+    this.pvpLobby = new PvPLobby()
+    const bannerEl = parent.querySelector<HTMLElement>('#hud-banner')
+    this.pvpLobby.mount(parent, {
+      onMatchStart: (slot: 0 | 1, opponentName: string) => {
+        if (bannerEl) {
+          bannerEl.textContent = `Matched vs ${opponentName}! You are Player ${slot + 1}`
+          bannerEl.hidden = false
+          setTimeout(() => { bannerEl.hidden = true }, 5000)
+        }
+        this.callbacks?.onPvPMatchStart?.(slot, opponentName)
+      },
+      onError: (msg: string) => {
+        if (bannerEl) {
+          bannerEl.textContent = msg
+          bannerEl.hidden = false
+          setTimeout(() => { bannerEl.hidden = true }, 3000)
+        }
+      },
+    })
+    const pvpBtn = parent.querySelector('#hud-pvp')
+    pvpBtn?.addEventListener('click', () => {
+      if (this.pvpLobby?.isVisible) this.pvpLobby.hide()
+      else this.pvpLobby?.show()
+    })
     if (menuBtn && menuEl) {
       menuBtn.addEventListener('click', () => {
         menuEl.hidden = !menuEl.hidden
