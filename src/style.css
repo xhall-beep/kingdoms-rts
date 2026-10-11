@@ -565,3 +565,21 @@ code {
 }
 .pvp-waiting { color: #888; font-style: italic; }
 .pvp-status { margin-top: 12px; color: #aaa; min-height: 20px; }
+
+/* Quick Match */
+.pvp-quick {
+  font-size: 18px !important;
+  padding: 12px 24px !important;
+  background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%) !important;
+  color: #fff !important;
+  border: none !important;
+}
+.pvp-searching {
+  font-size: 16px;
+  animation: pvp-pulse 1.5s ease-in-out infinite;
+}
+@keyframes pvp-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+#pvp-queue-display[hidden] { display: none; }
