@@ -16,6 +16,7 @@ import { WsLink } from './ws-link.ts'
 import { applyCommand } from './apply.ts'
 import { hashWorldState } from './hash.ts'
 import { STEPS_PER_TURN } from './protocol.ts'
+import { setStatsMode } from '../data/stats.ts'
 import { PvPClient } from './client.ts'
 import type { GameComposition } from '../main.ts'
 
@@ -24,6 +25,7 @@ export interface PvPGameConfig {
   client: PvPClient
   slot: 0 | 1
   onDesync?: (turn: number) => void
+  onMatchEnd?: (won: boolean) => void
 }
 
 export class PvPGame {
@@ -34,11 +36,14 @@ export class PvPGame {
   private running = false
   private turnTimer: number | null = null
   private onDesync?: (turn: number) => void
+  private onMatchEnd?: (won: boolean) => void
+  private matchEnded = false
 
   constructor(config: PvPGameConfig) {
     this.composition = config.composition
     this.client = config.client
     this.onDesync = config.onDesync
+    this.onMatchEnd = config.onMatchEnd
 
     // WebSocket is already reliable + ordered: no retransmit layer needed.
     this.link = new WsLink(
@@ -74,6 +79,14 @@ export class PvPGame {
 
   /** Start the PvP match. Disables AI, starts lockstep. */
   start(): void {
+    // Pause the Engine's own tick loop — PvPGame drives world.update()
+    // via lockstep turns now. Without this the world advances twice.
+    this.composition.engine.pause()
+
+    // Standard Battle: fixed tournament stats for symmetric competition.
+    // (Kingdom vs Kingdom mode will use base stats + power bands instead.)
+    setStatsMode('standard')
+
     // Route incoming relay frames into the lockstep peer.
     this.client.setTurnBundleHandler((bundle) => this.link.receive(bundle))
     this.client.setHashHandler((msg) => this.link.receive(msg))
@@ -108,6 +121,10 @@ export class PvPGame {
       clearInterval(this.turnTimer)
       this.turnTimer = null
     }
+    // Hand world-stepping back to the Engine.
+    this.composition.engine.resume()
+    // Restore base stats for single-player / campaign.
+    setStatsMode('base')
   }
 
   /** Execute a lockstep turn: apply all commands, step the world. */
@@ -126,6 +143,15 @@ export class PvPGame {
     // Step the world STEPS_PER_TURN times for this turn (1/60s each)
     for (let i = 0; i < STEPS_PER_TURN; i++) {
       world.update(1 / 60)
+    }
+
+    // Check for match end (victory system sets world.winner)
+    if (!this.matchEnded && world.winner !== -1) {
+      this.matchEnded = true
+      const won = world.winner === this.peer.playerIndex
+      console.log(`PvP match ended: ${won ? 'won' : 'lost'}`)
+      this.stop()
+      this.onMatchEnd?.(won)
     }
   }
 
