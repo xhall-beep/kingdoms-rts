@@ -186,11 +186,21 @@ export class PvPLobby {
     if (queueDisplay) queueDisplay.hidden = false
     this.setStatus('Connecting to matchmaker...')
 
-    const wsUrl = `${SERVER_URL}/api/queue/ws?playerId=${encodeURIComponent(getPlayerId())}&name=${encodeURIComponent(name)}`
+    // Progression snapshot for power-band matchmaking.
+    // Empty until the persistent base system lands; server computes
+    // the hidden Power Score from this (never exposed to clients).
+    const progression = btoa(JSON.stringify({
+      buildings: {},
+      units: {},
+      heroes: {},
+      tech: {},
+      army: {},
+    }))
+    const wsUrl = `${SERVER_URL}/api/queue/ws?playerId=${encodeURIComponent(getPlayerId())}&name=${encodeURIComponent(name)}&progression=${encodeURIComponent(progression)}`
     this.queueWs = new WebSocket(wsUrl)
 
     this.queueWs.onmessage = (event) => {
-      let msg: { kind?: string; position?: number; inQueue?: number; code?: string; slot?: 0 | 1; opponent?: { playerId: string; name: string } }
+      let msg: { kind?: string; position?: number; inQueue?: number; code?: string; slot?: 0 | 1; band?: string; opponent?: { playerId: string; name: string } }
       try {
         msg = JSON.parse(event.data as string)
       } catch {
@@ -199,7 +209,8 @@ export class PvPLobby {
 
       switch (msg.kind) {
         case 'queued':
-          this.setStatus(`In queue (position ${msg.position ?? '?'})`)
+          const band = msg.band ? ` [${msg.band}]` : ''
+          this.setStatus(`In queue (position ${msg.position ?? '?'})${band}`)
           break
         case 'queue_status':
           this.updateQueueCount(msg.inQueue ?? 0)
