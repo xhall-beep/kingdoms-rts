@@ -10,6 +10,7 @@ import {
   KIND_RANGED,
   KIND_TREE,
   KIND_WORKER,
+  KIND_TOWER,
 } from '../core/World'
 import { FOG_UNEXPLORED, FOG_VISIBLE } from '../world/fog.ts'
 import { getSprite } from './sprites.ts'
@@ -23,6 +24,8 @@ const css = (hex: number): string => `#${hex.toString(16).padStart(6, '0')}`
 const SPRITE_FOR_KIND: Record<number, string | null> = {
   [KIND_HALL]: 'town_hall_l1',
   [KIND_FARM]: 'homestead_farm',
+  [KIND_BARRACKS]: 'barracks',
+  [KIND_TOWER]: 'guard_tower',
   // KIND_WORKER handled separately (unit rendering below)
 }
 
@@ -340,11 +343,15 @@ export class Renderer {
         this.ctx.stroke()
       }
     } else {
-      // Unit: try worker sprite, fall back to procedural discs.
-      const workerSprite = kind === KIND_WORKER ? getSprite('peasant') : null
-      if (workerSprite) {
+      // Unit: try sprite first, fall back to procedural discs.
+      let spriteKey: string | null = null
+      if (kind === KIND_WORKER) spriteKey = 'peasant'
+      else if (kind === KIND_MELEE) spriteKey = 'footman'
+      else if (kind === KIND_RANGED) spriteKey = 'archer'
+      const unitSprite = spriteKey ? getSprite(spriteKey) : null
+      if (unitSprite) {
         const size = r * 2.2
-        this.ctx.drawImage(workerSprite, p.x - size / 2, p.y - size / 2, size, size)
+        this.ctx.drawImage(unitSprite, p.x - size / 2, p.y - size / 2, size, size)
       } else {
         this.circle(p.x, p.y, r, color)
       }
