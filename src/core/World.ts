@@ -165,6 +165,10 @@ export class World {
   tick = 0
   /** Remaining ticks for reanimated units (0 = not reanimated). */
   readonly reanimateTicks: Int32Array
+  /** Consecutive ticks in combat (for Orc momentum). */
+  readonly momentumTicks: Int32Array
+  /** Last tick the unit was in combat (for momentum reset). */
+  readonly lastCombatTick: Int32Array
 
   /** Match outcome: -1 = ongoing, 0 = player (team 0) wins, 1 = enemy wins. */
   winner: -1 | 0 | 1 = -1
@@ -191,6 +195,8 @@ export class World {
     this.velocityY = new Float32Array(length)
     this.velocityZ = new Float32Array(length)
     this.reanimateTicks = new Int32Array(length)
+    this.momentumTicks = new Int32Array(length)
+    this.lastCombatTick = new Int32Array(length).fill(-1000000)
     this.kind = new Uint8Array(length)
     this.team = new Uint8Array(length)
     this.state = new Uint8Array(length)
@@ -240,6 +246,8 @@ export class World {
     const entity = { id } as Entity
     this.entities.set(entity.id, entity)
     this.reanimateTicks[id] = 0
+    this.momentumTicks[id] = 0
+    this.lastCombatTick[id] = -1000000
     return entity
   }
 
@@ -306,6 +314,22 @@ export class World {
 
   update(deltaSeconds: number): void {
     this.tick++
+    // Update Orc momentum: increment for units in combat, reset after gap
+    for (let id = 0; id < this.momentumTicks.length; id++) {
+      if (!this.entities.has(id)) continue
+      const team = this.team[id] as 0 | 1
+      const sig = FACTIONS[this.factionOfTeam[team]].signature?.momentum
+      if (!sig) continue
+      const ticksSinceCombat = this.tick - this.lastCombatTick[id]
+      const resetTicks = Math.round(sig.resetSec * 60) // TICK_RATE=60
+      if (ticksSinceCombat === 1) {
+        // Was in combat last tick: build momentum
+        this.momentumTicks[id]++
+      } else if (ticksSinceCombat > resetTicks) {
+        // Out of combat too long: reset
+        this.momentumTicks[id] = 0
+      }
+    }
     // Expire reanimated units
     for (let id = 0; id < this.reanimateTicks.length; id++) {
       if (this.reanimateTicks[id] > 0 && this.entities.has(id)) {

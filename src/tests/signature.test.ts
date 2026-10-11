@@ -4,7 +4,7 @@
  */
 import { TEAM_PLAYER, TEAM_ENEMY } from '../core/World.ts'
 import { FACTIONS } from '../data/factions.ts'
-import { suite, test, assert } from './harness.ts'
+import { suite, test, assert, assertEqual } from './harness.ts'
 import { makeWorld, STEP } from './setup.ts'
 
 suite('signature: undead reanimation')
@@ -63,4 +63,75 @@ test('reanimated units do not chain-reanimate', () => {
   world.reanimateTicks[id] = -1
   // tryReanimate should skip (reanimateTicks !== 0)
   assert(world.reanimateTicks[id] !== 0, 'expired marker prevents re-roll')
+})
+
+suite('signature: orc momentum')
+
+test('orc faction has momentum signature', () => {
+  const sig = FACTIONS.orc.signature?.momentum
+  assert(sig !== undefined, 'orc should have momentum')
+  assert(sig!.damagePerSec > 0, 'positive damagePerSec')
+  assert(sig!.maxBonus > 0, 'positive maxBonus')
+  assert(sig!.resetSec > 0, 'positive resetSec')
+})
+
+test('non-orc factions have no momentum', () => {
+  assert(FACTIONS.human.signature?.momentum === undefined, 'human: no momentum')
+  assert(FACTIONS.undead.signature?.momentum === undefined, 'undead: no momentum')
+})
+
+test('momentum builds while in combat', () => {
+  const world = makeWorld()
+  world.factionOfTeam[TEAM_PLAYER] = 'orc'
+  const e = world.spawnUnit('melee', TEAM_PLAYER, 10, 10)
+  const id = e.id
+
+  assertEqual(world.momentumTicks[id], 0, 'starts at 0')
+
+  // Simulate 60 ticks of combat (1 second)
+  for (let i = 0; i < 60; i++) {
+    world.lastCombatTick[id] = world.tick
+    world.update(STEP)
+  }
+  assert(world.momentumTicks[id] >= 55, `momentum builds (got ${world.momentumTicks[id]})`)
+})
+
+test('momentum resets after combat gap', () => {
+  const world = makeWorld()
+  world.factionOfTeam[TEAM_PLAYER] = 'orc'
+  const e = world.spawnUnit('melee', TEAM_PLAYER, 10, 10)
+  const id = e.id
+
+  // Build some momentum
+  for (let i = 0; i < 60; i++) {
+    world.lastCombatTick[id] = world.tick
+    world.update(STEP)
+  }
+  assert(world.momentumTicks[id] > 0, 'momentum built')
+
+  // Wait beyond reset period (5 sec = 300 ticks) without combat
+  for (let i = 0; i < 400; i++) {
+    world.update(STEP)
+  }
+  assertEqual(world.momentumTicks[id], 0, 'momentum resets after gap')
+})
+
+test('momentum bonus is capped at maxBonus', () => {
+  const world = makeWorld()
+  world.factionOfTeam[TEAM_PLAYER] = 'orc'
+  const e = world.spawnUnit('melee', TEAM_PLAYER, 10, 10)
+  const id = e.id
+  const sig = FACTIONS.orc.signature!.momentum!
+
+  // Simulate very long combat (way beyond cap)
+  for (let i = 0; i < 3600; i++) { // 60 seconds
+    world.lastCombatTick[id] = world.tick
+    world.update(STEP)
+  }
+
+  const expectedMax = Math.round(sig.maxBonus * 60 / sig.damagePerSec)
+  assert(world.momentumTicks[id] > expectedMax, 'ticks exceed cap threshold')
+  // Bonus calculation caps: 1 + min(ticks * dps / 60, maxBonus)
+  const bonus = 1 + Math.min((world.momentumTicks[id] * sig.damagePerSec) / 60, sig.maxBonus)
+  assert(bonus <= 1 + sig.maxBonus + 0.001, `bonus capped at ${1 + sig.maxBonus} (got ${bonus})`)
 })

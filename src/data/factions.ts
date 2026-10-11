@@ -44,7 +44,9 @@ export interface Modifiers {
 export interface FactionSignature {
   /** Undead reanimation: fallen units may rise as temporary skeletons. */
   reanimate?: { chance: number; hpFactor: number; durationSec: number };
-  // Future signatures: momentum, woodlandSpeed, scavenging, auras, etc.
+  /** Orc momentum: damage bonus building while in sustained combat. */
+  momentum?: { damagePerSec: number; maxBonus: number; resetSec: number };
+  // Future signatures: woodlandSpeed, scavenging, auras, etc.
 }
 
 export interface FactionDef {
@@ -78,7 +80,8 @@ export const FACTIONS: Record<FactionId, FactionDef> = {
     mods: m(1.2, 1.05, 0.94, 1, 1.02, 1.05) },
   orc: { name: 'Orc', colors: [0x8a2b22, 0xc9372c, 0x3a2a22], skin: 0x7da63a, head: 'horns', hall: 'box,pyr,horns,towers',
     units: { worker: 'Grunt', melee: 'Brute', ranged: 'Axe Thrower' },
-    mods: m(1.15, 1.15, 0.95, 1.1, 1.1, 0.9) },
+    mods: m(1.15, 1.15, 0.95, 1.1, 1.1, 0.9),
+    signature: { momentum: { damagePerSec: 0.02, maxBonus: 0.3, resetSec: 5 } } },
   undead: { name: 'Undead', colors: [0x5b3f8f, 0x9be7ff, 0x2a2236], skin: 0xe9e4d4, head: 'hood', hall: 'box,cone,spires,skull',
     units: { worker: 'Ghoul', melee: 'Skeleton', ranged: 'Bone Archer' },
     mods: m(0.9, 0.95, 0.95, 0.85, 0.85, 0.9),

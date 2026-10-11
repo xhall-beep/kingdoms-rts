@@ -126,7 +126,12 @@ export class CombatSystemImpl implements System {
         world.state[id] = STATE_ATTACK
         if (world.cooldown[id] <= 0) {
           world.cooldown[id] = world.cooldownTotal[id]
-          const dmg = world.damage[id] * getCounterMultiplier(world, id, target)
+          // Mark both combatants (for momentum tracking)
+          world.lastCombatTick[id] = world.tick
+          world.lastCombatTick[target] = world.tick
+          // Apply Orc momentum bonus
+          const momentumBonus = this.getMomentumBonus(world, id)
+          const dmg = world.damage[id] * getCounterMultiplier(world, id, target) * momentumBonus
           world.health[target] -= dmg
           world.damageNumbers.push({
             x: world.positionX[target],
@@ -149,6 +154,18 @@ export class CombatSystemImpl implements System {
       this.tryReanimate(world, id)
       world.removeEntityById(id)
     }
+  }
+
+  /**
+   * Orc signature: damage bonus scaling with consecutive combat ticks.
+   * Deterministic: purely tick-based, no RNG.
+   */
+  private getMomentumBonus(world: World, id: number): number {
+    const team = world.team[id] as 0 | 1
+    const momentum = FACTIONS[world.factionOfTeam[team]].signature?.momentum
+    if (!momentum) return 1
+    const bonus = (world.momentumTicks[id] * momentum.damagePerSec) / 60 // TICK_RATE
+    return 1 + Math.min(bonus, momentum.maxBonus)
   }
 
   /**
