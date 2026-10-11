@@ -85,6 +85,7 @@ export class HudImpl implements Hud {
         </div>
         <div class="hud-bar">
           <button class="hud-pill hud-mode" id="hud-pvp">⚔️ PvP</button>
+          <button class="hud-pill hud-mode" id="hud-td">🗼 Tower Defense</button>
         </div>
         <div class="hud-bar" id="hud-speed" hidden>
           <button class="hud-pill hud-mode hud-speed-on" data-speed="1">1x</button>
@@ -182,6 +183,13 @@ export class HudImpl implements Hud {
     pvpBtn?.addEventListener('click', () => {
       if (this.pvpLobby?.isVisible) this.pvpLobby.hide()
       else this.pvpLobby?.show()
+    })
+    const tdBtn = parent.querySelector('#hud-td')
+    tdBtn?.addEventListener('click', () => {
+      if (confirm('Start Tower Defense mode? Current game will restart.')) {
+        localStorage.setItem('krts-game-mode', 'tower-defense')
+        location.reload()
+      }
     })
     if (menuBtn && menuEl) {
       menuBtn.addEventListener('click', () => {

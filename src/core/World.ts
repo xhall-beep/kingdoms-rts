@@ -17,6 +17,7 @@ export const KIND_HALL = 3
 export const KIND_BARRACKS = 4
 export const KIND_ARCHERY = 5
 export const KIND_FARM = 6
+export const KIND_TOWER = 9
 export const KIND_TREE = 7
 export const KIND_GOLDMINE = 8
 
@@ -59,6 +60,7 @@ const KIND_BY_BUILDING: Record<BuildingType, number> = {
   barracks: KIND_BARRACKS,
   archery: KIND_ARCHERY,
   farm: KIND_FARM,
+  tower: KIND_TOWER,
 }
 
 const UNIT_BY_KIND: UnitType[] = ['worker', 'melee', 'ranged']
@@ -284,7 +286,7 @@ export class World {
     const team = this.team[id]
     if (kind === KIND_WORKER || kind === KIND_MELEE || kind === KIND_RANGED) {
       this.supplyUsed[team] -= getUnits()[UNIT_BY_KIND[kind]].popCost
-    } else if (kind >= KIND_HALL && kind <= KIND_FARM) {
+    } else if ((kind >= KIND_HALL && kind <= KIND_FARM) || kind === KIND_TOWER) {
       // Only completed buildings granted supply.
       if (this.buildProgress[id] >= this.buildTotal[id]) {
         this.supplyCap[team] -= BUILDINGS[BUILDING_BY_KIND[kind]].supply
@@ -364,7 +366,7 @@ export class World {
 
   /** Units and buildings can be attacked; resource nodes cannot. */
   isAttackable(id: number): boolean {
-    return this.kind[id] <= KIND_FARM
+    return this.kind[id] <= KIND_FARM || this.kind[id] === KIND_TOWER
   }
 
   snapshotSpatialState(): Float32Array[] {
@@ -435,6 +437,13 @@ export class World {
     this.state[id] = STATE_IDLE
     this.setPosition(entity, x, 0, z)
     if (built) this.supplyCap[team] += def.supply
+    // Towers get combat stats for auto-attack
+    if (type === 'tower') {
+      this.damage[id] = 25
+      this.attackRange[id] = 14
+      this.cooldownTotal[id] = 1.0 // 1 shot per second
+      this.cooldown[id] = 0
+    }
     return entity
   }
 

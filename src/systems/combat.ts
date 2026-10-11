@@ -1,4 +1,5 @@
 import type { System, World } from '../core/World'
+import { KIND_TOWER } from '../core/World'
 import { FACTIONS } from '../data/factions.ts'
 import { TICK_RATE } from '../core/time.ts'
 import {
@@ -39,6 +40,8 @@ function getCounterMultiplier(world: World, attacker: number, target: number): n
 export class CombatSystemImpl implements System {
   update(world: World, dt: number): void {
     const dead: number[] = []
+    // Towers auto-attack nearest enemy in range
+    this.updateTowers(world, dt, dead)
     for (const id of world.entities.keys()) {
       const kind = world.kind[id]
       if (kind !== KIND_MELEE && kind !== KIND_RANGED) continue
@@ -198,6 +201,50 @@ export class CombatSystemImpl implements System {
     world.health[newId] = reHp
     world.maxHealth[newId] = reHp
     world.reanimateTicks[newId] = Math.round(reanimate.durationSec * TICK_RATE)
+  }
+
+  /**
+   * Towers automatically attack the nearest enemy in range.
+   * Deterministic: iterates in entity order, same as findNearestEnemy.
+   */
+  private updateTowers(world: World, dt: number, dead: number[]): void {
+    for (const id of world.entities.keys()) {
+      if (world.kind[id] !== KIND_TOWER) continue
+      if (world.health[id] <= 0) continue
+      // Only completed towers attack (under construction = vulnerable)
+      if (world.buildProgress[id] < world.buildTotal[id]) continue
+
+      if (world.cooldown[id] > 0) {
+        world.cooldown[id] -= dt
+        continue
+      }
+
+      const target = findNearestEnemy(world, id)
+      if (target === NO_TARGET) continue
+
+      // Check range (towers use attackRange)
+      const d = Math.hypot(
+        world.positionX[target] - world.positionX[id],
+        world.positionZ[target] - world.positionZ[id],
+      ) - world.radius[target]
+      if (d > world.attackRange[id]) continue
+
+      // Fire!
+      world.cooldown[id] = world.cooldownTotal[id]
+      const dmg = world.damage[id]
+      world.health[target] -= dmg
+      world.damageNumbers.push({
+        x: world.positionX[target],
+        z: world.positionZ[target],
+        amount: Math.round(dmg),
+        team: world.team[target],
+        age: 0,
+      })
+      // Mark combatants for momentum tracking
+      world.lastCombatTick[id] = world.tick
+      world.lastCombatTick[target] = world.tick
+      if (world.health[target] <= 0 && !dead.includes(target)) dead.push(target)
+    }
   }
 }
 

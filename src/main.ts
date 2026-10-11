@@ -4,6 +4,7 @@ import { TEAM_ENEMY, TEAM_PLAYER } from './core/World'
 import { InputControllerImpl } from './input/input-controller'
 import { Renderer } from './render/renderer'
 import { seedScenario } from './scenario'
+import { setupTowerDefense, updateTowerDefense, startWaveNow, TD_MAX_WAVES, type TDState } from './modes/tower-defense.ts'
 import type { FactionId } from './data/factions.ts'
 import './style.css'
 import { CombatSystemImpl } from './systems/combat'
@@ -72,6 +73,69 @@ export function composeGame(canvas: HTMLCanvasElement): GameComposition {
   return { engine, renderer, inputController, hud, systems }
 }
 
+/**
+ * Set up Tower Defense UI overlay: wave banner, start wave button, status.
+ */
+function setupTDUI(tdState: TDState): void {
+  const overlay = document.createElement('div')
+  overlay.id = 'td-overlay'
+  overlay.innerHTML = `
+    <div id="td-banner" style="position:fixed;top:10px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.7);color:white;padding:10px 20px;border-radius:8px;font-size:18px;z-index:1000;text-align:center;">
+      <div id="td-wave-text">Prepare your defenses!</div>
+      <div id="td-status-text" style="font-size:14px;opacity:0.8;"></div>
+      <button id="td-start-wave" style="margin-top:8px;padding:8px 16px;font-size:16px;cursor:pointer;">Start Wave 1</button>
+      <button id="td-exit" style="margin-top:8px;margin-left:8px;padding:8px 16px;font-size:14px;cursor:pointer;">Exit TD</button>
+    </div>
+  `
+  document.body.appendChild(overlay)
+
+  const startBtn = document.getElementById('td-start-wave') as HTMLButtonElement
+  const exitBtn = document.getElementById('td-exit') as HTMLButtonElement
+  const waveText = document.getElementById('td-wave-text')!
+  const statusText = document.getElementById('td-status-text')!
+
+  // Store references for update loop
+  ;(window as any).__tdUI = { waveText, statusText, startBtn, tdState }
+
+  startBtn.onclick = () => {
+    const comp = (window as any).__gameComp
+    if (comp && tdState.mode === 'build') {
+      startWaveNow(comp.engine.world, tdState)
+      updateTDBanner()
+    }
+  }
+  exitBtn.onclick = () => {
+    localStorage.removeItem('krts-game-mode')
+    location.reload()
+  }
+}
+
+/** Update the TD banner from current state. Called each frame. */
+function updateTDBanner(): void {
+  const ui = (window as any).__tdUI
+  if (!ui) return
+  const { waveText, statusText, startBtn, tdState } = ui
+  if (tdState.mode === 'build') {
+    const secs = Math.ceil(tdState.buildTicksLeft / 60)
+    waveText.textContent = tdState.wave === 0 ? 'Prepare your defenses!' : `Wave ${tdState.wave} cleared!`
+    statusText.textContent = `Next wave in ${secs}s — Wave ${tdState.wave + 1} of ${TD_MAX_WAVES}`
+    startBtn.style.display = ''
+    startBtn.textContent = `Start Wave ${tdState.wave + 1}`
+  } else if (tdState.mode === 'wave') {
+    waveText.textContent = `Wave ${tdState.wave} of ${TD_MAX_WAVES}`
+    statusText.textContent = `Enemies remaining: ${tdState.enemiesRemaining}`
+    startBtn.style.display = 'none'
+  } else if (tdState.mode === 'victory') {
+    waveText.textContent = 'Victory! All waves survived!'
+    statusText.textContent = ''
+    startBtn.style.display = 'none'
+  } else if (tdState.mode === 'defeat') {
+    waveText.textContent = 'Defeat — your Town Hall has fallen'
+    statusText.textContent = `Survived ${tdState.wave} of ${TD_MAX_WAVES} waves`
+    startBtn.style.display = 'none'
+  }
+}
+
 export function initializeGame(): GameComposition {
   const app = document.querySelector<HTMLDivElement>('#app')
   if (!app) {
@@ -111,7 +175,18 @@ export function initializeGame(): GameComposition {
   swapOpponent(aiDifficulty, aiPersonality)
   const playerFaction = (localStorage.getItem('krts-player-faction') || 'human') as FactionId
   const enemyFaction = (localStorage.getItem('krts-enemy-faction') || 'orc') as FactionId
-  seedScenario(composition.engine.world, playerFaction, enemyFaction)
+  const gameMode = localStorage.getItem('krts-game-mode') || 'rts'
+  let tdState: TDState | null = null
+  if (gameMode === 'tower-defense') {
+    // Tower Defense: no opponent AI, custom setup
+    const world = composition.engine.world
+    const idx = world.systems.indexOf(composition.systems.opponent)
+    if (idx !== -1) world.systems.splice(idx, 1)
+    tdState = setupTowerDefense(world, Date.now() % 100000)
+    setupTDUI(tdState)
+  } else {
+    seedScenario(composition.engine.world, playerFaction, enemyFaction)
+  }
   const commandLog = new CommandLog()
   composition.inputController.setCommandListener((cmd) => {
     commandLog.record({ ...cmd, step: composition.engine.getSimulationSteps() })
@@ -268,6 +343,12 @@ export function initializeGame(): GameComposition {
     }
     composition.renderer.render(composition.engine.world, TEAM_PLAYER)
     composition.hud.update(composition.engine.world, composition.inputController.getSelected())
+    // Tower Defense: update wave state and banner
+    if (tdState) {
+      ;(window as any).__gameComp = composition
+      updateTowerDefense(composition.engine.world, tdState)
+      updateTDBanner()
+    }
     requestAnimationFrame(frame)
   }
   requestAnimationFrame(frame)
