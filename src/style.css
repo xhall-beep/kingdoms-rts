@@ -523,3 +523,45 @@ code {
 .cmd-btn:disabled{opacity:0.35;cursor:default}
 .cmd-btn-label{line-height:1.2}
 .cmd-btn-hotkey{font-size:10px;color:#f5c54288;font-weight:400}
+
+/* PvP Lobby */
+.pvp-lobby {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.pvp-lobby[hidden] { display: none; }
+.pvp-lobby-panel {
+  background: #1a1a2e;
+  border: 2px solid #4a4a6a;
+  border-radius: 12px;
+  padding: 24px;
+  min-width: 280px;
+  max-width: 90vw;
+  color: #fff;
+  text-align: center;
+}
+.pvp-lobby-panel h2 { margin: 0 0 16px 0; }
+.pvp-row { margin: 12px 0; display: flex; gap: 8px; justify-content: center; align-items: center; flex-wrap: wrap; }
+.pvp-row input[type="text"] {
+  padding: 8px 12px;
+  font-size: 16px;
+  border-radius: 8px;
+  border: 1px solid #4a4a6a;
+  background: #0f0f1a;
+  color: #fff;
+  min-height: 44px;
+}
+.pvp-code {
+  font-size: 32px;
+  font-weight: bold;
+  letter-spacing: 8px;
+  color: #ffd700;
+  margin: 8px 0;
+}
+.pvp-waiting { color: #888; font-style: italic; }
+.pvp-status { margin-top: 12px; color: #aaa; min-height: 20px; }
