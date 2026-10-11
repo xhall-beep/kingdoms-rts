@@ -4,11 +4,10 @@
 import { World, TEAM_PLAYER, TEAM_ENEMY, KIND_HALL, KIND_TOWER } from '../core/World.ts'
 import { BUILDINGS } from '../data/buildings.ts'
 import {
-  createTDState, setupTowerDefense, spawnWave, updateTowerDefense,
+  setupTowerDefense, spawnWave, updateTowerDefense,
   startWaveNow, waveComposition, TD_MAX_WAVES,
 } from '../modes/tower-defense.ts'
 import { suite, test, assert, assertEqual } from './harness.ts'
-import { makeWorld, STEP } from './setup.ts'
 import { World as WorldClass } from '../core/World.ts'
 import { GatherSystemImpl } from '../systems/gather.ts'
 import { ProductionSystemImpl } from '../systems/production.ts'
@@ -63,7 +62,7 @@ suite('tower-defense: waves')
 test('wave composition scales with wave number', () => {
   const [m1, r1] = waveComposition(1)
   const [m5, r5] = waveComposition(5)
-  const [m10, r10] = waveComposition(10)
+  const [m10] = waveComposition(10)
   assert(m5 > m1, 'wave 5 has more melee than wave 1')
   assert(m10 > m5, 'wave 10 has more melee than wave 5')
   assert(r1 === 0, 'wave 1 has no ranged')
