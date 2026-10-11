@@ -9,6 +9,8 @@ import {
   KIND_MELEE,
   KIND_RANGED,
   KIND_TREE,
+  KIND_WORKER,
+  TEAM_PLAYER,
 } from '../core/World'
 import { FOG_UNEXPLORED, FOG_VISIBLE } from '../world/fog.ts'
 import type { FogGrid } from '../world/fog.ts'
@@ -41,12 +43,48 @@ export class Renderer {
   // every few frames; per-frame we do a single drawImage instead of ~8k rects.
   private fogCache: (HTMLCanvasElement | null)[] = [null, null]
   private fogCacheFrame: number[] = [-1e9, -1e9]
+  // Definitive roster art (Aldermark set): worker / town hall / farm sprites.
+  // Loaded async; procedural shapes remain as fallback until ready.
+  private sprites: Record<string, HTMLImageElement> = {}
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
     const ctx = canvas.getContext('2d')
     if (!ctx) throw new Error('2D canvas context is unavailable')
     this.ctx = ctx
+    this.loadSprites()
+  }
+
+  /** Load roster sprites; missing/failed images fall back to procedural art. */
+  private loadSprites(): void {
+    for (const key of ['peasant', 'homestead_farm', 'town_hall_l1']) {
+      const img = new Image()
+      img.src = `art/${key}.png`
+      this.sprites[key] = img
+    }
+  }
+
+  /**
+   * Draw definitive-art sprite for the player's roster kinds.
+   * Feet-anchored at the entity position. Returns false when the sprite
+   * isn't usable (wrong team/kind, not loaded) so callers use procedural art.
+   */
+  private drawRosterSprite(
+    world: World, id: number, x: number, y: number, r: number, kind: number,
+  ): boolean {
+    if (world.team[id] !== TEAM_PLAYER) return false
+    const key =
+      kind === KIND_WORKER ? 'peasant'
+      : kind === KIND_HALL ? 'town_hall_l1'
+      : kind === KIND_FARM ? 'homestead_farm'
+      : null
+    if (!key) return false
+    const img = this.sprites[key]
+    if (!img || !img.complete || img.naturalWidth === 0) return false
+    const w = r * (kind === KIND_WORKER ? 3.4 : 5)
+    const h = (w * img.height) / img.width
+    this.ctx.drawImage(img, x - w / 2, y + r * 0.5 - h, w, h)
+    return true
   }
 
   resize(width: number, height: number): void {
@@ -306,12 +344,16 @@ export class Renderer {
       this.circle(p.x, p.y, r, '#b8912f')
       this.circle(p.x, p.y, r * 0.55, '#f5c542')
     } else if (kind >= KIND_HALL && kind <= KIND_FARM) {
-      // Building: dark base, team-colored roof, glyph.
-      this.rect(p.x - r, p.y - r, r * 2, r * 2, '#3a3f4a')
-      this.rect(p.x - r, p.y - r, r * 2, r * 0.7, color)
-      const glyph = GLYPH[kind]
-      if (glyph && r > 8) {
-        this.text(glyph, p.x, p.y + r * 0.55, Math.min(16, r), '#ffffff')
+      if (this.drawRosterSprite(world, id, p.x, p.y, r, kind)) {
+        // Sprite drawn; construction ring still applies below.
+      } else {
+        // Building: dark base, team-colored roof, glyph.
+        this.rect(p.x - r, p.y - r, r * 2, r * 2, '#3a3f4a')
+        this.rect(p.x - r, p.y - r, r * 2, r * 0.7, color)
+        const glyph = GLYPH[kind]
+        if (glyph && r > 8) {
+          this.text(glyph, p.x, p.y + r * 0.55, Math.min(16, r), '#ffffff')
+        }
       }
       // Construction progress ring.
       if (world.buildProgress[id] < world.buildTotal[id]) {
@@ -323,20 +365,22 @@ export class Renderer {
         this.ctx.stroke()
       }
     } else {
-      // Unit: team-colored disc, darker ring for melee, gold ring for ranged.
-      this.circle(p.x, p.y, r, color)
-      if (kind === KIND_MELEE) {
-        this.ctx.strokeStyle = 'rgba(0,0,0,0.5)'
-        this.ctx.lineWidth = 2
-        this.ctx.beginPath()
-        this.ctx.arc(p.x, p.y, r * 0.7, 0, Math.PI * 2)
-        this.ctx.stroke()
-      } else if (kind === KIND_RANGED) {
-        this.ctx.strokeStyle = '#f5c542'
-        this.ctx.lineWidth = 2
-        this.ctx.beginPath()
-        this.ctx.arc(p.x, p.y, r * 0.7, 0, Math.PI * 2)
-        this.ctx.stroke()
+      // Unit: definitive sprite for the player's workers, else team-colored disc.
+      if (!this.drawRosterSprite(world, id, p.x, p.y, r, kind)) {
+        this.circle(p.x, p.y, r, color)
+        if (kind === KIND_MELEE) {
+          this.ctx.strokeStyle = 'rgba(0,0,0,0.5)'
+          this.ctx.lineWidth = 2
+          this.ctx.beginPath()
+          this.ctx.arc(p.x, p.y, r * 0.7, 0, Math.PI * 2)
+          this.ctx.stroke()
+        } else if (kind === KIND_RANGED) {
+          this.ctx.strokeStyle = '#f5c542'
+          this.ctx.lineWidth = 2
+          this.ctx.beginPath()
+          this.ctx.arc(p.x, p.y, r * 0.7, 0, Math.PI * 2)
+          this.ctx.stroke()
+        }
       }
       // Training progress bar for queued production is drawn on the building.
     }
