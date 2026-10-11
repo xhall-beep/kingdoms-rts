@@ -166,4 +166,9 @@ export class PvPLobby {
     this.client?.disconnect()
     this.client = null
   }
+
+  /** Get the active PvP client (for game integration). */
+  getClient(): PvPClient | null {
+    return this.client
+  }
 }
