@@ -1,7 +1,7 @@
 import { BUILDINGS } from '../data/buildings.ts'
 import type { BuildingType } from '../data/buildings.ts'
 import { FACTIONS } from '../data/factions.ts'
-import { UNITS } from '../data/units.ts'
+import { getUnits } from '../data/stats.ts'
 import { UPGRADES, type UpgradeType } from '../data/upgrades.ts'
 import type { UnitType } from '../data/units.ts'
 import { TICK_RATE } from '../core/time.ts'
@@ -86,7 +86,7 @@ export function enqueueTrain(world: World, buildingId: number, type: UnitType): 
 
   const team = world.team[buildingId]
   const mods = FACTIONS[world.factionOfTeam[team]].mods
-  const unitDef = UNITS[type]
+  const unitDef = getUnits()[type]
   const goldCost = Math.round(unitDef.cost.gold * mods.cost)
   const woodCost = Math.round(unitDef.cost.wood * mods.cost)
   if (world.gold[team] < goldCost || world.wood[team] < woodCost) return false
