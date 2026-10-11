@@ -163,8 +163,6 @@ export class World {
   factionOfTeam: [FactionId, FactionId] = ['human', 'human']
   /** Simulation tick counter (for deterministic rolls). */
   tick = 0
-  /** Recycled entity IDs (LIFO for deterministic reuse order). */
-  private freeIds: number[] = []
   /** Remaining ticks for reanimated units (0 = not reanimated). */
   readonly reanimateTicks: Int32Array
 
@@ -176,6 +174,12 @@ export class World {
 
   private nextEntityId = 1
   private readonly capacity: number
+  /**
+   * Recycled entity IDs, LIFO. Populated by removeEntity, consumed by
+   * createEntity. Allocation order is deterministic: both lockstep peers
+   * see the same removals/creations in the same order.
+   */
+  private readonly freeIds: number[] = []
 
   constructor(options: WorldOptions = {}) {
     this.capacity = options.capacity ?? 1_024
@@ -223,9 +227,9 @@ export class World {
 
   createEntity(): Entity {
     let id: number
-    if (this.freeIds.length > 0) {
-      // Reuse a freed ID (LIFO — deterministic across clients)
-      id = this.freeIds.pop()!
+    const recycled = this.freeIds.pop()
+    if (recycled !== undefined) {
+      id = recycled
     } else {
       if (this.nextEntityId > this.capacity) {
         throw new Error('World capacity exceeded')
@@ -235,7 +239,6 @@ export class World {
 
     const entity = { id } as Entity
     this.entities.set(entity.id, entity)
-    // Clear any stale per-entity state from the previous occupant
     this.reanimateTicks[id] = 0
     return entity
   }
@@ -245,9 +248,26 @@ export class World {
     this.nextEntityId = id
   }
 
+  /**
+   * Rebuild the free-ID list after loading a save: every id below maxId
+   * that isn't a live entity is recyclable. Pushed descending so pop()
+   * yields the lowest free id first (deterministic).
+   */
+  rebuildFreeIds(maxId: number): void {
+    this.freeIds.length = 0
+    for (let id = maxId; id >= 1; id--) {
+      if (!this.entities.has(id)) this.freeIds.push(id)
+    }
+  }
+
   /** Exposed for deterministic state hashing (future entity ids depend on it). */
   getNextEntityId(): number {
     return this.nextEntityId
+  }
+
+  /** Number of recycled IDs waiting for reuse (hashed for determinism). */
+  getFreeIdCount(): number {
+    return this.freeIds.length
   }
 
   removeEntity(entity: Entity): void {
@@ -262,17 +282,14 @@ export class World {
         this.supplyCap[team] -= BUILDINGS[BUILDING_BY_KIND[kind]].supply
       }
     }
-    this.entities.delete(id)
-
-    // Clear stale references: any entity targeting the removed ID retargets.
-    // Prevents a reused ID from inheriting a dead entity's attackers.
-    for (const [otherId] of this.entities) {
-      if (this.targetId[otherId] === id) {
-        this.targetId[otherId] = -1 // NO_TARGET
+    // Clear cross-entity references BEFORE the id is recycled: a stale
+    // targetId would otherwise silently retarget to the id's next owner.
+    for (const other of this.entities.keys()) {
+      if (other !== id && this.targetId[other] === id) {
+        this.targetId[other] = NO_TARGET
       }
     }
-
-    // Recycle the ID for future entities (deterministic LIFO order)
+    this.entities.delete(id)
     this.freeIds.push(id)
   }
 
