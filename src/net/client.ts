@@ -94,6 +94,19 @@ export class PvPClient {
     )
   }
 
+  /**
+   * Re-route incoming turn bundles after construction (used by the PvP
+   * game loop, which is created after the lobby builds this client).
+   */
+  setTurnBundleHandler(cb: (bundle: InputMsg) => void): void {
+    this.config.onTurnBundle = cb
+  }
+
+  /** Re-route incoming hash messages after construction (see above). */
+  setHashHandler(cb: (msg: HashMsg) => void): void {
+    this.config.onHash = cb
+  }
+
   disconnect(): void {
     this.ws?.close()
     this.ws = null

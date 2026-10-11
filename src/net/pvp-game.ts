@@ -12,48 +12,12 @@ import { TEAM_PLAYER, TEAM_ENEMY } from '../core/World.ts'
 import type { Command } from '../session/commands.ts'
 import { LockstepPeer } from './turn.ts'
 import type { TurnCallbacks } from './turn.ts'
-import { ReliableLink } from './transport.ts'
-import type { UnreliableTransport, PeerId } from './transport.ts'
+import { WsLink } from './ws-link.ts'
 import { applyCommand } from './apply.ts'
 import { hashWorldState } from './hash.ts'
 import { STEPS_PER_TURN } from './protocol.ts'
 import { PvPClient } from './client.ts'
 import type { GameComposition } from '../main.ts'
-
-/**
- * WebSocket transport adapter for ReliableLink.
- * Wraps the PvPClient's WebSocket in the UnreliableTransport interface.
- */
-class WebSocketTransport implements UnreliableTransport {
-  private receiver: ((from: PeerId, data: Uint8Array) => void) | null = null
-  private client: PvPClient
-  bytesSent = 0
-
-  constructor(client: PvPClient) {
-    this.client = client
-  }
-
-  send(_from: PeerId, _to: PeerId, data: Uint8Array): void {
-    this.bytesSent += data.length
-    // PvPClient.send expects a message object; we send raw bytes as base64
-    // TODO: PvPClient needs a sendBytes method for the binary protocol
-    void this.client
-    void data
-  }
-
-  setReceiver(cb: (from: PeerId, data: Uint8Array) => void): void {
-    this.receiver = cb
-  }
-
-  pump(_nowMs: number): void {
-    // WebSocket messages arrive via events, not polling
-  }
-
-  /** Called when a WebSocket message arrives. */
-  handleIncoming(data: Uint8Array): void {
-    this.receiver?.(1 as PeerId, data)
-  }
-}
 
 export interface PvPGameConfig {
   composition: GameComposition
@@ -64,6 +28,8 @@ export interface PvPGameConfig {
 
 export class PvPGame {
   private composition: GameComposition
+  private client: PvPClient
+  private link: WsLink
   private peer: LockstepPeer
   private running = false
   private turnTimer: number | null = null
@@ -71,10 +37,14 @@ export class PvPGame {
 
   constructor(config: PvPGameConfig) {
     this.composition = config.composition
+    this.client = config.client
     this.onDesync = config.onDesync
 
-    const transport = new WebSocketTransport(config.client)
-    const link = new ReliableLink(transport, 0 as PeerId, 1 as PeerId)
+    // WebSocket is already reliable + ordered: no retransmit layer needed.
+    this.link = new WsLink(
+      (msg) => this.client.sendBundle(msg),
+      (msg) => this.client.sendHash(msg),
+    )
 
     const callbacks: TurnCallbacks = {
       executeTurn: (turn: number, _step: number, commands: Command[]) => {
@@ -97,13 +67,17 @@ export class PvPGame {
     this.peer = new LockstepPeer(
       config.slot, // playerIndex (0 or 1)
       2, // peerCount
-      link,
+      this.link,
       callbacks,
     )
   }
 
   /** Start the PvP match. Disables AI, starts lockstep. */
   start(): void {
+    // Route incoming relay frames into the lockstep peer.
+    this.client.setTurnBundleHandler((bundle) => this.link.receive(bundle))
+    this.client.setHashHandler((msg) => this.link.receive(msg))
+
     // Disable the AI opponent — the human is the opponent now
     const world = this.composition.engine.world
     const opponentIdx = world.systems.indexOf(this.composition.systems.opponent)

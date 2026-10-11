@@ -6,6 +6,7 @@ import './session.test.ts'
 import '../net/protocol.test.ts'
 import '../net/hash.test.ts'
 import '../net/lockstep.test.ts'
+import '../net/ws-link.test.ts'
 
 const ok = report()
 const _p = (globalThis as unknown as { process?: { exit(c: number): void } }).process
