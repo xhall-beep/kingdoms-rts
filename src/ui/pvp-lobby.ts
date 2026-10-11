@@ -1,0 +1,169 @@
+/**
+ * PvP Lobby UI — create/join rooms for online multiplayer.
+ *
+ * Phase 3: Private rooms via friend codes.
+ * Server: https://kingdoms-pvp.stephen-x-hall.workers.dev
+ */
+
+import { PvPClient, getPlayerId, getPlayerName, setPlayerName } from '../net/client.ts'
+
+const SERVER_URL = 'wss://kingdoms-pvp.stephen-x-hall.workers.dev'
+
+export interface PvPLobbyCallbacks {
+  onMatchStart: (slot: 0 | 1, opponentName: string) => void
+  onError: (message: string) => void
+}
+
+export class PvPLobby {
+  private root: HTMLElement | null = null
+  private client: PvPClient | null = null
+  private callbacks: PvPLobbyCallbacks | null = null
+
+  mount(parent: HTMLElement, callbacks: PvPLobbyCallbacks): void {
+    this.callbacks = callbacks
+    this.root = document.createElement('div')
+    this.root.className = 'pvp-lobby'
+    this.root.hidden = true
+    this.root.innerHTML = `
+      <div class="pvp-lobby-panel">
+        <h2>⚔️ Online PvP</h2>
+        <div class="pvp-row">
+          <label>Name:
+            <input type="text" id="pvp-name" maxlength="16"
+                   value="${getPlayerName()}" placeholder="Your name" />
+          </label>
+        </div>
+        <div class="pvp-row">
+          <button class="hud-pill hud-mode" id="pvp-create">Create Room</button>
+        </div>
+        <div class="pvp-row" id="pvp-code-display" hidden>
+          <p>Share this code:</p>
+          <p class="pvp-code" id="pvp-code"></p>
+          <p class="pvp-waiting">Waiting for opponent...</p>
+        </div>
+        <div class="pvp-row">
+          <input type="text" id="pvp-join-code" maxlength="6"
+                 placeholder="Enter code" style="text-transform:uppercase" />
+          <button class="hud-pill hud-mode" id="pvp-join">Join Room</button>
+        </div>
+        <div class="pvp-row">
+          <button class="hud-pill" id="pvp-close">Close</button>
+        </div>
+        <div class="pvp-status" id="pvp-status"></div>
+      </div>
+    `
+    parent.appendChild(this.root)
+    this.wireEvents()
+  }
+
+  show(): void {
+    if (this.root) this.root.hidden = false
+  }
+
+  hide(): void {
+    if (this.root) this.root.hidden = true
+  }
+
+  get isVisible(): boolean {
+    return this.root ? !this.root.hidden : false
+  }
+
+  private wireEvents(): void {
+    if (!this.root) return
+
+    const nameInput = this.root.querySelector<HTMLInputElement>('#pvp-name')
+    const createBtn = this.root.querySelector('#pvp-create')
+    const joinBtn = this.root.querySelector('#pvp-join')
+    const joinCodeInput = this.root.querySelector<HTMLInputElement>('#pvp-join-code')
+    const closeBtn = this.root.querySelector('#pvp-close')
+
+    nameInput?.addEventListener('change', () => {
+      if (nameInput.value.trim()) {
+        setPlayerName(nameInput.value.trim())
+      }
+    })
+
+    createBtn?.addEventListener('click', () => this.createRoom())
+    joinBtn?.addEventListener('click', () => {
+      const code = joinCodeInput?.value.trim().toUpperCase()
+      if (code && code.length === 6) {
+        this.joinRoom(code)
+      } else {
+        this.setStatus('Enter a 6-letter code')
+      }
+    })
+    closeBtn?.addEventListener('click', () => this.hide())
+  }
+
+  private async createRoom(): Promise<void> {
+    this.setStatus('Creating room...')
+    try {
+      const code = await PvPClient.createRoom(SERVER_URL)
+      this.showCode(code)
+      this.connect(code)
+    } catch (err) {
+      this.setStatus('Failed to create room. Check connection.')
+      this.callbacks?.onError('Room creation failed')
+    }
+  }
+
+  private joinRoom(code: string): void {
+    this.setStatus(`Joining ${code}...`)
+    this.connect(code)
+  }
+
+  private connect(code: string): void {
+    const nameInput = this.root?.querySelector<HTMLInputElement>('#pvp-name')
+    const name = nameInput?.value.trim() || getPlayerName()
+    setPlayerName(name)
+
+    this.client = new PvPClient({
+      serverUrl: SERVER_URL,
+      playerId: getPlayerId(),
+      playerName: name,
+      onAssigned: (slot) => {
+        this.setStatus(`Connected as Player ${slot + 1}`)
+      },
+      onMatchStart: (players) => {
+        const slot = this.client?.playerSlot ?? 0
+        const opponent = players.find((p) => p.slot !== slot)
+        this.setStatus('Match found!')
+        this.hide()
+        this.callbacks?.onMatchStart(slot, opponent?.name ?? 'Opponent')
+      },
+      onTurnBundle: (_bundle) => {
+        // Turn bundles are handled by the game loop (Phase 3 integration)
+      },
+      onHash: (_msg) => {
+        // Hash messages for desync detection (Phase 3 integration)
+      },
+      onOpponentDisconnected: () => {
+        this.setStatus('Opponent disconnected')
+      },
+      onPlayerJoined: (count) => {
+        this.setStatus(`${count}/2 players`)
+      },
+    })
+
+    this.client.connect(code)
+  }
+
+  private showCode(code: string): void {
+    const display = this.root?.querySelector<HTMLElement>('#pvp-code-display')
+    const codeEl = this.root?.querySelector('#pvp-code')
+    if (display && codeEl) {
+      display.hidden = false
+      codeEl.textContent = code
+    }
+  }
+
+  private setStatus(msg: string): void {
+    const el = this.root?.querySelector('#pvp-status')
+    if (el) el.textContent = msg
+  }
+
+  disconnect(): void {
+    this.client?.disconnect()
+    this.client = null
+  }
+}
