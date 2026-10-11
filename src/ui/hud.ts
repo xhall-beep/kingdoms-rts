@@ -1,6 +1,7 @@
 import { BUILDINGS } from '../data/buildings.ts'
 import { FACTIONS, FACTION_IDS } from '../data/factions.ts'
 import { PvPLobby } from './pvp-lobby.ts'
+import type { PvPClient } from '../net/client.ts'
 import type { BuildingType } from '../data/buildings.ts'
 import type { UnitType } from '../data/units.ts'
 import type { AIDifficulty } from '../ai/opponent.ts'
@@ -37,7 +38,7 @@ export interface HudCallbacks {
   onDifficulty(d: AIDifficulty): void
   onReplay(): void
   onReplaySpeed(speed: number): void
-  onPvPMatchStart?: (slot: 0 | 1, opponentName: string) => void
+  onPvPMatchStart?: (slot: 0 | 1, opponentName: string, client: PvPClient | null) => void
 }
 
 
@@ -165,7 +166,7 @@ export class HudImpl implements Hud {
           bannerEl.hidden = false
           setTimeout(() => { bannerEl.hidden = true }, 5000)
         }
-        this.callbacks?.onPvPMatchStart?.(slot, opponentName)
+        this.callbacks?.onPvPMatchStart?.(slot, opponentName, this.pvpLobby?.getClient() ?? null)
       },
       onError: (msg: string) => {
         if (bannerEl) {
