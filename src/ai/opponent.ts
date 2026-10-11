@@ -1,5 +1,5 @@
 import { BUILDINGS } from '../data/buildings.ts'
-import { UNITS } from '../data/units.ts'
+import { getUnits } from '../data/stats.ts'
 import type { System, World } from '../core/World'
 import {
   HARVEST_ANY,
@@ -328,7 +328,7 @@ export class OpponentAI implements System {
       for (const id of structuresOf(world, this.team, kind, true)) {
         if (world.trainKind[id] !== NO_TRAINING) continue
         // Don't spend the gold reserved for the planned building.
-        const cost = UNITS[unit].cost.gold
+        const cost = getUnits()[unit].cost.gold
         if (world.gold[this.team] - reserveGold < cost) continue
         enqueueTrain(world, id, unit)
       }
