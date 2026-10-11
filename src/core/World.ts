@@ -4,7 +4,7 @@ import { FACTIONS } from '../data/factions.ts'
 import type { FactionId } from '../data/factions.ts'
 import { RESOURCES } from '../data/resources.ts'
 import type { ResourceKind } from './types.ts'
-import { UNITS } from '../data/units.ts'
+import { getUnits } from '../data/stats.ts'
 import type { UnitType } from '../data/units.ts'
 import { TICK_RATE } from './time.ts'
 import { FogGrid } from '../world/fog.ts'
@@ -239,7 +239,7 @@ export class World {
     const kind = this.kind[id]
     const team = this.team[id]
     if (kind === KIND_WORKER || kind === KIND_MELEE || kind === KIND_RANGED) {
-      this.supplyUsed[team] -= UNITS[UNIT_BY_KIND[kind]].popCost
+      this.supplyUsed[team] -= getUnits()[UNIT_BY_KIND[kind]].popCost
     } else if (kind >= KIND_HALL && kind <= KIND_FARM) {
       // Only completed buildings granted supply.
       if (this.buildProgress[id] >= this.buildTotal[id]) {
@@ -301,7 +301,7 @@ export class World {
   // ---- factories: build entities from the data tables (faction mods applied) ----
 
   spawnUnit(type: UnitType, team: 0 | 1, x: number, z: number): Entity {
-    const def = UNITS[type]
+    const def = getUnits()[type]
     const mods = FACTIONS[this.factionOfTeam[team]].mods
     const entity = this.createEntity()
     const id = entity.id
