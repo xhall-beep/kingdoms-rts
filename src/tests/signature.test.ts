@@ -4,6 +4,9 @@
  */
 import { TEAM_PLAYER, TEAM_ENEMY } from '../core/World.ts'
 import { FACTIONS } from '../data/factions.ts'
+import { getUnits } from '../data/stats.ts'
+import { UPGRADES } from '../data/upgrades.ts'
+import { researchUpgrade } from '../systems/production.ts'
 import { suite, test, assert, assertEqual } from './harness.ts'
 import { makeWorld, STEP } from './setup.ts'
 
@@ -134,4 +137,74 @@ test('momentum bonus is capped at maxBonus', () => {
   // Bonus calculation caps: 1 + min(ticks * dps / 60, maxBonus)
   const bonus = 1 + Math.min((world.momentumTicks[id] * sig.damagePerSec) / 60, sig.maxBonus)
   assert(bonus <= 1 + sig.maxBonus + 0.001, `bonus capped at ${1 + sig.maxBonus} (got ${bonus})`)
+})
+
+suite('signature: elf woodland')
+
+test('elf faction has woodland signature', () => {
+  const sig = FACTIONS.elf.signature?.woodland
+  assert(sig !== undefined, 'elf should have woodland')
+  assert(sig!.speedBonus > 0, 'positive speedBonus')
+  assert(sig!.rangeBonus > 0, 'positive rangeBonus')
+  assert(sig!.treeRadius > 0, 'positive treeRadius')
+})
+
+test('elf ranged units get bonus range', () => {
+  const world = makeWorld()
+  world.factionOfTeam[TEAM_PLAYER] = 'elf'
+  const e = world.spawnUnit('ranged', TEAM_PLAYER, 10, 10)
+  const sig = FACTIONS.elf.signature!.woodland!
+  const baseRange = getUnits()['ranged'].range
+  assertEqual(world.attackRange[e.id], baseRange + sig.rangeBonus, 'range bonus applied')
+})
+
+test('non-elf ranged units get no bonus range', () => {
+  const world = makeWorld()
+  world.factionOfTeam[TEAM_PLAYER] = 'human'
+  const e = world.spawnUnit('ranged', TEAM_PLAYER, 10, 10)
+  const baseRange = getUnits()['ranged'].range
+  assertEqual(world.attackRange[e.id], baseRange, 'no bonus for human')
+})
+
+suite('signature: human adaptable')
+
+test('human faction has adaptable signature', () => {
+  const sig = FACTIONS.human.signature?.adaptable
+  assert(sig !== undefined, 'human should have adaptable')
+  assert(sig!.upgradeCostFactor < 1, 'discount factor below 1')
+  assert(sig!.upgradeCostFactor > 0, 'positive factor')
+})
+
+test('human upgrades cost less', () => {
+  const world = makeWorld()
+  world.factionOfTeam[TEAM_PLAYER] = 'human'
+  // Give plenty of resources
+  world.gold[TEAM_PLAYER] = 10000
+  world.wood[TEAM_PLAYER] = 10000
+  const hall = world.spawnBuilding('hall', TEAM_PLAYER, 0, 0)
+
+  const def = UPGRADES['meleeDmg']
+  const factor = FACTIONS.human.signature!.adaptable!.upgradeCostFactor
+  const expectedGold = Math.ceil(def.cost.gold * factor)
+
+  const goldBefore = world.gold[TEAM_PLAYER]
+  const ok = researchUpgrade(world, hall.id, 'meleeDmg')
+  assert(ok, 'upgrade should succeed')
+  const spent = goldBefore - world.gold[TEAM_PLAYER]
+  assertEqual(spent, expectedGold, `human pays discounted cost (${spent} vs ${expectedGold})`)
+})
+
+test('non-human pays full upgrade cost', () => {
+  const world = makeWorld()
+  world.factionOfTeam[TEAM_PLAYER] = 'orc'
+  world.gold[TEAM_PLAYER] = 10000
+  world.wood[TEAM_PLAYER] = 10000
+  const hall = world.spawnBuilding('hall', TEAM_PLAYER, 0, 0)
+
+  const def = UPGRADES['meleeDmg']
+  const goldBefore = world.gold[TEAM_PLAYER]
+  const ok = researchUpgrade(world, hall.id, 'meleeDmg')
+  assert(ok, 'upgrade should succeed')
+  const spent = goldBefore - world.gold[TEAM_PLAYER]
+  assertEqual(spent, def.cost.gold, 'orc pays full cost')
 })

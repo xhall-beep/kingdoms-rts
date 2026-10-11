@@ -116,9 +116,13 @@ export function researchUpgrade(world: World, buildingId: number, type: UpgradeT
     : type === 'meleeHp' ? world.meleeHpLvl[team]
     : world.rangedDmgLvl[team]
   if (currentLvl >= def.maxLevel) return false
-  if (world.gold[team] < def.cost.gold || world.wood[team] < def.cost.wood) return false
-  world.gold[team] -= def.cost.gold
-  world.wood[team] -= def.cost.wood
+  // Human signature: adaptable upgrades cost less
+  const costFactor = FACTIONS[world.factionOfTeam[team]].signature?.adaptable?.upgradeCostFactor ?? 1
+  const goldCost = Math.ceil(def.cost.gold * costFactor)
+  const woodCost = Math.ceil(def.cost.wood * costFactor)
+  if (world.gold[team] < goldCost || world.wood[team] < woodCost) return false
+  world.gold[team] -= goldCost
+  world.wood[team] -= woodCost
   if (type === 'meleeDmg') world.meleeDmgLvl[team]++
   else if (type === 'meleeHp') world.meleeHpLvl[team]++
   else world.rangedDmgLvl[team]++

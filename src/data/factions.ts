@@ -46,6 +46,10 @@ export interface FactionSignature {
   reanimate?: { chance: number; hpFactor: number; durationSec: number };
   /** Orc momentum: damage bonus building while in sustained combat. */
   momentum?: { damagePerSec: number; maxBonus: number; resetSec: number };
+  /** Elf woodland: speed and range bonuses near trees. */
+  woodland?: { speedBonus: number; rangeBonus: number; treeRadius: number };
+  /** Human adaptability: cheaper upgrades. */
+  adaptable?: { upgradeCostFactor: number };
   // Future signatures: woodlandSpeed, scavenging, auras, etc.
 }
 
@@ -68,10 +72,12 @@ const m = (hp: number, damage: number, speed: number, cost: number, train: numbe
 export const FACTIONS: Record<FactionId, FactionDef> = {
   human: { name: 'Human', colors: [0x2f6fd6, 0xf5c542, 0xdfe8f5], skin: 0xf2c9a0, head: 'helm', hall: 'box,pyr,towers,banner',
     units: { worker: 'Peasant', melee: 'Knight', ranged: 'Archer' },
-    mods: m(1, 1, 1, 1, 1, 1) },
+    mods: m(1, 1, 1, 1, 1, 1),
+    signature: { adaptable: { upgradeCostFactor: 0.8 } } },
   elf: { name: 'Elf', colors: [0x2e9e57, 0xe8d27a, 0xcff5b0], skin: 0xf6d8b8, head: 'ears', hall: 'round,cone,spires,tree',
     units: { worker: 'Forager', melee: 'Warden', ranged: 'Ranger' },
-    mods: m(0.9, 1.1, 1.1, 1.05, 1, 1) },
+    mods: m(0.9, 1.1, 1.1, 1.05, 1, 1),
+    signature: { woodland: { speedBonus: 0.25, rangeBonus: 1.0, treeRadius: 8 } } },
   goblin: { name: 'Goblin', colors: [0x7a3b2e, 0xc9372c, 0x2b2b2b], skin: 0x8cc43c, head: 'ears', hall: 'box,pyr,horns,skull',
     units: { worker: 'Scavenger', melee: 'Spearman', ranged: 'Slinger' },
     mods: m(0.85, 0.95, 1.1, 0.85, 0.85, 1) },

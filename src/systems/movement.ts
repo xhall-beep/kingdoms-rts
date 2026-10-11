@@ -1,4 +1,6 @@
 import type { System, World } from '../core/World'
+import { KIND_TREE } from '../core/World'
+import { FACTIONS } from '../data/factions.ts'
 import { HARVEST_OFF, KIND_WORKER, NO_TARGET, STATE_IDLE, STATE_MOVE , STATE_PATROL, STATE_HOLD} from '../core/World'
 
 /**
@@ -6,6 +8,31 @@ import { HARVEST_OFF, KIND_WORKER, NO_TARGET, STATE_IDLE, STATE_MOVE , STATE_PAT
  * moveSpeed and stops within stopDist. Never overshoots the arrival radius.
  * Writes the velocity arrays so the Engine's interpolation keeps working.
  */
+/**
+ * Elf signature: woodland speed bonus when near trees.
+ * Deterministic: iterates entities in insertion order.
+ */
+function getEffectiveSpeed(world: World, id: number): number {
+  const base = world.moveSpeed[id]
+  const team = world.team[id] as 0 | 1
+  const woodland = FACTIONS[world.factionOfTeam[team]].signature?.woodland
+  if (!woodland) return base
+
+  // Check if near any tree
+  const px = world.positionX[id]
+  const pz = world.positionZ[id]
+  const r2 = woodland.treeRadius * woodland.treeRadius
+  for (const [tid] of world.entities) {
+    if (world.kind[tid] !== KIND_TREE) continue
+    const dx = world.positionX[tid] - px
+    const dz = world.positionZ[tid] - pz
+    if (dx * dx + dz * dz <= r2) {
+      return base * (1 + woodland.speedBonus)
+    }
+  }
+  return base
+}
+
 export class MovementSystemImpl implements System {
   update(world: World, dt: number): void {
     for (const id of world.entities.keys()) {
@@ -25,11 +52,12 @@ export class MovementSystemImpl implements System {
         continue
       }
       // dist > stopDist >= 0 here, so dist > 0 and the division is safe.
-      const step = Math.min(world.moveSpeed[id] * dt, dist - world.stopDist[id])
+      const speed = getEffectiveSpeed(world, id)
+      const step = Math.min(speed * dt, dist - world.stopDist[id])
       const nx = dx / dist
       const nz = dz / dist
-      world.velocityX[id] = nx * world.moveSpeed[id]
-      world.velocityZ[id] = nz * world.moveSpeed[id]
+      world.velocityX[id] = nx * speed
+      world.velocityZ[id] = nz * speed
       world.positionX[id] += nx * step
       world.positionZ[id] += nz * step
     }

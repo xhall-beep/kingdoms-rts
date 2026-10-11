@@ -400,7 +400,10 @@ export class World {
     this.health[id] = hp + bonusHp
     this.maxHealth[id] = hp + bonusHp
     this.damage[id] = def.damage * mods.damage + bonusDmg
-    this.attackRange[id] = def.range
+    // Elf signature: ranged units get bonus range
+    const woodland = FACTIONS[this.factionOfTeam[team]].signature?.woodland
+    const rangeBonus = (woodland && type === 'ranged') ? woodland.rangeBonus : 0
+    this.attackRange[id] = def.range + rangeBonus
     this.sight[id] = def.sight
     this.cooldown[id] = 0
     this.cooldownTotal[id] = def.cooldownTicks / TICK_RATE
