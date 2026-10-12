@@ -39,20 +39,11 @@ function getCounterMultiplier(world: World, attacker: number, target: number): n
 }
 
 export class CombatSystemImpl implements System {
-  /** Spatial hash rebuilt each tick; cell 24 > max sight 20, so 3x3 covers sight. */
-  private readonly hash = new SpatialHash(24)
-
   update(world: World, dt: number): void {
-    // Rebuild the spatial index once per tick (deterministic world order).
-    const entries: { id: number; x: number; z: number }[] = []
-    for (const id of world.entities.keys()) {
-      entries.push({ id, x: world.positionX[id], z: world.positionZ[id] })
-    }
-    this.hash.rebuild(entries)
-
+    const hash = world.spatialHash
     const dead: number[] = []
     // Towers auto-attack nearest enemy in range
-    this.updateTowers(world, dt, dead)
+    this.updateTowers(world, dt, dead, hash)
     for (const id of world.entities.keys()) {
       const kind = world.kind[id]
       if (kind !== KIND_MELEE && kind !== KIND_RANGED) continue
@@ -96,7 +87,7 @@ export class CombatSystemImpl implements System {
         // on the march. Plain move orders (STATE_MOVE) walk through.
         const stance = world.state[id]
         if (stance === STATE_IDLE || stance === STATE_ATTACKMOVE || stance === STATE_ATTACK || stance === STATE_PATROL || stance === STATE_HOLD) {
-          target = findNearestEnemy(world, id, this.hash)
+          target = findNearestEnemy(world, id, hash)
           // Hold position: only engage if enemy is within weapon range + small buffer
           if (stance === STATE_HOLD && target !== NO_TARGET) {
             const d = Math.hypot(
@@ -218,7 +209,7 @@ export class CombatSystemImpl implements System {
    * Towers automatically attack the nearest enemy in range.
    * Deterministic: iterates in entity order, same as findNearestEnemy.
    */
-  private updateTowers(world: World, dt: number, dead: number[]): void {
+  private updateTowers(world: World, dt: number, dead: number[], hash: SpatialHash): void {
     for (const id of world.entities.keys()) {
       if (world.kind[id] !== KIND_TOWER) continue
       if (world.health[id] <= 0) continue
@@ -230,7 +221,7 @@ export class CombatSystemImpl implements System {
         continue
       }
 
-      const target = findNearestEnemy(world, id, this.hash)
+      const target = findNearestEnemy(world, id, hash)
       if (target === NO_TARGET) continue
 
       // Check range (towers use attackRange)

@@ -35,15 +35,8 @@ function getEffectiveSpeed(world: World, id: number, hash: SpatialHash): number 
 }
 
 export class MovementSystemImpl implements System {
-  private readonly hash = new SpatialHash(24)
-
   update(world: World, dt: number): void {
-    const entries: { id: number; x: number; z: number }[] = []
-    for (const id of world.entities.keys()) {
-      entries.push({ id, x: world.positionX[id], z: world.positionZ[id] })
-    }
-    this.hash.rebuild(entries)
-
+    const hash = world.spatialHash
     for (const id of world.entities.keys()) {
       if (world.moving[id] !== 1 || world.moveSpeed[id] <= 0) {
         world.velocityX[id] = 0
@@ -61,7 +54,7 @@ export class MovementSystemImpl implements System {
         continue
       }
       // dist > stopDist >= 0 here, so dist > 0 and the division is safe.
-      const speed = getEffectiveSpeed(world, id, this.hash)
+      const speed = getEffectiveSpeed(world, id, hash)
       const step = Math.min(speed * dt, dist - world.stopDist[id])
       const nx = dx / dist
       const nz = dz / dist

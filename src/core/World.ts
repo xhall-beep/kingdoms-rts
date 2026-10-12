@@ -6,6 +6,7 @@ import { RESOURCES } from '../data/resources.ts'
 import type { ResourceKind } from './types.ts'
 import { getUnits } from '../data/stats.ts'
 import type { UnitType } from '../data/units.ts'
+import { SpatialHash } from './spatial-hash.ts'
 import { TICK_RATE } from './time.ts'
 import { FogGrid } from '../world/fog.ts'
 
@@ -176,6 +177,14 @@ export class World {
   winner: -1 | 0 | 1 = -1
 
   readonly entities = new Map<number, Entity>()
+
+  /**
+   * Shared spatial hash, rebuilt at the start of every update() tick.
+   * Cell 24 > max sight 20, so 3x3 cells cover any sight circle.
+   * Derived state only — never snapshotted, never affects determinism
+   * beyond the (already deterministic) queries systems make.
+   */
+  readonly spatialHash = new SpatialHash(24)
   readonly systems: System[] = []
 
   private nextEntityId = 1
@@ -316,6 +325,14 @@ export class World {
 
   update(deltaSeconds: number): void {
     this.tick++
+    // Rebuild the shared spatial index (deterministic world order).
+    // Only the movement system changes positions, and it runs last,
+    // so this snapshot is position-identical for every system this tick.
+    const entries: { id: number; x: number; z: number }[] = []
+    for (const id of this.entities.keys()) {
+      entries.push({ id, x: this.positionX[id], z: this.positionZ[id] })
+    }
+    this.spatialHash.rebuild(entries)
     // Update Orc momentum: increment for units in combat, reset after gap
     for (let id = 0; id < this.momentumTicks.length; id++) {
       if (!this.entities.has(id)) continue
