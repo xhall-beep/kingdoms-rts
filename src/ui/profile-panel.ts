@@ -35,20 +35,15 @@ export function getProfile(): Profile {
 }
 
 /**
- * Ensure a profile exists. On first run (no stored profile), prompt once
- * for the kingdom name. Never throws.
+ * Ensure a profile exists. On first run (no stored profile), create one
+ * with the default name — renaming happens via the profile panel's name
+ * field. Never blocks: window.prompt() would hang headless/automated
+ * pages, so it is deliberately not used here.
  */
 export function ensureProfile(): Profile {
   if (profile) return profile
   if (readRaw() === null) {
-    let name = 'My Kingdom'
-    try {
-      const answer = window.prompt('Name your kingdom:', 'My Kingdom')
-      if (answer !== null) name = answer
-    } catch {
-      /* prompt unavailable (e.g. headless) — keep default */
-    }
-    profile = createDefaultProfile(name)
+    profile = createDefaultProfile('My Kingdom')
     saveProfile(profile)
   } else {
     profile = loadProfile()
