@@ -1,5 +1,6 @@
 import type { System, World } from '../core/World'
 import { KIND_TOWER } from '../core/World'
+import { SpatialHash } from '../core/spatial-hash.ts'
 import { FACTIONS } from '../data/factions.ts'
 import { TICK_RATE } from '../core/time.ts'
 import {
@@ -38,7 +39,17 @@ function getCounterMultiplier(world: World, attacker: number, target: number): n
 }
 
 export class CombatSystemImpl implements System {
+  /** Spatial hash rebuilt each tick; cell 24 > max sight 20, so 3x3 covers sight. */
+  private readonly hash = new SpatialHash(24)
+
   update(world: World, dt: number): void {
+    // Rebuild the spatial index once per tick (deterministic world order).
+    const entries: { id: number; x: number; z: number }[] = []
+    for (const id of world.entities.keys()) {
+      entries.push({ id, x: world.positionX[id], z: world.positionZ[id] })
+    }
+    this.hash.rebuild(entries)
+
     const dead: number[] = []
     // Towers auto-attack nearest enemy in range
     this.updateTowers(world, dt, dead)
@@ -85,7 +96,7 @@ export class CombatSystemImpl implements System {
         // on the march. Plain move orders (STATE_MOVE) walk through.
         const stance = world.state[id]
         if (stance === STATE_IDLE || stance === STATE_ATTACKMOVE || stance === STATE_ATTACK || stance === STATE_PATROL || stance === STATE_HOLD) {
-          target = findNearestEnemy(world, id)
+          target = findNearestEnemy(world, id, this.hash)
           // Hold position: only engage if enemy is within weapon range + small buffer
           if (stance === STATE_HOLD && target !== NO_TARGET) {
             const d = Math.hypot(
@@ -219,7 +230,7 @@ export class CombatSystemImpl implements System {
         continue
       }
 
-      const target = findNearestEnemy(world, id)
+      const target = findNearestEnemy(world, id, this.hash)
       if (target === NO_TARGET) continue
 
       // Check range (towers use attackRange)
@@ -248,27 +259,31 @@ export class CombatSystemImpl implements System {
   }
 }
 
-/** Nearest living enemy (unit or building) within sight, or NO_TARGET. */
-function findNearestEnemy(world: World, id: number): number {
+/** Nearest living enemy (unit or building) within sight, or NO_TARGET.
+ * Uses the spatial hash; tie-broken by world order to match linear scan. */
+function findNearestEnemy(world: World, id: number, hash: SpatialHash): number {
   const px = world.positionX[id]
   const pz = world.positionZ[id]
   const team = world.team[id]
   const sight = world.sight[id]
   let best = NO_TARGET
   let bestDist = sight
-  for (const other of world.entities.keys()) {
-    if (other === id) continue
-    if (world.team[other] === team) continue
-    if (!world.isAttackable(other)) continue
-    if (world.health[other] <= 0) continue
+  let bestSeq = Number.MAX_SAFE_INTEGER
+  hash.forEachNear(px, pz, (other) => {
+    if (other === id) return
+    if (world.team[other] === team) return
+    if (!world.isAttackable(other)) return
+    if (world.health[other] <= 0) return
     const d =
       Math.hypot(world.positionX[other] - px, world.positionZ[other] - pz) -
       world.radius[other]
-    if (d < bestDist) {
+    const seq = hash.sequenceOf(other)
+    if (d < bestDist || (d === bestDist && seq < bestSeq)) {
       bestDist = d
+      bestSeq = seq
       best = other
     }
-  }
+  })
   return best
 }
 

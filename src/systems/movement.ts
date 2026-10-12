@@ -1,5 +1,6 @@
 import type { System, World } from '../core/World'
 import { KIND_TREE } from '../core/World'
+import { SpatialHash } from '../core/spatial-hash.ts'
 import { FACTIONS } from '../data/factions.ts'
 import { HARVEST_OFF, KIND_WORKER, NO_TARGET, STATE_IDLE, STATE_MOVE , STATE_PATROL, STATE_HOLD} from '../core/World'
 
@@ -10,31 +11,39 @@ import { HARVEST_OFF, KIND_WORKER, NO_TARGET, STATE_IDLE, STATE_MOVE , STATE_PAT
  */
 /**
  * Elf signature: woodland speed bonus when near trees.
- * Deterministic: iterates entities in insertion order.
+ * Deterministic: spatial hash in world order; first tree found wins.
  */
-function getEffectiveSpeed(world: World, id: number): number {
+function getEffectiveSpeed(world: World, id: number, hash: SpatialHash): number {
   const base = world.moveSpeed[id]
   const team = world.team[id] as 0 | 1
   const woodland = FACTIONS[world.factionOfTeam[team]].signature?.woodland
   if (!woodland) return base
 
-  // Check if near any tree
+  // Check if near any tree (cell 24 > treeRadius 8, so 3x3 covers it)
   const px = world.positionX[id]
   const pz = world.positionZ[id]
   const r2 = woodland.treeRadius * woodland.treeRadius
-  for (const [tid] of world.entities) {
-    if (world.kind[tid] !== KIND_TREE) continue
+  let nearTree = false
+  hash.forEachNear(px, pz, (tid) => {
+    if (nearTree) return
+    if (world.kind[tid] !== KIND_TREE) return
     const dx = world.positionX[tid] - px
     const dz = world.positionZ[tid] - pz
-    if (dx * dx + dz * dz <= r2) {
-      return base * (1 + woodland.speedBonus)
-    }
-  }
-  return base
+    if (dx * dx + dz * dz <= r2) nearTree = true
+  })
+  return nearTree ? base * (1 + woodland.speedBonus) : base
 }
 
 export class MovementSystemImpl implements System {
+  private readonly hash = new SpatialHash(24)
+
   update(world: World, dt: number): void {
+    const entries: { id: number; x: number; z: number }[] = []
+    for (const id of world.entities.keys()) {
+      entries.push({ id, x: world.positionX[id], z: world.positionZ[id] })
+    }
+    this.hash.rebuild(entries)
+
     for (const id of world.entities.keys()) {
       if (world.moving[id] !== 1 || world.moveSpeed[id] <= 0) {
         world.velocityX[id] = 0
@@ -52,7 +61,7 @@ export class MovementSystemImpl implements System {
         continue
       }
       // dist > stopDist >= 0 here, so dist > 0 and the division is safe.
-      const speed = getEffectiveSpeed(world, id)
+      const speed = getEffectiveSpeed(world, id, this.hash)
       const step = Math.min(speed * dt, dist - world.stopDist[id])
       const nx = dx / dist
       const nz = dz / dist
