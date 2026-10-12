@@ -298,7 +298,7 @@ export function initializeGame(): GameComposition {
       clearSave()
       location.reload()
     },
-    onPvPMatchStart: (slot, opponentName, client, opponentId) => {
+    onPvPMatchStart: (slot, opponentName, client, opponentId, matchId, matchSecret) => {
       if (!client) {
         console.error('PvP match started without a client')
         return
@@ -315,17 +315,19 @@ export function initializeGame(): GameComposition {
           refreshPauseUi()
           // Persistent profile: record the result (meta-only, never sim).
           try { recordGameResult('pvp', won) } catch { /* profile unavailable */ }
-          // Report result to matchmaker for rating update (fire-and-forget)
+          // Report result to matchmaker for rating update (fire-and-forget).
+          // Authenticated via the matchId + secret from pairing; the server
+          // applies Elo at most once per match (idempotent).
           const httpUrl = 'https://kingdoms-pvp.stephen-x-hall.workers.dev'
           const myId = client.playerId
           const oppId = opponentId || ''
           const winnerId = won ? myId : oppId
           const loserId = won ? oppId : myId
-          if (winnerId && loserId && winnerId !== loserId) {
+          if (winnerId && loserId && winnerId !== loserId && matchId && matchSecret) {
             fetch(`${httpUrl}/api/match/result`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ winnerId, loserId }),
+              body: JSON.stringify({ matchId, winnerId, loserId, secret: matchSecret }),
             }).catch(() => { /* offline or server unreachable — rating stays */ })
           }
           // TODO: show match-end UI with rating change

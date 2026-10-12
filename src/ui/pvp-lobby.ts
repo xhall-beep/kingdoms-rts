@@ -195,7 +195,7 @@ export class PvPLobby {
     this.queueWs = new WebSocket(wsUrl)
 
     this.queueWs.onmessage = (event) => {
-      let msg: { kind?: string; position?: number; inQueue?: number; code?: string; slot?: 0 | 1; band?: string; opponent?: { playerId: string; name: string } }
+      let msg: { kind?: string; position?: number; inQueue?: number; code?: string; slot?: 0 | 1; band?: string; matchId?: string; secret?: string; opponent?: { playerId: string; name: string } }
       try {
         msg = JSON.parse(event.data as string)
       } catch {
@@ -211,7 +211,7 @@ export class PvPLobby {
           this.updateQueueCount(msg.inQueue ?? 0)
           break
         case 'matched':
-          this.onQueueMatched(msg.code!, msg.slot!, msg.opponent?.playerId ?? '', msg.opponent?.name ?? 'Opponent')
+          this.onQueueMatched(msg.code!, msg.slot!, msg.opponent?.playerId ?? '', msg.opponent?.name ?? 'Opponent', msg.matchId ?? '', msg.secret ?? '')
           break
       }
     }
@@ -244,15 +244,18 @@ export class PvPLobby {
   }
 
   /** Called when the matchmaker pairs us. Joins the assigned room. */
-  private onQueueMatched(code: string, _slot: 0 | 1, opponentId: string, opponentName: string): void {
+  private onQueueMatched(code: string, _slot: 0 | 1, opponentId: string, opponentName: string, matchId: string, secret: string): void {
     // Hide queue UI
     const qd = this.root?.querySelector<HTMLElement>('#pvp-queue-display')
     if (qd) qd.hidden = true
     this.queueWs = null
 
     this.setStatus(`Matched vs ${opponentName}! Joining...`)
-    // Stash opponent ID for result reporting
-    ;(this as unknown as { lastOpponentId: string }).lastOpponentId = opponentId
+    // Stash pairing credentials for authenticated result reporting
+    const stash = this as unknown as { lastOpponentId: string; lastMatchId: string; lastMatchSecret: string }
+    stash.lastOpponentId = opponentId
+    stash.lastMatchId = matchId
+    stash.lastMatchSecret = secret
     // Connect to the room using the existing flow
     this.connect(code)
   }
@@ -260,6 +263,12 @@ export class PvPLobby {
   /** Opponent's player ID from the last matchmaker pairing (for result reporting). */
   get opponentId(): string {
     return (this as unknown as { lastOpponentId?: string }).lastOpponentId ?? ''
+  }
+
+  /** Match ID + secret from the last pairing (authenticates the result report). */
+  get matchCredentials(): { matchId: string; secret: string } {
+    const s = this as unknown as { lastMatchId?: string; lastMatchSecret?: string }
+    return { matchId: s.lastMatchId ?? '', secret: s.lastMatchSecret ?? '' }
   }
 
   private updateQueueCount(count: number): void {

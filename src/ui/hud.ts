@@ -39,7 +39,7 @@ export interface HudCallbacks {
   onPersonality(p: AIPersonality): void
   onReplay(): void
   onReplaySpeed(speed: number): void
-  onPvPMatchStart?: (slot: 0 | 1, opponentName: string, client: PvPClient | null, opponentId?: string) => void
+  onPvPMatchStart?: (slot: 0 | 1, opponentName: string, client: PvPClient | null, opponentId?: string, matchId?: string, matchSecret?: string) => void
 }
 
 
@@ -169,7 +169,7 @@ export class HudImpl implements Hud {
           bannerEl.hidden = false
           setTimeout(() => { bannerEl.hidden = true }, 5000)
         }
-        this.callbacks?.onPvPMatchStart?.(slot, opponentName, this.pvpLobby?.getClient() ?? null, this.pvpLobby?.opponentId)
+        this.callbacks?.onPvPMatchStart?.(slot, opponentName, this.pvpLobby?.getClient() ?? null, this.pvpLobby?.opponentId, this.pvpLobby?.matchCredentials.matchId, this.pvpLobby?.matchCredentials.secret)
       },
       onError: (msg: string) => {
         if (bannerEl) {
