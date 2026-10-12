@@ -65,11 +65,10 @@ export class Engine {
 
     const stepTolerance = 1e-9
     while (this.accumulator + stepTolerance >= this.fixedStepSeconds) {
-      if (this.stepHandler) {
-        this.stepHandler()
-      } else {
-        this.world.update(this.fixedStepSeconds)
-      }
+      // The world always steps; the hook adds mode-specific updates
+      // (e.g. Tower Defense wave logic) on the same fixed tick.
+      this.world.update(this.fixedStepSeconds)
+      this.stepHandler?.()
       this.simulationSteps++
       this.accumulator -= this.fixedStepSeconds
     }

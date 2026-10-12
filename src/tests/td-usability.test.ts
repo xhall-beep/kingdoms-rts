@@ -7,6 +7,8 @@ import { PLAYER_BUILDABLE, placeStructure } from '../world/construction.ts'
 import {
 setupTowerDefense, updateTowerDefense, TD_BUILD_PHASE_TICKS,
 } from '../modes/tower-defense.ts'
+import { Engine } from '../core/Engine.ts'
+import { MovementSystemImpl } from '../systems/movement.ts'
 import { test, assert, assertEqual } from './harness.ts'
 
 test('Guard Tower is player-buildable', () => {
@@ -56,4 +58,24 @@ test('no instant victory with zero enemies', () => {
   for (let i = 0; i < 120; i++) updateTowerDefense(world, state)
   assertEqual(state.mode, 'build', 'starts in build')
   assertEqual(world.winner, -1, 'no winner set')
+})
+
+test('Engine stepHandler is additive: world.update still runs with a hook set', () => {
+  // Regression: the TD tick hook must not replace world.update(), or the
+  // sim freezes (no movement/combat/gathering) in modes that use it.
+  let hookCalls = 0
+  const engine = new Engine({ stepHandler: () => { hookCalls++ } })
+  const world = engine.world
+  world.registerSystem(new MovementSystemImpl())
+  const entity = world.spawnUnit('worker', TEAM_PLAYER, 0, 0)
+  const id = entity.id
+  world.moveSpeed[id] = 600
+  world.targetX[id] = 100
+  world.targetZ[id] = 0
+  world.moving[id] = 1
+  const x0 = world.positionX[id]
+  // Advance past one fixed step (1/60s).
+  engine.advance(1 / 60 + 0.001)
+  assert(hookCalls > 0, 'hook ran')
+  assert(world.positionX[id] !== x0, 'world stepped: unit moved')
 })
