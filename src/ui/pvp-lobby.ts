@@ -6,6 +6,7 @@
  */
 
 import { PvPClient, getPlayerId, getPlayerName, setPlayerName } from '../net/client.ts'
+import { buildProgressionSnapshot, loadProfile } from '../profile/profile.ts'
 
 const SERVER_URL = 'wss://kingdoms-pvp.stephen-x-hall.workers.dev'
 
@@ -186,16 +187,10 @@ export class PvPLobby {
     if (queueDisplay) queueDisplay.hidden = false
     this.setStatus('Connecting to matchmaker...')
 
-    // Progression snapshot for power-band matchmaking.
-    // Empty until the persistent base system lands; server computes
-    // the hidden Power Score from this (never exposed to clients).
-    const progression = btoa(JSON.stringify({
-      buildings: {},
-      units: {},
-      heroes: {},
-      tech: {},
-      army: {},
-    }))
+    // Progression snapshot for power-band matchmaking, built from the
+    // persistent kingdom profile. The server computes the hidden Power
+    // Score from this (never exposed to clients).
+    const progression = btoa(JSON.stringify(buildProgressionSnapshot(loadProfile())))
     const wsUrl = `${SERVER_URL}/api/queue/ws?playerId=${encodeURIComponent(getPlayerId())}&name=${encodeURIComponent(name)}&progression=${encodeURIComponent(progression)}`
     this.queueWs = new WebSocket(wsUrl)
 

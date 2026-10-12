@@ -13,6 +13,13 @@ import {
   saveProfile,
   clearProfile,
   recordMatchResult,
+  unlockBuilding,
+  setBuildingLevel,
+  unlockFaction,
+  setUnitLevel,
+  setHeroLevel,
+  setTechLevel,
+  buildProgressionSnapshot,
 } from '../profile/profile.ts'
 
 // ---- localStorage stub (tests run in Node, which has no localStorage) ----
@@ -150,7 +157,7 @@ test('loadProfile returns default on version mismatch', () => {
   installLocalStorageStub()
   const oldProfile: Profile = {
     ...createDefaultProfile('Old'),
-    version: 999 as 1,
+    version: 999 as 2,
   }
   store[STORAGE_KEY] = JSON.stringify(oldProfile)
   const p = loadProfile()
@@ -227,4 +234,83 @@ test('recordMatchResult does not mutate the original profile', () => {
   const _updated = recordMatchResult(p, 'skirmish', true)
   assertEqual(Object.keys(p.stats.perMode).length, 0, 'original unchanged')
   void _updated
+})
+
+suite('profile v2: progression levels')
+
+test('default profile seeds building levels and unit roster', () => {
+  installLocalStorageStub()
+  const p = createDefaultProfile('Levels')
+  assertEqual(p.version, 2, 'version 2')
+  assertEqual(p.buildingLevels['hall'], 1, 'hall level 1')
+  assertEqual(p.buildingLevels['farm'], 1, 'farm level 1')
+  assert(p.unitRoster['worker'].unlocked, 'worker unlocked')
+  assertEqual(p.unitRoster['melee'].level, 1, 'melee level 1')
+  assertEqual(Object.keys(p.heroes).length, 0, 'no heroes yet')
+  assertEqual(Object.keys(p.techLevels).length, 0, 'no tech yet')
+})
+
+test('v1 profile migrates to v2 with derived level maps', () => {
+  installLocalStorageStub()
+  const v1 = {
+    version: 1,
+    kingdomName: 'Old Kingdom',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    campaignProgress: { completedMissions: [], currentMission: null },
+    unlockedFactions: ['human', 'elf'],
+    unlockedBuildings: ['hall', 'farm', 'barracks'],
+    stats: { perMode: {} },
+    ratings: {},
+  }
+  store[STORAGE_KEY] = JSON.stringify(v1)
+  const p = loadProfile()
+  assertEqual(p.version, 2, 'migrated to v2')
+  assertEqual(p.kingdomName, 'Old Kingdom', 'name preserved')
+  assertEqual(p.buildingLevels['barracks'], 1, 'barracks derived at 1')
+  assert(p.unitRoster['ranged'].unlocked, 'ranged unlocked from factions')
+  assert(p.unlockedFactions.includes('elf'), 'elf preserved')
+})
+
+test('unlock and level helpers', () => {
+  installLocalStorageStub()
+  let p = createDefaultProfile('Helper')
+  p = unlockBuilding(p, 'barracks')
+  assert(p.unlockedBuildings.includes('barracks'), 'barracks unlocked')
+  assertEqual(p.buildingLevels['barracks'], 1, 'starts at 1')
+  p = setBuildingLevel(p, 'barracks', 3)
+  assertEqual(p.buildingLevels['barracks'], 3, 'level set to 3')
+  p = unlockFaction(p, 'orc')
+  assert(p.unlockedFactions.includes('orc'), 'orc unlocked')
+  p = setUnitLevel(p, 'melee', 2)
+  assertEqual(p.unitRoster['melee'].level, 2, 'melee level 2')
+  p = setTechLevel(p, 'siege', 2)
+  assertEqual(p.techLevels['siege'], 2, 'tech set')
+  p = setTechLevel(p, 'siege', 0)
+  assert(!('siege' in p.techLevels), 'tech removed at 0')
+  p = setHeroLevel(p, 'warchief', 5)
+  assertEqual(p.heroes['warchief'], 5, 'hero set')
+})
+
+test('buildProgressionSnapshot matches server shape', () => {
+  installLocalStorageStub()
+  let p = createDefaultProfile('Snap')
+  p = setBuildingLevel(p, 'hall', 3)
+  p = setTechLevel(p, 'masonry', 2)
+  const snap = buildProgressionSnapshot(p, { melee: 10, worker: 5 })
+  assertEqual(snap.buildings['hall'], 3, 'hall level 3 in snapshot')
+  assert(snap.units['worker'].unlocked, 'worker in snapshot')
+  assertEqual(snap.tech['masonry'], 2, 'tech in snapshot')
+  assertEqual(snap.army['melee'], 10, 'army passes through')
+  assertEqual(snap.army['worker'], 5, 'army worker count')
+  // JSON-safe for btoa transport
+  const encoded = btoa(JSON.stringify(snap))
+  const decoded = JSON.parse(atob(encoded))
+  assertEqual(decoded.buildings['hall'], 3, 'round-trips through btoa')
+})
+
+test('snapshot of fresh profile is non-empty (power > 0)', () => {
+  installLocalStorageStub()
+  const snap = buildProgressionSnapshot(createDefaultProfile('Fresh'))
+  assert(Object.keys(snap.buildings).length > 0, 'buildings non-empty')
+  assert(Object.keys(snap.units).length > 0, 'units non-empty')
 })
