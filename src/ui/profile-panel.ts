@@ -222,6 +222,7 @@ function injectStyles(): void {
     .hud-profile-btn {
       background: rgba(20, 16, 8, 0.85);
       border: 1px solid #c9a227;
+      pointer-events: auto;
       color: #f0d878;
       border-radius: 6px;
       padding: 4px 10px;
