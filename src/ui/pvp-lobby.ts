@@ -195,7 +195,7 @@ export class PvPLobby {
     this.queueWs = new WebSocket(wsUrl)
 
     this.queueWs.onmessage = (event) => {
-      let msg: { kind?: string; position?: number; inQueue?: number; code?: string; slot?: 0 | 1; band?: string; matchId?: string; secret?: string; opponent?: { playerId: string; name: string } }
+      let msg: { kind?: string; position?: number; inQueue?: number; code?: string; slot?: 0 | 1; band?: string; matchId?: string; secret?: string; yourRating?: number; opponent?: { playerId: string; name: string } }
       try {
         msg = JSON.parse(event.data as string)
       } catch {
@@ -211,7 +211,7 @@ export class PvPLobby {
           this.updateQueueCount(msg.inQueue ?? 0)
           break
         case 'matched':
-          this.onQueueMatched(msg.code!, msg.slot!, msg.opponent?.playerId ?? '', msg.opponent?.name ?? 'Opponent', msg.matchId ?? '', msg.secret ?? '')
+          this.onQueueMatched(msg.code!, msg.slot!, msg.opponent?.playerId ?? '', msg.opponent?.name ?? 'Opponent', msg.matchId ?? '', msg.secret ?? '', msg.yourRating ?? 1200)
           break
       }
     }
@@ -244,7 +244,7 @@ export class PvPLobby {
   }
 
   /** Called when the matchmaker pairs us. Joins the assigned room. */
-  private onQueueMatched(code: string, _slot: 0 | 1, opponentId: string, opponentName: string, matchId: string, secret: string): void {
+  private onQueueMatched(code: string, _slot: 0 | 1, opponentId: string, opponentName: string, matchId: string, secret: string, yourRating: number): void {
     // Hide queue UI
     const qd = this.root?.querySelector<HTMLElement>('#pvp-queue-display')
     if (qd) qd.hidden = true
@@ -252,10 +252,11 @@ export class PvPLobby {
 
     this.setStatus(`Matched vs ${opponentName}! Joining...`)
     // Stash pairing credentials for authenticated result reporting
-    const stash = this as unknown as { lastOpponentId: string; lastMatchId: string; lastMatchSecret: string }
+    const stash = this as unknown as { lastOpponentId: string; lastMatchId: string; lastMatchSecret: string; lastRating: number }
     stash.lastOpponentId = opponentId
     stash.lastMatchId = matchId
     stash.lastMatchSecret = secret
+    stash.lastRating = yourRating
     // Connect to the room using the existing flow
     this.connect(code)
   }
@@ -269,6 +270,11 @@ export class PvPLobby {
   get matchCredentials(): { matchId: string; secret: string } {
     const s = this as unknown as { lastMatchId?: string; lastMatchSecret?: string }
     return { matchId: s.lastMatchId ?? '', secret: s.lastMatchSecret ?? '' }
+  }
+
+  /** Our rating at match start (for the rating-change display). */
+  get ratingAtMatchStart(): number {
+    return (this as unknown as { lastRating?: number }).lastRating ?? 1200
   }
 
   private updateQueueCount(count: number): void {

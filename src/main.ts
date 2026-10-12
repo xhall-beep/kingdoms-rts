@@ -92,6 +92,52 @@ export function composeGame(canvas: HTMLCanvasElement): GameComposition {
 /**
  * Set up Tower Defense UI overlay: wave banner, start wave button, status.
  */
+/**
+ * Match-end modal: Victory/Defeat, rating change when known, rematch button.
+ * Called twice: immediately (rating pending) and again once the server
+ * responds with the updated rating. Idempotent — reuses the same element.
+ */
+function showMatchEndModal(won: boolean, ratingBefore: number | null, ratingAfter: number | null, opponentName: string): void {
+  let modal = document.getElementById('pvp-end-modal')
+  if (!modal) {
+    modal = document.createElement('div')
+    modal.id = 'pvp-end-modal'
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:2000;'
+    modal.innerHTML = `
+      <div style="background:#1a2b2b;color:#fff;padding:32px 48px;border-radius:12px;text-align:center;min-width:280px;">
+        <div id="pvp-end-title" style="font-size:32px;font-weight:bold;margin-bottom:8px;"></div>
+        <div id="pvp-end-sub" style="font-size:14px;opacity:0.7;margin-bottom:16px;"></div>
+        <div id="pvp-end-rating" style="font-size:20px;margin-bottom:24px;"></div>
+        <div>
+          <button id="pvp-end-rematch" style="padding:10px 24px;font-size:16px;margin-right:8px;cursor:pointer;">Find Match</button>
+          <button id="pvp-end-close" style="padding:10px 24px;font-size:16px;cursor:pointer;">Close</button>
+        </div>
+      </div>`
+    document.body.appendChild(modal)
+    const close = () => modal!.remove()
+    modal.querySelector('#pvp-end-close')!.addEventListener('click', close)
+    modal.querySelector('#pvp-end-rematch')!.addEventListener('click', () => {
+      close()
+      // Re-open the PvP lobby queue via the HUD button
+      document.querySelector<HTMLElement>('#hud-pvp')?.click()
+    })
+  }
+  const title = modal.querySelector('#pvp-end-title')!
+  const sub = modal.querySelector('#pvp-end-sub')!
+  const ratingEl = modal.querySelector('#pvp-end-rating')!
+  title.textContent = won ? 'Victory!' : 'Defeat'
+  ;(title as HTMLElement).style.color = won ? '#f5c542' : '#e06c6c'
+  sub.textContent = `vs ${opponentName}`
+  if (ratingBefore !== null && ratingAfter !== null) {
+    const delta = ratingAfter - ratingBefore
+    const sign = delta >= 0 ? '+' : ''
+    const color = delta >= 0 ? '#7dd87d' : '#e06c6c'
+    ratingEl.innerHTML = `Rating: ${ratingBefore} → <b style="color:${color}">${ratingAfter} (${sign}${delta})</b>`
+  } else {
+    ratingEl.textContent = 'Updating rating…'
+  }
+}
+
 function setupTDUI(tdState: TDState): void {
   const overlay = document.createElement('div')
   overlay.id = 'td-overlay'
@@ -298,7 +344,7 @@ export function initializeGame(): GameComposition {
       clearSave()
       location.reload()
     },
-    onPvPMatchStart: (slot, opponentName, client, opponentId, matchId, matchSecret) => {
+    onPvPMatchStart: (slot, opponentName, client, opponentId, matchId, matchSecret, ratingAtStart) => {
       if (!client) {
         console.error('PvP match started without a client')
         return
@@ -315,22 +361,33 @@ export function initializeGame(): GameComposition {
           refreshPauseUi()
           // Persistent profile: record the result (meta-only, never sim).
           try { recordGameResult('pvp', won) } catch { /* profile unavailable */ }
-          // Report result to matchmaker for rating update (fire-and-forget).
-          // Authenticated via the matchId + secret from pairing; the server
-          // applies Elo at most once per match (idempotent).
+          // Report result to matchmaker for rating update, then show the
+          // match-end modal with the rating change.
           const httpUrl = 'https://kingdoms-pvp.stephen-x-hall.workers.dev'
           const myId = client.playerId
           const oppId = opponentId || ''
           const winnerId = won ? myId : oppId
           const loserId = won ? oppId : myId
+          const before = ratingAtStart ?? 1200
+          showMatchEndModal(won, null, null, opponentName)
           if (winnerId && loserId && winnerId !== loserId && matchId && matchSecret) {
+            const ctrl = new AbortController()
+            const timeout = setTimeout(() => ctrl.abort(), 8000)
             fetch(`${httpUrl}/api/match/result`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ matchId, winnerId, loserId, secret: matchSecret }),
-            }).catch(() => { /* offline or server unreachable — rating stays */ })
+              signal: ctrl.signal,
+              body: JSON.stringify({ matchId, winnerId, loserId, secret: matchSecret, forPlayer: myId }),
+            })
+              .then((r) => r.json() as Promise<{ accepted?: boolean; rating?: number }>)
+              .then((data) => {
+                clearTimeout(timeout)
+                if (typeof data.rating === 'number') {
+                  showMatchEndModal(won, before, data.rating, opponentName)
+                }
+              })
+              .catch(() => { clearTimeout(timeout) /* offline — rating stays, modal already shown */ })
           }
-          // TODO: show match-end UI with rating change
           console.log(`Match over: ${won ? 'victory' : 'defeat'}`)
         },
       })
