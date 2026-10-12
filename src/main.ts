@@ -391,11 +391,18 @@ export function initializeGame(): GameComposition {
 
   // Render loop: draw the world for the player, then refresh the HUD.
   let lastFrame = performance.now()
+  let skirmishResultRecorded = false
   const frame = (): void => {
     const now = performance.now()
     const dt = Math.min(0.1, (now - lastFrame) / 1000)
     lastFrame = now
     if (replaying) replayPlayer.update(dt)
+    // Record vs-AI results once per game (PvP records via onMatchEnd).
+    const w = composition.engine.world
+    if (!pvpActive && !replaying && !tdState && !skirmishResultRecorded && w.winner !== -1) {
+      skirmishResultRecorded = true
+      try { recordGameResult('skirmish', w.winner === TEAM_PLAYER) } catch { /* profile unavailable */ }
+    }
     // Update building placement ghost.
     const ghost = composition.inputController.getGhostPosition()
     const pending = composition.inputController.getPendingBuilding()

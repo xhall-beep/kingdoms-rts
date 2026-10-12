@@ -14,6 +14,7 @@ import {
   STORAGE_KEY,
   type Profile,
 } from '../profile/profile.ts'
+import { checkMilestones } from '../profile/milestones.ts'
 
 let profile: Profile | null = null
 let buttonEl: HTMLButtonElement | null = null
@@ -58,8 +59,28 @@ export function ensureProfile(): Profile {
 export function recordGameResult(mode: string, won: boolean): void {
   const p = ensureProfile()
   profile = recordMatchResult(p, mode, won)
+  const { profile: withMilestones, unlocked } = checkMilestones(profile)
+  profile = withMilestones
   saveProfile(profile)
   refreshButton()
+  for (const label of unlocked) showUnlockToast(label)
+}
+
+/** Brief unlock notification banner. Never throws. */
+function showUnlockToast(label: string): void {
+  try {
+    let el = document.querySelector<HTMLElement>('.pp-unlock-toast')
+    if (!el) {
+      el = document.createElement('div')
+      el.className = 'pp-unlock-toast'
+      document.body.appendChild(el)
+    }
+    el.textContent = `🏆 ${label}`
+    el.classList.add('pp-show')
+    window.setTimeout(() => el?.classList.remove('pp-show'), 3500)
+  } catch {
+    /* DOM unavailable — skip */
+  }
 }
 
 /** Update the kingdom name from the profile panel. */
@@ -232,6 +253,15 @@ function injectStyles(): void {
     .pp-dim { color: #9a8f78; }
     .pp-section { color: #c9a227; font-weight: bold; margin: 8px 0 2px; text-transform: uppercase; font-size: 11px; letter-spacing: 1px; }
     .pp-name { background: #1c1812; border: 1px solid #6b5d3a; color: #f0d878; border-radius: 4px; padding: 3px 6px; width: 140px; }
+    .pp-unlock-toast {
+      position: fixed; top: 64px; left: 50%; transform: translateX(-50%) translateY(-12px);
+      background: rgba(20, 16, 8, 0.92); border: 1px solid #c9a227; color: #f0d878;
+      border-radius: 8px; padding: 10px 18px; font-size: 14px; font-weight: bold;
+      z-index: 2000; opacity: 0; pointer-events: none;
+      transition: opacity 0.3s, transform 0.3s;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6);
+    }
+    .pp-unlock-toast.pp-show { opacity: 1; transform: translateX(-50%) translateY(0); }
   `
   document.head.appendChild(style)
 }
