@@ -30,6 +30,14 @@ import { HudImpl } from './ui/hud'
 import { PvPGame } from './net/pvp-game.ts'
 import { loadSprites } from './render/sprites.ts'
 import type { HudCallbacks } from './ui/hud'
+import { ensureProfile, initProfileUi, recordGameResult } from './ui/profile-panel.ts'
+import { initPauseUi, refreshPauseUi, requestPause, requestResume } from './ui/pause-overlay.ts'
+import {
+  saveCampaignSave,
+  loadCampaignSave,
+  clearCampaignSave,
+  hasCampaignSave,
+} from './profile/campaign-save.ts'
 
 export interface GameComposition {
   engine: Engine
@@ -142,6 +150,10 @@ export function initializeGame(): GameComposition {
     throw new Error('Application root #app was not found')
   }
 
+  // Persistent kingdom profile (first run prompts for a kingdom name).
+  ensureProfile()
+  initProfileUi()
+
   app.innerHTML = `
     <main class="game-shell">
       <div id="hud-root"></div>
@@ -195,6 +207,7 @@ export function initializeGame(): GameComposition {
   const initialSave = serializeWorld(composition.engine.world, 0, [])
   let liveSave: ReturnType<typeof serializeWorld> | null = null
   let replaying = false
+  let pvpActive = false
   const replayPlayer = new ReplayPlayer(composition.engine.world)
   composition.renderer.centerOn(-40, -40, 8)
   composition.renderer.resize(canvas.clientWidth || 1280, canvas.clientHeight || 720)
@@ -225,9 +238,9 @@ export function initializeGame(): GameComposition {
       }
     },
     onPause: () => {
-      const engine = composition.engine
-      if (engine.isPaused()) engine.resume()
-      else engine.pause()
+      // Gated: no-op in PvP (lockstep must never pause).
+      if (composition.engine.isPaused()) requestResume()
+      else requestPause()
     },
     onSave: () => {
       writeSave(
@@ -276,11 +289,17 @@ export function initializeGame(): GameComposition {
         return
       }
       console.log(`PvP match starting: slot=${slot}, opponent=${opponentName}`)
+      pvpActive = true
+      refreshPauseUi()
       const pvpGame = new PvPGame({
         composition,
         client,
         slot,
         onMatchEnd: (won) => {
+          pvpActive = false
+          refreshPauseUi()
+          // Persistent profile: record the result (meta-only, never sim).
+          try { recordGameResult('pvp', won) } catch { /* profile unavailable */ }
           // Report result to matchmaker for rating update (fire-and-forget)
           const httpUrl = 'https://kingdoms-pvp.stephen-x-hall.workers.dev'
           const myId = client.playerId
@@ -314,6 +333,50 @@ export function initializeGame(): GameComposition {
   }
   composition.hud.mount(hudRoot, hudCallbacks)
   composition.engine.start()
+
+  // Pause overlay: single-player/campaign only — never PvP (lockstep).
+  initPauseUi({
+    canPause: () => !pvpActive,
+    pause: () => composition.engine.pause(),
+    resume: () => composition.engine.resume(),
+    isPaused: () => composition.engine.isPaused(),
+    saveAndQuit: () => {
+      const world = composition.engine.world
+      saveCampaignSave({
+        mode: gameMode,
+        mission: null,
+        snapshot: JSON.stringify(
+          serializeWorld(world, composition.engine.getSimulationSteps(), commandLog.getCommands()),
+        ),
+      })
+      location.reload()
+    },
+  })
+
+  // "Continue" for a Save & Quit campaign snapshot (one-shot).
+  if (hasCampaignSave()) {
+    const menu = document.querySelector<HTMLElement>('#hud-menu')
+    if (menu) {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'hud-pill hud-mode'
+      btn.textContent = 'Continue'
+      btn.addEventListener('click', () => {
+        const save = loadCampaignSave()
+        if (save) {
+          const { commands } = loadIntoWorld(
+            composition.engine.world,
+            JSON.parse(save.snapshot) as Parameters<typeof loadIntoWorld>[1],
+          )
+          commandLog.fromJSON(commands)
+          clearCampaignSave()
+          btn.remove()
+          menu.hidden = true
+        }
+      })
+      menu.prepend(btn)
+    }
+  }
 
   // Autosave every 30 seconds so a closed tab never loses much.
   setInterval(() => {
