@@ -49,7 +49,7 @@ test('save then load returns the payload with version and savedAt', () => {
   try {
     saveCampaignSave({ mode: 'campaign', mission: 'mission-1', snapshot: 'opaque-data' })
     const loaded = loadCampaignSave()
-    assert(loaded !== null, 'load returns non-null')
+    if (loaded === null) throw new Error('load returns non-null')
     assertEqual(loaded.mode, 'campaign', 'mode preserved')
     assertEqual(loaded.mission, 'mission-1', 'mission preserved')
     assertEqual(loaded.snapshot, 'opaque-data', 'snapshot preserved')
@@ -126,7 +126,7 @@ test('save overwrites previous save', () => {
     saveCampaignSave({ mode: 'campaign', mission: 'm1', snapshot: 'first' })
     saveCampaignSave({ mode: 'campaign', mission: 'm2', snapshot: 'second' })
     const loaded = loadCampaignSave()
-    assert(loaded !== null, 'load returns non-null')
+    if (loaded === null) throw new Error('load returns non-null')
     assertEqual(loaded.mission, 'm2', 'latest mission wins')
     assertEqual(loaded.snapshot, 'second', 'latest snapshot wins')
   } finally {
