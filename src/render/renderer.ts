@@ -49,10 +49,12 @@ export class Renderer {
   private selected = new Set<number>()
   private selectionBox: { x0: number; y0: number; x1: number; y1: number } | null = null
   private frame = 0
-  // Fog is cached to an offscreen canvas (one px per cell) and rebuilt only
-  // every few frames; per-frame we do a single drawImage instead of ~8k rects.
+  // Fog is cached to an offscreen canvas (one px per cell) and rebuilt when
+  // the fog revision changes or every 20 frames (whichever comes first);
+  // per-frame we do a single drawImage instead of ~8k rects.
   private fogCache: (HTMLCanvasElement | null)[] = [null, null]
   private fogCacheFrame: number[] = [-1e9, -1e9]
+  private fogCacheRevision: number[] = [-1, -1]
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
@@ -393,9 +395,14 @@ export class Renderer {
 
   private drawFog(world: World, team: 0 | 1): void {
     const fog = world.fog[team]
-    if (!this.fogCache[team] || this.frame - this.fogCacheFrame[team] > 20) {
+    if (
+      !this.fogCache[team] ||
+      this.fogCacheRevision[team] !== fog.revision ||
+      this.frame - this.fogCacheFrame[team] > 20
+    ) {
       this.fogCache[team] = this.buildFogCache(fog)
       this.fogCacheFrame[team] = this.frame
+      this.fogCacheRevision[team] = fog.revision
     }
     const cache = this.fogCache[team]
     if (!cache) return

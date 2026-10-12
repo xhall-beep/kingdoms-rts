@@ -14,6 +14,17 @@ export class FogGrid {
   private readonly half: number
   private readonly cells: Uint8Array
   private visibleNow: number[] = [] // Indices currently VISIBLE; demoted at the next beginUpdate.
+  /**
+   * Monotonic counter bumped when the rendered fog content changes, i.e. when
+   * the set of VISIBLE cells differs from the previous vision update. Lets the
+   * renderer rebuild its cached fog bitmap exactly when needed instead of on
+   * a fixed frame cadence, so a cache built before the first vision update
+   * can never linger as a stale black screen. Derived from deterministic sim
+   * ops only; not part of the lockstep hash (cells + visibleNow already are).
+   */
+  revision = 0
+  /** Sorted VISIBLE indices at the end of the previous vision update. */
+  private lastVisible: number[] = []
 
   constructor(size = 180, cell = 2) {
     this.cell = cell
@@ -44,6 +55,10 @@ export class FogGrid {
   restoreCells(data: number[]): void {
     const n = Math.min(data.length, this.cells.length)
     for (let i = 0; i < n; i += 1) this.cells[i] = data[i]
+    // Content may have changed behind the renderer's back: force a rebuild
+    // and re-sync the visible-set baseline on the next endUpdate().
+    this.revision += 1
+    this.lastVisible = []
   }
 
   /** Call once per vision update, before any reveal(): last update's visible cells become EXPLORED. */
@@ -74,6 +89,29 @@ export class FogGrid {
   }
 
   /**
+   * Call once per vision update, after all reveal() calls. Bumps `revision`
+   * only when the VISIBLE set actually changed since the previous update —
+   * a stationary scene demotes and re-reveals the same cells every step, and
+   * that must NOT invalidate the renderer's cache.
+   */
+  endUpdate(): void {
+    const sorted = [...this.visibleNow].sort((a, b) => a - b)
+    let changed = sorted.length !== this.lastVisible.length
+    if (!changed) {
+      for (let k = 0; k < sorted.length; k += 1) {
+        if (sorted[k] !== this.lastVisible[k]) {
+          changed = true
+          break
+        }
+      }
+    }
+    if (changed) {
+      this.revision += 1
+      this.lastVisible = sorted
+    }
+  }
+
+  /**
    * Pending demotions (cells VISIBLE this update, demoted next beginUpdate).
    * Part of deterministic sim state: must be snapshotted and hashed for
    * lockstep, otherwise peers diverge on the next vision update.
@@ -84,5 +122,7 @@ export class FogGrid {
 
   restoreVisibleNow(indices: number[]): void {
     this.visibleNow = [...indices]
+    this.revision += 1
+    this.lastVisible = []
   }
 }

@@ -14,5 +14,7 @@ export class VisionSystemImpl implements System {
       const team = world.team[id] as 0 | 1
       world.fog[team].reveal(world.positionX[id], world.positionZ[id], sight)
     }
+    world.fog[0].endUpdate()
+    world.fog[1].endUpdate()
   }
 }
