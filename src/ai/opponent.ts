@@ -339,19 +339,27 @@ export class OpponentAI implements System {
   private defend(world: World, hall: number, soldiers: number[]): boolean {
     const hx = world.positionX[hall]
     const hz = world.positionZ[hall]
+    const hash = world.spatialHash
     let threat = NO_TARGET
     let nearest = this.tuning.defenseRadius
-    for (const id of world.entities.keys()) {
+    let bestSeq = Number.MAX_SAFE_INTEGER
+    // defenseRadius (20-28) fits in the hash 3x3; fall back to full scan if larger.
+    const consider = (id: number) => {
       const kind = world.kind[id]
-      if (kind !== KIND_WORKER && kind !== KIND_MELEE && kind !== KIND_RANGED) continue
-      if (world.team[id] === this.team) continue
-      if (!canSee(world, this.team, id)) continue
+      if (kind !== KIND_WORKER && kind !== KIND_MELEE && kind !== KIND_RANGED) return
+      if (world.team[id] === this.team) return
+      if (!canSee(world, this.team, id)) return
       const d = Math.hypot(world.positionX[id] - hx, world.positionZ[id] - hz)
-      if (d < nearest) {
+      const seq = hash.sequenceOf(id)
+      if (d < nearest || (d === nearest && seq < bestSeq)) {
         nearest = d
+        bestSeq = seq
         threat = id
       }
     }
+    // Spatial hash rect query covers the defense circle exactly (any radius).
+    const r = this.tuning.defenseRadius
+    hash.forEachInRect(hx - r, hz - r, hx + r, hz + r, consider)
     if (threat === NO_TARGET) return false
     const tx = world.positionX[threat]
     const tz = world.positionZ[threat]
