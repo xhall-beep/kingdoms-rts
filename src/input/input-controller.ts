@@ -46,7 +46,7 @@ export class InputControllerImpl implements InputController {
   private world: World | null = null
   private renderer: Renderer | null = null
   private selected: number[] = []
-  private dragStart: { x: number; y: number } | null = null
+  private dragStart: { x: number; y: number; pointerType: string } | null = null
   private panning = false
   private boxSelecting = false
   private pointers = new Map<number, { x: number; y: number }>()
@@ -245,7 +245,7 @@ export class InputControllerImpl implements InputController {
     if (e.button !== 0) return
     this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY })
     if (this.pointers.size === 1) {
-      this.dragStart = { x: e.offsetX, y: e.offsetY }
+      this.dragStart = { x: e.offsetX, y: e.offsetY, pointerType: e.pointerType }
       this.panning = false
       this.boxSelecting = false
     } else {
@@ -281,7 +281,7 @@ export class InputControllerImpl implements InputController {
     const dist = Math.hypot(dx, dy)
 
     // In selection mode a drag becomes a box-select; otherwise it pans.
-    if (this.mode === 'selection' && !this.panning && dist > 10) {
+    if (this.mode === 'selection' && !this.panning && dist > this.dragThreshold()) {
       this.boxSelecting = true
     }
     if (this.boxSelecting) {
@@ -293,11 +293,19 @@ export class InputControllerImpl implements InputController {
       })
       return
     }
-    if (!this.panning && dist > 10) this.panning = true
+    if (!this.panning && dist > this.dragThreshold()) this.panning = true
     if (this.panning) {
       this.renderer.pan(e.movementX, e.movementY)
-      this.dragStart = { x: e.offsetX, y: e.offsetY }
+      this.dragStart = { x: e.offsetX, y: e.offsetY, pointerType: this.dragStart?.pointerType ?? e.pointerType }
     }
+  }
+
+  /**
+   * Tap-vs-drag slop: fingers are imprecise, so touch gets a wider
+   * threshold than mouse before a press becomes a drag/pan/box-select.
+   */
+  private dragThreshold(): number {
+    return this.dragStart?.pointerType === 'touch' ? 16 : 8
   }
 
   private onUp(e: PointerEvent): void {
@@ -401,14 +409,15 @@ export class InputControllerImpl implements InputController {
     const minZ = Math.min(a.z, b.z)
     const maxZ = Math.max(a.z, b.z)
     const inside: number[] = []
-    for (const id of world.entities.keys()) {
-      if (world.team[id] !== this.localTeam) continue
+    // Spatial hash rect query instead of a full entity scan.
+    world.spatialHash.forEachInRect(minX, minZ, maxX, maxZ, (id) => {
+      if (world.team[id] !== this.localTeam) return
       const k = world.kind[id]
-      if (k !== KIND_WORKER && k !== KIND_MELEE && k !== KIND_RANGED) continue
+      if (k !== KIND_WORKER && k !== KIND_MELEE && k !== KIND_RANGED) return
       const x = world.positionX[id]
       const z = world.positionZ[id]
       if (x >= minX && x <= maxX && z >= minZ && z <= maxZ) inside.push(id)
-    }
+    })
     this.selected = inside
     renderer.setSelection(this.selected)
   }
@@ -532,14 +541,15 @@ export class InputControllerImpl implements InputController {
     if (!world || !renderer) return -1
     let best = -1
     let bestDist = PICK_RADIUS_PX / renderer.getZoom()
-    for (const id of world.entities.keys()) {
-      if (!anyTeam && world.team[id] !== this.localTeam) continue
+    // Spatial hash: pick radius is a few world units, well within 3x3 cells.
+    world.spatialHash.forEachNear(x, z, (id) => {
+      if (!anyTeam && world.team[id] !== this.localTeam) return
       const d = Math.hypot(world.positionX[id] - x, world.positionZ[id] - z) - world.radius[id]
       if (d < bestDist) {
         bestDist = d
         best = id
       }
-    }
+    })
     return best
   }
 }

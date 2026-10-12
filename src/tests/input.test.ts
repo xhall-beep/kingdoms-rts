@@ -157,3 +157,33 @@ test('normal mode: stopSelected still mutates immediately', () => {
   input.stopSelected()
   assert(world.moving[workerId] === 0, 'worker stopped immediately in normal mode')
 })
+
+test('boxSelect finds units via spatial hash', () => {
+  const { world, renderer, input } = setup()
+  // Spawn 3 workers in a tight cluster + 1 far away
+  const w1 = world.spawnUnit('worker', TEAM_PLAYER, 10, 10)
+  const w2 = world.spawnUnit('worker', TEAM_PLAYER, 11, 10)
+  const w3 = world.spawnUnit('worker', TEAM_PLAYER, 10, 11)
+  const far = world.spawnUnit('worker', TEAM_PLAYER, 200, 200)
+  world.update(1 / 60) // rebuild spatial hash
+  // Invoke private boxSelect via cast (screen == world in mock renderer)
+  ;(input as unknown as { boxSelect(x0: number, y0: number, x1: number, y1: number): void })
+    .boxSelect(9, 9, 12, 12)
+  const sel = renderer.selection
+  assert(sel.includes(w1.id), 'box selects w1')
+  assert(sel.includes(w2.id), 'box selects w2')
+  assert(sel.includes(w3.id), 'box selects w3')
+  assert(!sel.includes(far.id), 'box excludes far worker')
+})
+
+test('entityAt finds tapped unit via spatial hash', () => {
+  const { world, input } = setup()
+  const w = world.spawnUnit('worker', TEAM_PLAYER, 30, 30)
+  world.update(1 / 60)
+  const hit = (input as unknown as { entityAt(x: number, z: number, anyTeam: boolean): number })
+    .entityAt(30, 30, true)
+  assertEqual(hit, w.id, 'tap hits the worker')
+  const miss = (input as unknown as { entityAt(x: number, z: number, anyTeam: boolean): number })
+    .entityAt(500, 500, true)
+  assertEqual(miss, -1, 'tap on empty ground misses')
+})

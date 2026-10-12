@@ -60,4 +60,19 @@ export class SpatialHash {
       }
     }
   }
+
+  /** Call `cb` for every entity in cells overlapping the world rect. */
+  forEachInRect(x0: number, z0: number, x1: number, z1: number, cb: (id: number) => void): void {
+    const cx0 = Math.floor(Math.min(x0, x1) / this.cellSize)
+    const cx1 = Math.floor(Math.max(x0, x1) / this.cellSize)
+    const cz0 = Math.floor(Math.min(z0, z1) / this.cellSize)
+    const cz1 = Math.floor(Math.max(z0, z1) / this.cellSize)
+    for (let cz = cz0; cz <= cz1; cz++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const cell = this.cells.get(this.key(cx, cz))
+        if (!cell) continue
+        for (const id of cell) cb(id)
+      }
+    }
+  }
 }
