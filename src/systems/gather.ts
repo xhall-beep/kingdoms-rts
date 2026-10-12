@@ -149,7 +149,10 @@ function walkTo(world: World, id: number, target: number, margin: number): void 
   world.moving[id] = 1
 }
 
-/** Nearest stocked node, preferring the worker's harvest assignment (falls back to any). */
+/** Nearest stocked node, preferring the worker's harvest assignment (falls back to any).
+ * Uses the spatial hash with expanding search; crowded nodes (many workers
+ * already targeting) are penalized so workers spread across the resource field
+ * instead of piling onto one tree. Tie-broken by world order for determinism. */
 function nearestNode(world: World, id: number): number {
   const pref = world.harvestKind[id]
   const found = nearestNodeOf(world, id, pref)
@@ -157,23 +160,58 @@ function nearestNode(world: World, id: number): number {
   return nearestNodeOf(world, id, HARVEST_ANY)
 }
 
+/** Crowding penalty in world units per worker already targeting the node. */
+const CROWD_PENALTY = 20
+
+/** Count same-team workers currently targeting (walking to or harvesting) a node. */
+function countClaimants(world: World, nodeId: number, team: 0 | 1): number {
+  let n = 0
+  const nx = world.positionX[nodeId]
+  const nz = world.positionZ[nodeId]
+  world.spatialHash.forEachNear(nx, nz, (wid) => {
+    if (world.kind[wid] !== KIND_WORKER) return
+    if (world.team[wid] !== team) return
+    if (world.targetId[wid] !== nodeId) return
+    const st = world.state[wid]
+    if (st === STATE_GATHER || st === STATE_IDLE || st === STATE_MOVE) n++
+  })
+  return n
+}
+
 function nearestNodeOf(world: World, id: number, want: number): number {
   const px = world.positionX[id]
   const pz = world.positionZ[id]
+  const team = world.team[id] as 0 | 1
+  const hash = world.spatialHash
+
   let best = NO_TARGET
-  let bestDist = Infinity
-  for (const other of world.entities.keys()) {
+  let bestScore = Infinity
+  let bestSeq = Number.MAX_SAFE_INTEGER
+
+  const consider = (other: number) => {
     const kind = world.kind[other]
-    if (want === HARVEST_WOOD && kind !== KIND_TREE) continue
-    if (want === HARVEST_GOLD && kind !== KIND_GOLDMINE) continue
-    if (want === HARVEST_ANY && kind !== KIND_TREE && kind !== KIND_GOLDMINE) continue
-    if (world.amount[other] <= 0) continue
+    if (want === HARVEST_WOOD && kind !== KIND_TREE) return
+    if (want === HARVEST_GOLD && kind !== KIND_GOLDMINE) return
+    if (want === HARVEST_ANY && kind !== KIND_TREE && kind !== KIND_GOLDMINE) return
+    if (world.amount[other] <= 0) return
     const d = Math.hypot(world.positionX[other] - px, world.positionZ[other] - pz)
-    if (d < bestDist) {
-      bestDist = d
+    const crowded = countClaimants(world, other, team)
+    const score = d + crowded * CROWD_PENALTY
+    const seq = hash.sequenceOf(other)
+    if (score < bestScore || (score === bestScore && seq < bestSeq)) {
+      bestScore = score
+      bestSeq = seq
       best = other
     }
   }
+
+  // Expanding rect search: 72, 144, 288 world units. Falls back to full scan
+  // only if no node exists within 288 (larger than any map).
+  for (const half of [36, 72, 144]) {
+    hash.forEachInRect(px - half, pz - half, px + half, pz + half, consider)
+    if (best !== NO_TARGET) return best
+  }
+  for (const other of world.entities.keys()) consider(other)
   return best
 }
 
@@ -182,18 +220,26 @@ function nearestBuiltHall(world: World, id: number): number {
   const team = world.team[id]
   const px = world.positionX[id]
   const pz = world.positionZ[id]
+  const hash = world.spatialHash
   let best = NO_TARGET
   let bestDist = Infinity
-  for (const other of world.entities.keys()) {
-    if (world.kind[other] !== KIND_HALL) continue
-    if (world.team[other] !== team) continue
-    if (world.buildProgress[other] < world.buildTotal[other]) continue
+  let bestSeq = Number.MAX_SAFE_INTEGER
+  const consider = (other: number) => {
+    if (world.kind[other] !== KIND_HALL) return
+    if (world.team[other] !== team) return
+    if (world.buildProgress[other] < world.buildTotal[other]) return
     const d = Math.hypot(world.positionX[other] - px, world.positionZ[other] - pz)
-    if (d < bestDist) {
+    const seq = hash.sequenceOf(other)
+    if (d < bestDist || (d === bestDist && seq < bestSeq)) {
       bestDist = d
+      bestSeq = seq
       best = other
     }
   }
+  // Halls are few; a single 3x3 covers the base area. Fall back to full scan.
+  hash.forEachNear(px, pz, consider)
+  if (best !== NO_TARGET) return best
+  for (const other of world.entities.keys()) consider(other)
   return best
 }
 

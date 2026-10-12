@@ -244,3 +244,26 @@ test('destroying unfinished farm loses no supply', () => {
   world.removeEntityById(placed.id)
   assertEqual(world.supplyCap[TEAM_PLAYER], capBefore, 'no supply lost for unfinished farm')
 })
+
+
+test('workers spread across resource nodes (no thundering herd)', () => {
+  const world = makeWorld()
+  // Clear the seeded scenario; build a controlled test: 2 trees side by side,
+  // 4 workers equidistant. They should split, not all pile onto one tree.
+  for (const id of [...world.entities.keys()]) world.removeEntityById(id)
+  world.spawnBuilding('hall', TEAM_PLAYER, 0, 0, true)
+  world.spawnResource('wood', 20, 0)
+  world.spawnResource('wood', 22, 0)
+  const workers: number[] = []
+  for (let i = 0; i < 4; i++) {
+    workers.push(world.spawnUnit('worker', TEAM_PLAYER, -10, i * 2).id)
+  }
+  // Run until all workers have picked a node
+  for (let i = 0; i < 30; i++) world.update(1 / 60)
+  const targets = new Set<number>()
+  for (const wid of workers) {
+    const t = world.targetId[wid]
+    if (t !== -1) targets.add(t)
+  }
+  assert(targets.size > 1, `workers split across nodes (targets: ${[...targets]})`)
+})
