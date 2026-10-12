@@ -12,7 +12,7 @@ export const BUILDING_TYPE_BY_KIND: Record<number, BuildingType> = {
 }
 
 /** Buildings the player is allowed to place. Halls are scenario/AI only. */
-export const PLAYER_BUILDABLE: BuildingType[] = ['farm', 'barracks', 'archery']
+export const PLAYER_BUILDABLE: BuildingType[] = ['farm', 'barracks', 'archery', 'tower']
 
 /**
  * Shared construction rules used by both the AI and player input.

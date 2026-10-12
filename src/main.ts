@@ -1,6 +1,6 @@
 import { OpponentAI } from './ai/opponent'
 import { Engine } from './core/Engine'
-import { TEAM_ENEMY, TEAM_PLAYER } from './core/World'
+import { TEAM_ENEMY, TEAM_PLAYER, type World } from './core/World'
 import { InputControllerImpl } from './input/input-controller'
 import { Renderer } from './render/renderer'
 import { seedScenario } from './scenario'
@@ -53,10 +53,18 @@ export interface GameComposition {
     victory: VictorySystemImpl
     opponent: OpponentAI
   }
+  /** Mutable per-tick hook for mode-specific updates (e.g. Tower Defense). */
+  tdTick: { fn: ((w: World) => void) | null }
 }
 
 export function composeGame(canvas: HTMLCanvasElement): GameComposition {
-  const engine = new Engine()
+  // Mutable hook so TD mode can attach its per-tick update after the engine exists.
+  const tdTick: { fn: ((w: World) => void) | null } = { fn: null }
+  const engine = new Engine({
+    stepHandler: () => {
+      tdTick.fn?.(engine.world)
+    },
+  })
   const renderer = new Renderer(canvas)
   const inputController = new InputControllerImpl()
   const hud = new HudImpl()
@@ -78,7 +86,7 @@ export function composeGame(canvas: HTMLCanvasElement): GameComposition {
   engine.world.registerSystem(systems.opponent)
   engine.world.registerSystem(systems.movement)
   inputController.attach(canvas, engine.world, renderer)
-  return { engine, renderer, inputController, hud, systems }
+  return { engine, renderer, inputController, hud, systems, tdTick }
 }
 
 /**
@@ -190,11 +198,18 @@ export function initializeGame(): GameComposition {
   const gameMode = localStorage.getItem('krts-game-mode') || 'rts'
   let tdState: TDState | null = null
   if (gameMode === 'tower-defense') {
-    // Tower Defense: no opponent AI, custom setup
+    // Tower Defense: no opponent AI, no standard victory check (TD has its own
+    // win/lose), custom setup. TD update runs on the fixed sim tick.
     const world = composition.engine.world
-    const idx = world.systems.indexOf(composition.systems.opponent)
-    if (idx !== -1) world.systems.splice(idx, 1)
+    const oppIdx = world.systems.indexOf(composition.systems.opponent)
+    if (oppIdx !== -1) world.systems.splice(oppIdx, 1)
+    const vicIdx = world.systems.indexOf(composition.systems.victory)
+    if (vicIdx !== -1) world.systems.splice(vicIdx, 1)
     tdState = setupTowerDefense(world, Date.now() % 100000)
+    const td = tdState
+    composition.tdTick.fn = (w) => {
+      updateTowerDefense(w, td)
+    }
     setupTDUI(tdState)
   } else {
     seedScenario(composition.engine.world, playerFaction, enemyFaction)
@@ -413,10 +428,9 @@ export function initializeGame(): GameComposition {
     }
     composition.renderer.render(composition.engine.world, TEAM_PLAYER)
     composition.hud.update(composition.engine.world, composition.inputController.getSelected())
-    // Tower Defense: update wave state and banner
+    // Tower Defense: banner is UI-only; sim update runs on the fixed tick.
     if (tdState) {
       ;(window as any).__gameComp = composition
-      updateTowerDefense(composition.engine.world, tdState)
       updateTDBanner()
     }
     requestAnimationFrame(frame)
