@@ -28,6 +28,10 @@ import { canSee, isExplored } from '../world/visibility.ts'
 
 const WOOD_SHARE = 0.4 // Fraction of workers assigned to wood (the rest mine gold).
 
+const FLEE_TRIGGER = 32 // A worker evacuates when a visible enemy is this close.
+const FLEE_STANDOFF = 16 // Rally distance behind the hall, away from the threat.
+const MAP_CLAMP = 56 // Keep flee destinations on the playable map.
+
 export type AIDifficulty = 'easy' | 'normal' | 'hard'
 
 /** Resolved decision parameters: difficulty base values plus personality mods. */
@@ -91,6 +95,9 @@ export class OpponentAI implements System {
   private gameTime = 0 // seconds elapsed
   private scoutId: number | null = null
   private scoutTargets: { x: number; z: number }[] = []
+  /** Workers currently evacuated from a raid. They are not reassigned to
+   * gather or construction duty until the threat is gone. */
+  private readonly fleeing = new Set<number>()
 
   constructor(team: 0 | 1, difficulty: AIDifficulty = 'normal', personality: AIPersonality = 'expander') {
     this.team = team
@@ -127,6 +134,7 @@ export class OpponentAI implements System {
     const soldiers = [...unitsOf(world, team, KIND_MELEE), ...unitsOf(world, team, KIND_RANGED)]
 
     this.trainWorkers(world, hall, workers.length)
+    this.evacuateWorkers(world, hall, workers)
     this.assignWorkers(world, workers)
     this.scout(world, hall, workers)
     this.expandBase(world, hall, workers)
@@ -146,6 +154,87 @@ export class OpponentAI implements System {
    * them to go IDLE first loses the race to the gather system every tick and
    * leaves the economy hypersensitive to spawn geometry.
    */
+  /**
+   * Worker micro: when a visible enemy is inside the base, workers near the
+   * threat evacuate behind the hall instead of harvesting through the raid.
+   * Evacuated workers stay out of the gather rotation (and off construction
+   * duty) until the threat is gone, then the normal rotation re-arms them.
+   * Deterministic: same visible state always yields the same orders.
+   */
+  private evacuateWorkers(world: World, hall: number, workers: number[]): void {
+    // Prune workers that died while evacuated.
+    for (const id of this.fleeing) {
+      if (!world.entities.has(id)) this.fleeing.delete(id)
+    }
+    const threat = this.nearestVisibleThreat(world, hall)
+    if (threat === NO_TARGET) {
+      this.fleeing.clear()
+      return
+    }
+    const dest = this.fleeDestination(world, hall, threat)
+    for (const id of workers) {
+      if (id === this.scoutId) continue // The scout keeps its mission.
+      if (!world.entities.has(id) || world.health[id] <= 0) continue
+      const d = Math.hypot(
+        world.positionX[id] - world.positionX[threat],
+        world.positionZ[id] - world.positionZ[threat],
+      )
+      if (d < FLEE_TRIGGER) {
+        orderMove(world, id, dest.x, dest.z)
+        this.fleeing.add(id)
+      }
+    }
+  }
+
+  /** Rally point: behind the hall on the far side of the threat. */
+  private fleeDestination(world: World, hall: number, threat: number): { x: number; z: number } {
+    const hx = world.positionX[hall]
+    const hz = world.positionZ[hall]
+    let dx = hx - world.positionX[threat]
+    let dz = hz - world.positionZ[threat]
+    const d = Math.hypot(dx, dz)
+    if (d < 1e-6) {
+      dx = 1
+      dz = 0
+    } else {
+      dx /= d
+      dz /= d
+    }
+    const clamp = (v: number): number => Math.max(-MAP_CLAMP, Math.min(MAP_CLAMP, v))
+    return { x: clamp(hx + dx * FLEE_STANDOFF), z: clamp(hz + dz * FLEE_STANDOFF) }
+  }
+
+  /**
+   * Nearest enemy unit the AI can currently see inside its defense radius.
+   * Deterministic: ties break on the spatial hash sequence number.
+   */
+  private nearestVisibleThreat(world: World, hall: number): number {
+    const hx = world.positionX[hall]
+    const hz = world.positionZ[hall]
+    const hash = world.spatialHash
+    let threat = NO_TARGET
+    let nearest = this.tuning.defenseRadius
+    let bestSeq = Number.MAX_SAFE_INTEGER
+    // defenseRadius (20-28) fits in the hash 3x3; fall back to full scan if larger.
+    const consider = (id: number) => {
+      const kind = world.kind[id]
+      if (kind !== KIND_WORKER && kind !== KIND_MELEE && kind !== KIND_RANGED) return
+      if (world.team[id] === this.team) return
+      if (!canSee(world, this.team, id)) return
+      const d = Math.hypot(world.positionX[id] - hx, world.positionZ[id] - hz)
+      const seq = hash.sequenceOf(id)
+      if (d < nearest || (d === nearest && seq < bestSeq)) {
+        nearest = d
+        bestSeq = seq
+        threat = id
+      }
+    }
+    // Spatial hash rect query covers the defense circle exactly (any radius).
+    const r = this.tuning.defenseRadius
+    hash.forEachInRect(hx - r, hz - r, hx + r, hz + r, consider)
+    return threat
+  }
+
   private assignWorkers(world: World, workers: number[]): void {
     let onWood = 0
     for (const id of workers) {
@@ -153,6 +242,7 @@ export class OpponentAI implements System {
     }
     const woodWanted = Math.ceil(workers.length * WOOD_SHARE)
     for (const id of workers) {
+      if (this.fleeing.has(id)) continue // Evacuated: stays out until the raid ends.
       const needsAssignment =
         world.state[id] === STATE_IDLE || world.harvestKind[id] === HARVEST_ANY
       if (!needsAssignment) continue
@@ -200,7 +290,7 @@ export class OpponentAI implements System {
       // Send a worker to build a hall near this gold mine
       const gx = world.positionX[best]
       const gz = world.positionZ[best]
-      const worker = workers.find((id) => world.state[id] === STATE_IDLE)
+      const worker = workers.find((id) => world.state[id] === STATE_IDLE && !this.fleeing.has(id))
       if (worker !== undefined) {
         const placed = placeStructure(world, this.team, 'hall', gx + 10, gz + 10)
         if (placed.ok) {
@@ -251,15 +341,19 @@ export class OpponentAI implements System {
       // gather system grabs idle workers before our think tick, so waiting
       // for an idle worker means scouting never happens. An explicit move
       // order sets the worker to HARVEST_OFF; it goes back to work when done.
+      // Evacuated workers stay at their rally point.
+      const candidates = workers.filter((id) => !this.fleeing.has(id))
       const scout =
-        workers.find((id) => world.state[id] === STATE_IDLE) ??
-        workers.find((id) => world.carryAmount[id] === 0) ??
-        workers[0]
-      if (scout !== undefined) {
-        this.scoutId = scout
-        const t = this.scoutTargets.shift()!
-        orderMove(world, scout, t.x, t.z)
+        candidates.find((id) => world.state[id] === STATE_IDLE) ??
+        candidates.find((id) => world.carryAmount[id] === 0) ??
+        candidates[0]
+      if (scout === undefined) {
+        this.scoutTargets = [] // Everyone is evacuating; retry next think.
+        return
       }
+      this.scoutId = scout
+      const t = this.scoutTargets.shift()!
+      orderMove(world, scout, t.x, t.z)
     }
   }
 
@@ -309,8 +403,8 @@ export class OpponentAI implements System {
       )
       if (placed.ok) {
         const builder =
-          workers.find((id) => world.state[id] === STATE_IDLE) ??
-          workers.find((id) => world.carryAmount[id] === 0)
+          workers.find((id) => world.state[id] === STATE_IDLE && !this.fleeing.has(id)) ??
+          workers.find((id) => world.carryAmount[id] === 0 && !this.fleeing.has(id))
         if (builder !== undefined) orderBuild(world, builder, placed.id)
         return false
       }
@@ -337,29 +431,7 @@ export class OpponentAI implements System {
 
   /** Idle soldiers converge on any visible enemy near the hall. Returns true if defending. */
   private defend(world: World, hall: number, soldiers: number[]): boolean {
-    const hx = world.positionX[hall]
-    const hz = world.positionZ[hall]
-    const hash = world.spatialHash
-    let threat = NO_TARGET
-    let nearest = this.tuning.defenseRadius
-    let bestSeq = Number.MAX_SAFE_INTEGER
-    // defenseRadius (20-28) fits in the hash 3x3; fall back to full scan if larger.
-    const consider = (id: number) => {
-      const kind = world.kind[id]
-      if (kind !== KIND_WORKER && kind !== KIND_MELEE && kind !== KIND_RANGED) return
-      if (world.team[id] === this.team) return
-      if (!canSee(world, this.team, id)) return
-      const d = Math.hypot(world.positionX[id] - hx, world.positionZ[id] - hz)
-      const seq = hash.sequenceOf(id)
-      if (d < nearest || (d === nearest && seq < bestSeq)) {
-        nearest = d
-        bestSeq = seq
-        threat = id
-      }
-    }
-    // Spatial hash rect query covers the defense circle exactly (any radius).
-    const r = this.tuning.defenseRadius
-    hash.forEachInRect(hx - r, hz - r, hx + r, hz + r, consider)
+    const threat = this.nearestVisibleThreat(world, hall)
     if (threat === NO_TARGET) return false
     const tx = world.positionX[threat]
     const tz = world.positionZ[threat]

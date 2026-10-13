@@ -3,10 +3,10 @@
  * personalities actually change AI decisions (resolved tuning + behavior).
  * Headless and deterministic.
  */
-import { World, KIND_HALL, STATE_ATTACKMOVE, TEAM_ENEMY, TEAM_PLAYER } from '../core/World.ts'
+import { World, HARVEST_OFF, KIND_HALL, KIND_WORKER, STATE_ATTACKMOVE, STATE_MOVE, TEAM_ENEMY, TEAM_PLAYER } from '../core/World.ts'
 import { OpponentAI, type AIDifficulty, type AIPersonality } from '../ai/opponent.ts'
 import { suite, test, assert, assertEqual } from './harness.ts'
-import { makeWorld } from './setup.ts'
+import { makeWorld, stepWorld } from './setup.ts'
 
 function tuning(diff: AIDifficulty, pers: AIPersonality) {
   return new OpponentAI(TEAM_ENEMY, diff, pers).decisionTuning()
@@ -112,4 +112,88 @@ test('expander attacks once the army is big enough', () => {
   new OpponentAI(TEAM_ENEMY, 'normal', 'expander').update(world, 5)
   const n = attackersOf(world, soldiers)
   assert(n >= 6, `expander should attack with 8 soldiers, sent ${n}`)
+})
+
+suite('ai-micro: worker evacuation')
+
+interface RaidSetup {
+  world: World
+  ai: OpponentAI
+  workers: number[]
+  raiders: number[]
+  hx: number
+  hz: number
+}
+
+/** AI base with two player raiders inside its defense radius. */
+function raidSetup(): RaidSetup {
+  const world = makeWorld()
+  let hx = 0
+  let hz = 0
+  const workers: number[] = []
+  for (const id of world.entities.keys()) {
+    if (world.kind[id] === KIND_HALL && world.team[id] === TEAM_ENEMY) {
+      hx = world.positionX[id]
+      hz = world.positionZ[id]
+    }
+    if (world.kind[id] === KIND_WORKER && world.team[id] === TEAM_ENEMY) workers.push(id)
+  }
+  const ai = new OpponentAI(TEAM_ENEMY, 'normal', 'expander')
+  const raiders = [
+    world.spawnUnit('melee', TEAM_PLAYER, hx - 10, hz).id,
+    world.spawnUnit('melee', TEAM_PLAYER, hx - 12, hz + 4).id,
+  ]
+  // Run the world systems so the spatial hash is populated and the vision
+  // system reveals the AI's own base (as it does every frame in-game).
+  stepWorld(world, 5)
+  return { world, ai, workers, raiders, hx, hz }
+}
+
+test('workers flee when raiders enter the base', () => {
+  const { world, ai, workers } = raidSetup()
+  ai.update(world, 2) // normal thinkEvery = 1.0s, so the think tick fires
+  let fled = 0
+  for (const w of workers) {
+    if (world.state[w] === STATE_MOVE && world.harvestKind[w] === HARVEST_OFF) fled += 1
+  }
+  assertEqual(fled, workers.length, `all ${workers.length} workers should flee, ${fled} fled`)
+})
+
+test('evacuated workers rally behind the hall, away from the threat', () => {
+  const { world, ai, workers, hx } = raidSetup()
+  ai.update(world, 2)
+  // The nearest raider sits at (hx - 10, hz): the rally point must be past the hall.
+  for (const w of workers) {
+    assert(
+      world.targetX[w] > hx,
+      `worker should flee away from the raiders (targetX ${world.targetX[w]} <= hall ${hx})`,
+    )
+  }
+})
+
+test('workers resume harvesting once the raid is over', () => {
+  const { world, ai, workers, raiders } = raidSetup()
+  ai.update(world, 2)
+  for (const r of raiders) world.removeEntityById(r) // Raid over.
+  // Let the AI think and the workers walk back. The scout may take one worker.
+  for (let i = 0; i < 30; i += 1) {
+    ai.update(world, 1)
+    stepWorld(world, 60)
+  }
+  let rearmed = 0
+  for (const w of workers) {
+    if (world.harvestKind[w] !== HARVEST_OFF) rearmed += 1
+  }
+  assert(rearmed >= 3, `at least 3 workers should be back on resources, ${rearmed} rearmed`)
+})
+
+test('flee orders are deterministic', () => {
+  const run = (): string => {
+    const { world, ai, workers } = raidSetup()
+    ai.update(world, 2)
+    return workers
+      .map((w) => `${world.targetX[w].toFixed(3)},${world.targetZ[w].toFixed(3)}`)
+      .join('|')
+  }
+  assertEqual(run(), run(), 'the same raid must produce identical flee orders')
 })
