@@ -105,6 +105,12 @@ export class PvPGame {
         this.setStatus(`Connection lost — retrying (${attempt})…`),
       onRejoined: () => this.setStatus('Reconnected — resyncing…'),
       onResync: (turn, data) => this.handleResync(turn, data),
+      onReconnectFailed: () => {
+        // Grace expired with no rejoin: the worker forfeited us and the
+        // survivor was awarded the win. End locally as a loss.
+        this.setStatus('Could not reconnect — match over.')
+        this.endMatch(false)
+      },
     })
 
     // Freeze the real-time engine loop: in PvP the world must advance ONLY

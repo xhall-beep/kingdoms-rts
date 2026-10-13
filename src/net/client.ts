@@ -28,6 +28,8 @@ export interface PvPClientConfig {
   onReconnecting?: (attempt: number) => void
   /** Our rejoin succeeded (worker sent 'rejoined'). */
   onRejoined?: () => void
+  /** Rejoin attempts exhausted (past the worker's grace window). */
+  onReconnectFailed?: () => void
   /** Snapshot from the opponent after our rejoin: authoritative state. */
   onResync?: (turn: number, data: Uint8Array) => void
   onPlayerJoined: (count: number) => void
@@ -55,7 +57,10 @@ export class PvPClient {
   private autoReconnect = false
   private reconnectTimer: number | null = null
   private reconnectAttempt = 0
+  private reconnectStartMs = 0
   private intentionalClose = false
+/** Give up rejoining after this long (worker's grace is 60s + alarm lag). */
+private static readonly RECONNECT_GIVE_UP_MS = 75_000
 
   constructor(config: PvPClientConfig) {
     this.config = config
@@ -109,9 +114,16 @@ export class PvPClient {
   private startReconnectLoop(): void {
     if (this.reconnectTimer !== null) return
     this.reconnectAttempt = 0
+    this.reconnectStartMs = Date.now()
     const tryReconnect = (): void => {
       if (!this.autoReconnect || !this.roomCode) {
         this.stopReconnectLoop()
+        return
+      }
+      // Past the worker's grace window: the slot is gone, stop retrying.
+      if (Date.now() - this.reconnectStartMs > PvPClient.RECONNECT_GIVE_UP_MS) {
+        this.stopReconnectLoop()
+        this.config.onReconnectFailed?.()
         return
       }
       this.reconnectAttempt += 1

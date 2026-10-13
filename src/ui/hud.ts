@@ -215,9 +215,9 @@ export class HudImpl implements Hud {
     wire('#hud-save', () => this.callbacks?.onSave())
     wire('#hud-load', () => this.callbacks?.onLoad())
     wire('#hud-surrender', () => {
-      if (confirm('Surrender this match? It will count as a loss.')) {
+      showConfirmModal('Surrender this match? It will count as a loss.', () => {
         this.callbacks?.onSurrender?.()
-      }
+      })
     })
     const speedRow = parent.querySelector<HTMLElement>('#hud-speed')
     wire('#hud-newgame', () => this.callbacks?.onNewGame())
@@ -377,4 +377,33 @@ export class HudImpl implements Hud {
     el.textContent = world.winner === 0 ? 'Victory!' : 'Defeat'
     el.className = 'hud-banner ' + (world.winner === 0 ? 'hud-win' : 'hud-lose')
   }
+}
+
+/**
+ * Non-blocking confirm dialog. The native confirm() halts the JS thread,
+ * which would stall our lockstep turn pump (and freeze the opponent's
+ * screen) for as long as the dialog sits open. This modal lets the
+ * simulation keep running underneath.
+ */
+export function showConfirmModal(message: string, onConfirm: () => void): void {
+  document.getElementById('hud-confirm-modal')?.remove()
+  const modal = document.createElement('div')
+  modal.id = 'hud-confirm-modal'
+  modal.style.cssText =
+    'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:2000;'
+  modal.innerHTML = `
+    <div style="background:#1a2b2b;color:#fff;padding:28px 36px;border-radius:12px;text-align:center;max-width:320px;">
+      <div style="font-size:16px;margin-bottom:24px;">${message}</div>
+      <div>
+        <button id="hud-confirm-yes" style="padding:10px 24px;font-size:16px;margin-right:8px;cursor:pointer;background:#b45309;color:#fff;border:none;border-radius:8px;">Surrender</button>
+        <button id="hud-confirm-no" style="padding:10px 24px;font-size:16px;cursor:pointer;">Cancel</button>
+      </div>
+    </div>`
+  document.body.appendChild(modal)
+  const close = () => modal.remove()
+  modal.querySelector('#hud-confirm-no')!.addEventListener('click', close)
+  modal.querySelector('#hud-confirm-yes')!.addEventListener('click', () => {
+    close()
+    onConfirm()
+  })
 }
