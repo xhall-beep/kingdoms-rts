@@ -158,6 +158,7 @@ const CmdTag = {
   Patrol: 7,
   Stop: 8,
   Hold: 9,
+  Surrender: 10,
 } as const
 type CmdTag = (typeof CmdTag)[keyof typeof CmdTag]
 
@@ -187,6 +188,8 @@ function cmdSize(cmd: Command): number {
       return 1 + varintSize(cmd.buildingId) + 1
     case 'rally':
       return 1 + varintSize(cmd.buildingId) + 4 + 4
+    case 'surrender':
+      return 1 + 1
   }
 }
 
@@ -265,6 +268,10 @@ function writeCommand(view: DataView, o: number, cmd: Command): number {
       view.setUint8(o++, CmdTag.Hold)
       o = writeIds(view, o, cmd.unitIds)
       return o
+    case 'surrender':
+      view.setUint8(o++, CmdTag.Surrender)
+      view.setUint8(o++, cmd.player)
+      return o
   }
 }
 
@@ -325,6 +332,10 @@ function readCommand(view: DataView, o: number): { cmd: Command; next: number } 
     case CmdTag.Hold: {
       const u = readIds(view, o); o = u.next
       return { cmd: { type: 'hold', step: 0, unitIds: u.ids }, next: o }
+    }
+    case CmdTag.Surrender: {
+      const p = view.getUint8(o++)
+      return { cmd: { type: 'surrender', step: 0, player: (p === 1 ? 1 : 0) as 0 | 1 }, next: o }
     }
     default:
       throw new Error(`unknown command tag ${tag}`)

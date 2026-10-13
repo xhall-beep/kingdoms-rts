@@ -411,6 +411,28 @@ code {
   display: none;
 }
 
+/* PvP match-phase status (reconnect grace / resync). Smaller than the
+ * victory banner and pinned to the top so it never fights it. */
+.hud-pvp-status {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 10px;
+  background: rgba(20, 24, 34, 0.92);
+  color: #fde68a;
+  border: 1px solid #b45309;
+  pointer-events: none;
+  z-index: 30;
+}
+
+.hud-pvp-status[hidden] {
+  display: none;
+}
+
 .hud-win {
   background: rgba(20, 80, 40, 0.95);
   color: #d1fae5;

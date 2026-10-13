@@ -139,6 +139,25 @@ export class LockstepPeer {
     this.link.send(msg, nowMs)
   }
 
+  /**
+   * Re-send already-sent bundles for turns after `fromTurn` (reconnect
+   * resync). The peer's inbox is first-write-wins, so duplicates are
+   * harmless; this repairs bundles lost while a socket was down.
+   */
+  resendUnacked(fromTurn: number, nowMs: number): void {
+    for (const [turn, bundle] of this.sentBundles) {
+      if (turn <= fromTurn) continue
+      const msg = encodeMessage({
+        kind: MsgKind.Input,
+        turn,
+        player: this.playerIndex,
+        commands: bundle,
+      })
+      this.bytesOut += msg.byteLength
+      this.link.send(msg, nowMs)
+    }
+  }
+
   private handleMessage(data: Uint8Array): void {
     this.bytesIn += data.byteLength
     const msg = decodeMessage(data)

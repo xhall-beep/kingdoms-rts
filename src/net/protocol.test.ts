@@ -100,6 +100,7 @@ const sampleCommands: Command[] = [
   { type: 'patrol', step: 0, unitIds: [21], x: 1.5, z: 2.5 },
   { type: 'stop', step: 0, unitIds: [21, 22] },
   { type: 'hold', step: 0, unitIds: [23] },
+  { type: 'surrender', step: 0, player: 1 },
 ]
 
 for (const cmd of sampleCommands) {

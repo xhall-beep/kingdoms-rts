@@ -15,6 +15,7 @@ import type { TurnCallbacks } from './turn.ts'
 import { WsLink } from './ws-link.ts'
 import { applyCommand } from './apply.ts'
 import { hashWorldState } from './hash.ts'
+import { snapshotWorld, restoreWorld } from './snapshot.ts'
 import { STEPS_PER_TURN } from './protocol.ts'
 import { setStatsMode } from '../data/stats.ts'
 import { PvPClient } from './client.ts'
@@ -91,6 +92,21 @@ export class PvPGame {
     this.client.setTurnBundleHandler((bundle) => this.link.receive(bundle))
     this.client.setHashHandler((msg) => this.link.receive(msg))
 
+    // Reconnect grace: if our socket drops mid-match, keep rejoining the
+    // same room with the same playerId while the worker holds our slot
+    // (~60s). Lobby phase stays manual — this only arms once live.
+    this.client.setAutoReconnect(true)
+    this.client.setCallbacks({
+      onOpponentDisconnected: (graceSec) =>
+        this.setStatus(`Opponent disconnected — ${graceSec}s to reconnect…`),
+      onOpponentReconnected: () => this.handleOpponentReconnected(),
+      onOpponentForfeited: () => this.handleOpponentForfeited(),
+      onReconnecting: (attempt) =>
+        this.setStatus(`Connection lost — retrying (${attempt})…`),
+      onRejoined: () => this.setStatus('Reconnected — resyncing…'),
+      onResync: (turn, data) => this.handleResync(turn, data),
+    })
+
     // Freeze the real-time engine loop: in PvP the world must advance ONLY
     // through lockstep turns, or the two clients diverge (double-advance).
     // Rendering continues on its own rAF loop; only sim steps are frozen.
@@ -123,6 +139,12 @@ export class PvPGame {
     }, 250) // 1000ms / 4 = 250ms per turn
   }
 
+  /** Forfeit the match: sends a surrender command through lockstep so both simulations end identically. */
+  surrender(): void {
+    if (!this.running || this.matchEnded) return
+    this.peer.queueCommand({ type: 'surrender', step: 0, player: this.peer.playerIndex === 1 ? 1 : 0 })
+  }
+
   /** Stop the PvP match. */
   stop(): void {
     this.running = false
@@ -130,6 +152,9 @@ export class PvPGame {
       clearInterval(this.turnTimer)
       this.turnTimer = null
     }
+    // The room is done — no more auto-rejoin, no stale status line.
+    this.client.setAutoReconnect(false)
+    this.setStatus(null)
     // Hand world-stepping back to the Engine.
     this.composition.engine.resume()
     // Restore base stats for single-player / campaign.
@@ -157,14 +182,61 @@ export class PvPGame {
       world.update(1 / 60)
     }
 
-    // Check for match end (victory system sets world.winner)
+    // Check for match end (victory system sets world.winner; surrender
+    // sets it via the lockstep surrender command).
     if (!this.matchEnded && world.winner !== -1) {
-      this.matchEnded = true
-      const won = world.winner === this.peer.playerIndex
-      console.log(`PvP match ended: ${won ? 'won' : 'lost'}`)
-      this.stop()
-      this.onMatchEnd?.(won)
+      this.endMatch(world.winner === this.peer.playerIndex)
     }
+  }
+
+  /** Shared match-end path: natural victory, surrender, or forfeit. */
+  private endMatch(won: boolean): void {
+    if (this.matchEnded) return
+    this.matchEnded = true
+    console.log(`PvP match ended: ${won ? 'won' : 'lost'}`)
+    this.stop()
+    this.onMatchEnd?.(won)
+  }
+
+  private setStatus(msg: string | null): void {
+    this.composition.hud.setPvpStatus(msg)
+  }
+
+  /**
+   * We are the survivor: the opponent just rejoined. Ship an authoritative
+   * snapshot of our world plus our recent bundles so the rejoiner adopts
+   * our state and catches up. Inbox is first-write-wins, so re-sends are
+   * harmless even if nothing was lost.
+   */
+  private handleOpponentReconnected(): void {
+    const world = this.composition.engine.world
+    const turn = this.peer.getCurrentTurn()
+    this.client.sendResync(turn, snapshotWorld(world))
+    this.peer.resendUnacked(turn - 8, Date.now())
+    this.setStatus(null)
+  }
+
+  /**
+   * Grace expired with no rejoin: claim the win. The opponent is gone, so
+   * no lockstep command is needed — endMatch reuses the normal path, and
+   * the guard keeps it idempotent if a natural result already landed.
+   */
+  private handleOpponentForfeited(): void {
+    this.setStatus(null)
+    this.endMatch(true)
+  }
+
+  /**
+   * We are the rejoiner: adopt the survivor's snapshot, jump the lockstep
+   * clock to its turn, and push our recorded bundles for that window so
+   * the survivor isn't left waiting on inputs we already made.
+   */
+  private handleResync(turn: number, data: Uint8Array): void {
+    const world = this.composition.engine.world
+    restoreWorld(world, data)
+    this.peer.setTurn(turn)
+    this.peer.resendUnacked(turn - 8, Date.now())
+    this.setStatus(null)
   }
 
   get currentTurn(): number {

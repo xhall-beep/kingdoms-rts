@@ -85,5 +85,10 @@ export function applyCommand(world: World, cmd: Command): void {
         if (world.entities.has(id)) orderHold(world, id)
       }
       break
+    case 'surrender':
+      // A player forfeits: their opponent wins. Guarded so a surrender
+      // racing a natural victory can't flip an already-decided result.
+      if (world.winner === -1) world.winner = cmd.player === 0 ? 1 : 0
+      break
   }
 }

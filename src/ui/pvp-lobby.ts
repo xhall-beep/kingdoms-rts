@@ -151,8 +151,8 @@ export class PvPLobby {
       onHash: (_msg) => {
         // Hash messages for desync detection (Phase 3 integration)
       },
-      onOpponentDisconnected: () => {
-        this.setStatus('Opponent disconnected')
+      onOpponentDisconnected: (graceSec) => {
+        this.setStatus(`Opponent disconnected — ${graceSec}s to reconnect…`)
       },
       onPlayerJoined: (count) => {
         this.setStatus(`${count}/2 players`)

@@ -358,6 +358,7 @@ export function initializeGame(): GameComposition {
         slot,
         onMatchEnd: (won) => {
           pvpActive = false
+          composition.hud.setPvpActive(false)
           refreshPauseUi()
           // Persistent profile: record the result (meta-only, never sim).
           try { recordGameResult('pvp', won) } catch { /* profile unavailable */ }
@@ -394,6 +395,10 @@ export function initializeGame(): GameComposition {
       pvpGame.start()
       // Store for cleanup on new game
       ;(composition as unknown as { pvpGame: PvPGame }).pvpGame = pvpGame
+      composition.hud.setPvpActive(true)
+    },
+    onSurrender: () => {
+      ;(composition as unknown as { pvpGame: PvPGame }).pvpGame?.surrender()
     },
     onLoad: () => {
       const save = readSave()

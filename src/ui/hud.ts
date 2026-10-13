@@ -20,6 +20,9 @@ import { renderCommandCard } from './command-card.ts'
 
 export interface Hud {
   render(world: World): void
+  setPvpActive(active: boolean): void
+  /** Match-phase status line (reconnect grace, resync); null hides it. */
+  setPvpStatus(msg: string | null): void
 }
 
 export interface HudCallbacks {
@@ -40,6 +43,7 @@ export interface HudCallbacks {
   onReplay(): void
   onReplaySpeed(speed: number): void
   onPvPMatchStart?: (slot: 0 | 1, opponentName: string, client: PvPClient | null, opponentId?: string, matchId?: string, matchSecret?: string, ratingAtStart?: number) => void
+  onSurrender?: () => void
 }
 
 
@@ -86,6 +90,7 @@ export class HudImpl implements Hud {
         <div class="hud-bar">
           <button class="hud-pill hud-mode" id="hud-pvp">⚔️ PvP</button>
           <button class="hud-pill hud-mode" id="hud-td">🗼 Tower Defense</button>
+          <button class="hud-pill hud-mode" id="hud-surrender" hidden>🏳️ Surrender</button>
         </div>
         <div class="hud-bar" id="hud-speed" hidden>
           <button class="hud-pill hud-mode hud-speed-on" data-speed="1">1x</button>
@@ -103,6 +108,7 @@ export class HudImpl implements Hud {
       <div class="hud-bar hud-utility" id="hud-utility"><button class="hud-pill hud-action" id="hud-idle">Idle Workers</button></div>
       <div class="hud-bar hud-actions" id="hud-actions"></div>
       <div class="hud-banner" id="hud-banner" hidden></div>
+      <div class="hud-pvp-status" id="hud-pvp-status" hidden></div>
       <div class="hud-tutorial" id="hud-tutorial" hidden>
         <h2>How to Play</h2>
         <p><b>Tap</b> your unit or building to select it.</p>
@@ -208,6 +214,11 @@ export class HudImpl implements Hud {
     })
     wire('#hud-save', () => this.callbacks?.onSave())
     wire('#hud-load', () => this.callbacks?.onLoad())
+    wire('#hud-surrender', () => {
+      if (confirm('Surrender this match? It will count as a loss.')) {
+        this.callbacks?.onSurrender?.()
+      }
+    })
     const speedRow = parent.querySelector<HTMLElement>('#hud-speed')
     wire('#hud-newgame', () => this.callbacks?.onNewGame())
     wire('#hud-replay', () => {
@@ -262,6 +273,26 @@ export class HudImpl implements Hud {
 
   render(world: World): void {
     this.update(world, [])
+  }
+
+  /** Show or hide the PvP surrender button (visible only during a live match). */
+  setPvpActive(active: boolean): void {
+    const btn = document.querySelector<HTMLElement>('#hud-surrender')
+    if (btn) btn.hidden = !active
+    if (!active) this.setPvpStatus(null)
+  }
+
+  /** Match-phase status line; separate from the banner so the per-frame
+   *  updateBanner() (victory/defeat) never clobbers it. */
+  setPvpStatus(msg: string | null): void {
+    const el = document.querySelector<HTMLElement>('#hud-pvp-status')
+    if (!el) return
+    if (msg === null) {
+      el.hidden = true
+      return
+    }
+    el.textContent = msg
+    el.hidden = false
   }
 
   update(world: World, selected: number[]): void {

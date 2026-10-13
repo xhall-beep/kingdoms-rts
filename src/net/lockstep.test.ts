@@ -6,6 +6,8 @@
 import { suite, test, assert, assertEqual } from '../tests/harness.ts'
 import { runLockstepMatch, createLockstepSession } from './session.ts'
 import { hashWorldState } from './hash.ts'
+import { applyCommand } from './apply.ts'
+import { makeWorld } from '../tests/setup.ts'
 import {
   NET_PERFECT,
   NET_LAN,
@@ -116,4 +118,22 @@ test('fault injection: desync detected, snapshot resync recovers', () => {
     'worlds re-converged after resync',
   )
   console.log(`  fault-injection: ${report.desyncs} desync(s), ${report.resyncs} resync(s), recovered`)
+})
+
+suite('net surrender')
+
+test('surrender forfeits: opponent wins, both sims identical', () => {
+  const a = makeWorld()
+  const b = makeWorld()
+  applyCommand(a, { type: 'surrender', step: 0, player: 1 })
+  applyCommand(b, { type: 'surrender', step: 0, player: 1 })
+  assertEqual(a.winner, 0, 'player 1 surrenders -> player 0 wins')
+  assertEqual(b.winner, a.winner, 'both sims end identically')
+})
+
+test('surrender cannot flip an already-decided result', () => {
+  const w = makeWorld()
+  w.winner = 1 // natural victory already recorded
+  applyCommand(w, { type: 'surrender', step: 0, player: 1 })
+  assertEqual(w.winner, 1, 'a surrender racing a natural victory must not flip it')
 })
