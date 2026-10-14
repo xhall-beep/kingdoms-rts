@@ -104,7 +104,7 @@ interface PersonalityMods {
  * a real army; the expander booms the economy and grabs a second hall early.
  */
 const PERSONALITY_MODS: Record<AIPersonality, PersonalityMods> = {
-  aggressor: { thinkEveryMult: 0.8, workerTargetDelta: -2, workersBeforeArmyDelta: -2, attackArmyDelta: -2, defenseRadiusDelta: -10, expansionAtSec: Infinity },
+  aggressor: { thinkEveryMult: 0.8, workerTargetDelta: -1, workersBeforeArmyDelta: -2, attackArmyDelta: 1, defenseRadiusDelta: -10, expansionAtSec: Infinity },
   defender: { thinkEveryMult: 1.0, workerTargetDelta: 0, workersBeforeArmyDelta: 1, attackArmyDelta: 4, defenseRadiusDelta: 12, expansionAtSec: 420 },
   expander: { thinkEveryMult: 1.0, workerTargetDelta: 2, workersBeforeArmyDelta: 0, attackArmyDelta: 1, defenseRadiusDelta: 0, expansionAtSec: 180 },
 }

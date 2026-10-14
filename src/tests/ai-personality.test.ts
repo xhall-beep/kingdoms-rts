@@ -27,11 +27,11 @@ test('defaults match the old behavior (normal/expander)', () => {
   assertEqual(ai.decisionTuning().attackArmy, 6, 'expander attacks a touch later than base 5')
 })
 
-test('attack threshold orders aggressor < expander < defender', () => {
+test('attack threshold orders aggressor <= expander < defender', () => {
   const a = tuning('normal', 'aggressor').attackArmy
   const e = tuning('normal', 'expander').attackArmy
   const d = tuning('normal', 'defender').attackArmy
-  assert(a < e && e < d, `expected ${a} < ${e} < ${d}`)
+  assert(a <= e && e < d, `expected ${a} <= ${e} < ${d}`)
 })
 
 test('aggressor never expands; expander expands earlier than base', () => {
@@ -86,11 +86,18 @@ function attackersOf(world: World, soldiers: number[]): number {
   return n
 }
 
-test('aggressor attacks with a small army', () => {
+test('aggressor attacks with a full wave', () => {
+  const { world, soldiers } = armedScenario(6)
+  new OpponentAI(TEAM_ENEMY, 'normal', 'aggressor').update(world, 5)
+  const n = attackersOf(world, soldiers)
+  assertEqual(n, 6, `aggressor should send all 6 soldiers, sent ${n}`)
+})
+
+test('aggressor holds a sub-threshold force', () => {
   const { world, soldiers } = armedScenario(5)
   new OpponentAI(TEAM_ENEMY, 'normal', 'aggressor').update(world, 5)
   const n = attackersOf(world, soldiers)
-  assertEqual(n, 5, `aggressor should send all 5 soldiers, sent ${n}`)
+  assertEqual(n, 0, `aggressor with 5 soldiers should wait for 6, sent ${n}`)
 })
 
 test('defender holds back the same army', () => {
