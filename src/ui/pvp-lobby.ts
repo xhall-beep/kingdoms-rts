@@ -10,8 +10,11 @@ import { buildProgressionSnapshot, loadProfile } from '../profile/profile.ts'
 
 const SERVER_URL = 'wss://kingdoms-pvp.stephen-x-hall.workers.dev'
 
+import type { AiPracticeTier } from '../net/pvp-ai.ts'
+
 export interface PvPLobbyCallbacks {
   onMatchStart: (slot: 0 | 1, opponentName: string) => void
+  onPracticeStart?: (tier: AiPracticeTier) => void
   onError: (message: string) => void
 }
 
@@ -58,6 +61,15 @@ export class PvPLobby {
         </div>
         <div class="pvp-row">
           <button class="hud-pill" id="pvp-close">Close</button>
+        </div>
+        <hr class="pvp-divider" />
+        <div class="pvp-row">
+          <p class="pvp-section-title">🤖 Practice vs AI (offline, lockstep)</p>
+        </div>
+        <div class="pvp-row pvp-practice-row">
+          <button class="hud-pill hud-mode" data-tier="passive">🛡️ Passive</button>
+          <button class="hud-pill hud-mode" data-tier="normal">⚔️ Normal</button>
+          <button class="hud-pill hud-mode" data-tier="aggressive">🔥 Aggressive</button>
         </div>
         <div class="pvp-status" id="pvp-status"></div>
       </div>
@@ -107,6 +119,17 @@ export class PvPLobby {
       }
     })
     closeBtn?.addEventListener('click', () => this.hide())
+
+    // Practice vs AI: offline lockstep match against the deterministic AI.
+    this.root.querySelectorAll<HTMLButtonElement>('[data-tier]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const tier = btn.dataset.tier as AiPracticeTier
+        if (tier === 'passive' || tier === 'normal' || tier === 'aggressive') {
+          this.hide()
+          this.callbacks?.onPracticeStart?.(tier)
+        }
+      })
+    })
   }
 
   private async createRoom(): Promise<void> {

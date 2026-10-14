@@ -5,6 +5,7 @@ import type { PvPClient } from '../net/client.ts'
 import type { BuildingType } from '../data/buildings.ts'
 import type { UnitType } from '../data/units.ts'
 import type { AIDifficulty, AIPersonality } from '../ai/opponent.ts'
+import type { AiPracticeTier } from '../net/pvp-ai.ts'
 import type { InputMode } from '../input/input-controller'
 import type { World } from '../core/World'
 import {
@@ -43,6 +44,7 @@ export interface HudCallbacks {
   onReplay(): void
   onReplaySpeed(speed: number): void
   onPvPMatchStart?: (slot: 0 | 1, opponentName: string, client: PvPClient | null, opponentId?: string, matchId?: string, matchSecret?: string, ratingAtStart?: number) => void
+  onPracticeVsAi?: (tier: AiPracticeTier) => void
   onSurrender?: () => void
 }
 
@@ -183,6 +185,14 @@ export class HudImpl implements Hud {
           bannerEl.hidden = false
           setTimeout(() => { bannerEl.hidden = true }, 3000)
         }
+      },
+      onPracticeStart: (tier: AiPracticeTier) => {
+        if (bannerEl) {
+          bannerEl.textContent = `Practice vs AI starting...`
+          bannerEl.hidden = false
+          setTimeout(() => { bannerEl.hidden = true }, 3000)
+        }
+        this.callbacks?.onPracticeVsAi?.(tier)
       },
     })
     const pvpBtn = parent.querySelector('#hud-pvp')

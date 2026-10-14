@@ -15,7 +15,8 @@ import {
   NO_TARGET,
   NO_TRAINING,
   STATE_IDLE,
-  KIND_GOLDMINE} from '../core/World'
+  KIND_GOLDMINE,
+  KIND_TREE} from '../core/World'
 import { orderBuild, orderGather } from '../systems/gather.ts'
 import { orderAttackMove } from '../systems/combat.ts'
 import { orderMove } from '../systems/movement.ts'
@@ -25,8 +26,41 @@ import {
   placeStructure,
 } from '../world/construction.ts'
 import { canSee, isExplored } from '../world/visibility.ts'
+import type { BuildingType } from '../data/buildings.ts'
+import type { UnitType } from '../data/units.ts'
+import type { Command } from '../session/commands.ts'
+
+/**
+ * Command sink for lockstep PvP-vs-AI mode. When set, the AI emits Command
+ * objects instead of mutating the world directly, so its orders flow through
+ * the lockstep turn system exactly like a remote human player's commands.
+ * When unset, the AI mutates directly (single-player/campaign mode).
+ */
+export type CommandSink = (cmd: Command) => void
 
 const WOOD_SHARE = 0.4 // Fraction of workers assigned to wood (the rest mine gold).
+
+/**
+ * Nearest harvestable node of the wanted type to a worker. Deterministic:
+ * ties break by lower entity id. Returns -1 when no node of that kind exists.
+ */
+function nearestResourceNode(world: World, workerId: number, wantWood: boolean): number {
+  const wantKind = wantWood ? KIND_TREE : KIND_GOLDMINE
+  const wx = world.positionX[workerId]
+  const wz = world.positionZ[workerId]
+  let best = -1
+  let bestD = Infinity
+  for (const id of world.entities.keys()) {
+    if (world.kind[id] !== wantKind) continue
+    if (world.amount[id] <= 0) continue
+    const d = Math.hypot(world.positionX[id] - wx, world.positionZ[id] - wz)
+    if (d < bestD || (d === bestD && id < best)) {
+      bestD = d
+      best = id
+    }
+  }
+  return best
+}
 
 const FLEE_TRIGGER = 32 // A worker evacuates when a visible enemy is this close.
 const FLEE_STANDOFF = 16 // Rally distance behind the hall, away from the threat.
@@ -98,6 +132,8 @@ export class OpponentAI implements System {
   /** Workers currently evacuated from a raid. They are not reassigned to
    * gather or construction duty until the threat is gone. */
   private readonly fleeing = new Set<number>()
+  /** When set, AI decisions are emitted as Commands (PvP-vs-AI lockstep mode). */
+  private sink: CommandSink | null = null
 
   constructor(team: 0 | 1, difficulty: AIDifficulty = 'normal', personality: AIPersonality = 'expander') {
     this.team = team
@@ -118,6 +154,64 @@ export class OpponentAI implements System {
   /** Resolved decision parameters (difficulty + personality), for tests and UI. */
   decisionTuning(): AIDecisionTuning {
     return { ...this.tuning }
+  }
+
+  /**
+   * Enable lockstep command-emission mode. The AI will emit Command objects
+   * to the sink instead of mutating the world. Pass null to restore direct
+   * mutation (single-player mode).
+   */
+  setCommandSink(sink: CommandSink | null): void {
+    this.sink = sink
+  }
+
+  // -- Command-emission helpers (sink mode) vs direct mutation (default) --
+
+  private emitMove(world: World, id: number, x: number, z: number): void {
+    if (this.sink) {
+      this.sink({ type: 'move', step: 0, unitIds: [id], x, z })
+    } else {
+      orderMove(world, id, x, z)
+    }
+  }
+
+  private emitAttackMove(world: World, id: number, x: number, z: number): void {
+    if (this.sink) {
+      this.sink({ type: 'attackmove', step: 0, unitIds: [id], x, z })
+    } else {
+      orderAttackMove(world, id, x, z)
+    }
+  }
+
+  private emitGather(world: World, id: number, wantWood: boolean): void {
+    if (this.sink) {
+      const node = nearestResourceNode(world, id, wantWood)
+      if (node !== -1) {
+        this.sink({ type: 'gather', step: 0, unitIds: [id], nodeId: node })
+      }
+      // No valid node: skip (worker stays idle this think cycle).
+    } else {
+      world.harvestKind[id] = wantWood ? HARVEST_WOOD : HARVEST_GOLD
+      orderGather(world, id)
+    }
+  }
+
+  private emitBuild(world: World, workerId: number, building: BuildingType, x: number, z: number): void {
+    if (this.sink) {
+      // applyCommand re-runs placement deterministically on both peers.
+      this.sink({ type: 'build', step: 0, workerId, building, x, z, siteId: 0 })
+    } else {
+      const placed = placeStructure(world, this.team, building, x, z)
+      if (placed.ok) orderBuild(world, workerId, placed.id)
+    }
+  }
+
+  private emitTrain(world: World, buildingId: number, unit: UnitType): void {
+    if (this.sink) {
+      this.sink({ type: 'train', step: 0, buildingId, unit })
+    } else {
+      enqueueTrain(world, buildingId, unit)
+    }
   }
 
   update(world: World, dt: number): void {
@@ -145,7 +239,7 @@ export class OpponentAI implements System {
 
   private trainWorkers(world: World, hall: number, workerCount: number): void {
     const queued = world.trainKind[hall] !== NO_TRAINING ? 1 : 0 // Single training slot.
-    if (workerCount + queued < this.tuning.workerTarget) enqueueTrain(world, hall, 'worker')
+    if (workerCount + queued < this.tuning.workerTarget) this.emitTrain(world, hall, 'worker')
   }
 
   /**
@@ -180,7 +274,7 @@ export class OpponentAI implements System {
         world.positionZ[id] - world.positionZ[threat],
       )
       if (d < FLEE_TRIGGER) {
-        orderMove(world, id, dest.x, dest.z)
+        this.emitMove(world, id, dest.x, dest.z)
         this.fleeing.add(id)
       }
     }
@@ -246,13 +340,14 @@ export class OpponentAI implements System {
       const needsAssignment =
         world.state[id] === STATE_IDLE || world.harvestKind[id] === HARVEST_ANY
       if (!needsAssignment) continue
-      if (onWood < woodWanted) {
-        world.harvestKind[id] = HARVEST_WOOD
+      const wantWood = onWood < woodWanted
+      if (wantWood) {
         onWood += 1
-      } else {
-        world.harvestKind[id] = HARVEST_GOLD
       }
-      orderGather(world, id)
+      if (!this.sink) {
+        world.harvestKind[id] = wantWood ? HARVEST_WOOD : HARVEST_GOLD
+      }
+      this.emitGather(world, id, wantWood)
     }
   }
 
@@ -292,10 +387,7 @@ export class OpponentAI implements System {
       const gz = world.positionZ[best]
       const worker = workers.find((id) => world.state[id] === STATE_IDLE && !this.fleeing.has(id))
       if (worker !== undefined) {
-        const placed = placeStructure(world, this.team, 'hall', gx + 10, gz + 10)
-        if (placed.ok) {
-          orderBuild(world, worker, placed.id)
-        }
+        this.emitBuild(world, worker, 'hall', gx + 10, gz + 10)
       }
     }
   }
@@ -319,7 +411,7 @@ export class OpponentAI implements System {
       } else if (world.state[this.scoutId] === STATE_IDLE && this.scoutTargets.length > 0) {
         // Scout arrived, send to next target
         const t = this.scoutTargets.shift()!
-        orderMove(world, this.scoutId, t.x, t.z)
+        this.emitMove(world, this.scoutId, t.x, t.z)
         return
       } else if (world.state[this.scoutId] !== STATE_IDLE) {
         return // Still moving
@@ -353,7 +445,7 @@ export class OpponentAI implements System {
       }
       this.scoutId = scout
       const t = this.scoutTargets.shift()!
-      orderMove(world, scout, t.x, t.z)
+      this.emitMove(world, scout, t.x, t.z)
     }
   }
 
@@ -394,17 +486,19 @@ export class OpponentAI implements System {
       const ring = Math.floor(k / 10)
       const angle = (k % 10) * 0.628 + ring * 0.3
       const r = ringBase + ring * 4
-      const placed = placeStructure(
-        world,
-        this.team,
-        type,
-        hx + Math.cos(angle) * r,
-        hz + Math.sin(angle) * r,
-      )
+      const bx = hx + Math.cos(angle) * r
+      const bz = hz + Math.sin(angle) * r
+      const builder =
+        workers.find((id) => world.state[id] === STATE_IDLE && !this.fleeing.has(id)) ??
+        workers.find((id) => world.carryAmount[id] === 0 && !this.fleeing.has(id))
+      if (this.sink) {
+        // Lockstep mode: emit for the first candidate spot; applyCommand
+        // validates placement deterministically on both peers.
+        if (builder !== undefined) this.emitBuild(world, builder, type, bx, bz)
+        return false
+      }
+      const placed = placeStructure(world, this.team, type, bx, bz)
       if (placed.ok) {
-        const builder =
-          workers.find((id) => world.state[id] === STATE_IDLE && !this.fleeing.has(id)) ??
-          workers.find((id) => world.carryAmount[id] === 0 && !this.fleeing.has(id))
         if (builder !== undefined) orderBuild(world, builder, placed.id)
         return false
       }
@@ -424,7 +518,7 @@ export class OpponentAI implements System {
         // Don't spend the gold reserved for the planned building.
         const cost = getUnits()[unit].cost.gold
         if (world.gold[this.team] - reserveGold < cost) continue
-        enqueueTrain(world, id, unit)
+        this.emitTrain(world, id, unit)
       }
     }
   }
@@ -437,7 +531,7 @@ export class OpponentAI implements System {
     const tz = world.positionZ[threat]
     for (const id of soldiers) {
       if (world.state[id] !== STATE_IDLE) continue
-      orderAttackMove(world, id, tx, tz)
+      this.emitAttackMove(world, id, tx, tz)
     }
     return true
   }
@@ -472,7 +566,7 @@ export class OpponentAI implements System {
     if (attackers.length === 0) return
     const target = this.findTarget(world, hall, attackers)
     if (target === null) return
-    for (const id of attackers) orderAttackMove(world, id, target.x, target.z)
+    for (const id of attackers) this.emitAttackMove(world, id, target.x, target.z)
   }
 
   /** Where to send the army: the enemy hall if explored, else the mirror guess, else search. */

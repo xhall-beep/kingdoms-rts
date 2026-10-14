@@ -28,6 +28,8 @@ import {
 import type { AIDifficulty, AIPersonality } from './ai/opponent'
 import { HudImpl } from './ui/hud'
 import { PvPGame } from './net/pvp-game.ts'
+import { PvpAiGame } from './net/pvp-ai.ts'
+import type { AiPracticeTier } from './net/pvp-ai.ts'
 import { loadSprites } from './render/sprites.ts'
 import type { HudCallbacks } from './ui/hud'
 import { ensureProfile, initProfileUi, recordGameResult } from './ui/profile-panel.ts'
@@ -398,7 +400,29 @@ export function initializeGame(): GameComposition {
       composition.hud.setPvpActive(true)
     },
     onSurrender: () => {
-      ;(composition as unknown as { pvpGame: PvPGame }).pvpGame?.surrender()
+      const c = composition as unknown as { pvpGame?: PvPGame; pvpAiGame?: PvpAiGame }
+      c.pvpGame?.surrender()
+      c.pvpAiGame?.surrender()
+    },
+    onPracticeVsAi: (tier: AiPracticeTier) => {
+      console.log(`Practice vs AI starting: tier=${tier}`)
+      pvpActive = true
+      refreshPauseUi()
+      const pvpAiGame = new PvpAiGame({
+        composition,
+        tier,
+        onMatchEnd: (won) => {
+          pvpActive = false
+          composition.hud.setPvpActive(false)
+          refreshPauseUi()
+          try { recordGameResult('practice', won) } catch { /* profile unavailable */ }
+          showMatchEndModal(won, null, null, pvpAiGame.tierLabel)
+          console.log(`Practice match over: ${won ? 'victory' : 'defeat'}`)
+        },
+      })
+      pvpAiGame.start()
+      ;(composition as unknown as { pvpAiGame: PvpAiGame }).pvpAiGame = pvpAiGame
+      composition.hud.setPvpActive(true)
     },
     onLoad: () => {
       const save = readSave()

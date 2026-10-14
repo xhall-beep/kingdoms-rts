@@ -108,6 +108,11 @@ export class LockstepPeer {
     return this.turn
   }
 
+  /** Next turn that hasn't had its bundle sent yet (PvP-vs-AI injection). */
+  getNextSendTurn(): number {
+    return this.sentUpTo + 1
+  }
+
   /** Stop executing turns once `turn` reaches `limit` (test harness). */
   setTurnLimit(limit: number): void {
     this.turnLimit = limit
