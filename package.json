@@ -8,7 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview --host 0.0.0.0 --port 3000",
     "lint": "tsc --noEmit",
-    "test": "npx esbuild src/tests/run.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/krts-test-bundle.mjs --log-level=warning && node node_modules/.cache/krts-test-bundle.mjs"
+    "test": "npx esbuild src/tests/run.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/krts-test-bundle.mjs --log-level=warning && node node_modules/.cache/krts-test-bundle.mjs",
+    "test:lockstep": "npx esbuild test/sim-adapter.mjs --bundle --platform=node --format=esm --outfile=node_modules/.cache/sim-adapter.bundle.mjs --log-level=warning && SIM_MODULE=$HOME/kingdoms-real/node_modules/.cache/sim-adapter.bundle.mjs node $HOME/test_lockstep_replay.mjs 1337"
   },
   "devDependencies": {
     "typescript": "~6.0.2",
