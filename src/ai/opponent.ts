@@ -41,6 +41,18 @@ export type CommandSink = (cmd: Command) => void
 const WOOD_SHARE = 0.4 // Fraction of workers assigned to wood (the rest mine gold).
 
 /**
+ * The barracks' melee (100g) costs 20g more than the archery's ranged (80g),
+ * so a flat gold-reserve gate starves melee even while the barracks sits
+ * idle. Melee trains against this fraction of the planned-building reserve.
+ */
+const MELEE_RESERVE_FACTOR = 0.5
+/**
+ * Max think ticks a melee re-prioritization hold lasts before it yields back
+ * to ranged (safety valve so the archery can never stall permanently).
+ */
+const MELEE_STARVE_HOLD_WINDOW = 10
+
+/**
  * Nearest harvestable node of the wanted type to a worker. Deterministic:
  * ties break by lower entity id. Returns -1 when no node of that kind exists.
  */
@@ -127,6 +139,11 @@ export class OpponentAI implements System {
   readonly personality: AIPersonality
   private timer = 0
   private gameTime = 0 // seconds elapsed
+  /** Countdown while ranged production is held so an idle barracks gets its
+   * melee (see trainSoldiers). Deterministic: derived from think ticks. */
+  private meleeHoldTicks = 0
+  /** Alternation flag: when true, the next contested gold goes to melee. */
+  private favorMelee = true
   private scoutId: number | null = null
   private scoutTargets: { x: number; z: number }[] = []
   /** Workers currently evacuated from a raid. They are not reassigned to
@@ -508,17 +525,56 @@ export class OpponentAI implements System {
 
   private trainSoldiers(world: World, workerCount: number, reserveGold: number): void {
     if (workerCount < this.tuning.workersBeforeArmy) return
+    const units = getUnits()
+    const meleeCost = units['melee'].cost.gold
+    const rangedCost = units['ranged'].cost.gold
+    const meleeReserve = reserveGold * MELEE_RESERVE_FACTOR
+    const gold = world.gold[this.team]
+    const barracksIdle = structuresOf(world, this.team, KIND_BARRACKS, true).some(
+      (id) => world.trainKind[id] === NO_TRAINING,
+    )
+    // Starved: an idle barracks while gold covers ranged but not melee. The
+    // cheaper ranged would otherwise snipe every 80g increment and the 100g
+    // melee would never accumulate (deterministic: world state + think ticks).
+    const starved =
+      this.favorMelee &&
+      barracksIdle &&
+      gold - reserveGold >= rangedCost &&
+      gold - meleeReserve < meleeCost
+    if (starved && this.meleeHoldTicks === 0) {
+      this.meleeHoldTicks = MELEE_STARVE_HOLD_WINDOW // latch the hold
+    }
+    const holdRanged = this.meleeHoldTicks > 0
+    if (this.meleeHoldTicks > 0) {
+      this.meleeHoldTicks -= 1
+      if (this.meleeHoldTicks === 0) this.favorMelee = false // expired: yield to ranged
+    }
+
     const jobs: [number, 'melee' | 'ranged'][] = [
       [KIND_BARRACKS, 'melee'],
       [KIND_ARCHERY, 'ranged'],
     ]
     for (const [kind, unit] of jobs) {
+      // Re-prioritize melee: hold the archery while the barracks is starved
+      // so gold accumulates past the melee cost. Bounded by the hold window —
+      // the archery can be throttled, never stalled.
+      if (unit === 'ranged' && holdRanged) continue
       for (const id of structuresOf(world, this.team, kind, true)) {
         if (world.trainKind[id] !== NO_TRAINING) continue
-        // Don't spend the gold reserved for the planned building.
-        const cost = getUnits()[unit].cost.gold
-        if (world.gold[this.team] - reserveGold < cost) continue
+        // Don't spend the gold reserved for the planned building. Melee
+        // trains against the softened reserve (see MELEE_RESERVE_FACTOR).
+        const reserve = unit === 'melee' ? meleeReserve : reserveGold
+        const cost = unit === 'melee' ? meleeCost : rangedCost
+        if (gold - reserve < cost) continue
         this.emitTrain(world, id, unit)
+        // Alternation: a trained melee yields the next contested gold to
+        // ranged, and vice versa — keeps the army mixed instead of sniped.
+        if (unit === 'melee') {
+          this.favorMelee = false
+          this.meleeHoldTicks = 0
+        } else {
+          this.favorMelee = true
+        }
       }
     }
   }
