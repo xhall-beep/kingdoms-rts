@@ -8,6 +8,8 @@ import {
   World,
   KIND_TREE,
   KIND_WORKER,
+  KIND_HALL,
+  KIND_FARM,
   HARVEST_WOOD,
   HARVEST_GOLD,
 } from '../core/World.ts'
@@ -54,6 +56,24 @@ export function applyCommand(world: World, cmd: Command): void {
       const team = world.entities.has(cmd.workerId)
         ? ((world.team[cmd.workerId] === 1 ? 1 : 0) as 0 | 1)
         : (0 as const)
+      // Resume: a nonzero siteId targets an existing incomplete structure —
+      // send the worker back to it instead of placing a new one. (The AI's
+      // construction supervisor emits this when a builder is lost mid-build.)
+      if (cmd.siteId !== 0 && world.entities.has(cmd.siteId)) {
+        const site = cmd.siteId
+        const skind = world.kind[site]
+        if (
+          world.team[site] === team &&
+          skind >= KIND_HALL &&
+          skind <= KIND_FARM &&
+          world.buildProgress[site] < world.buildTotal[site] &&
+          world.entities.has(cmd.workerId) &&
+          world.kind[cmd.workerId] === KIND_WORKER
+        ) {
+          orderBuild(world, cmd.workerId, site)
+        }
+        break
+      }
       const placed = placeStructure(world, team, cmd.building, cmd.x, cmd.z)
       if (placed.ok && world.entities.has(cmd.workerId)) {
         orderBuild(world, cmd.workerId, placed.id)

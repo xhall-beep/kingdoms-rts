@@ -2,6 +2,8 @@ import type { World } from '../core/World'
 import {
   HARVEST_GOLD,
   HARVEST_WOOD,
+  KIND_FARM,
+  KIND_HALL,
   KIND_TREE,
   KIND_WORKER,
 } from '../core/World'
@@ -121,6 +123,23 @@ export class ReplayPlayer {
         break
       }
       case 'build': {
+        // Resume: a nonzero siteId targets an existing incomplete structure —
+        // send the worker back to it instead of placing a new one.
+        if (cmd.siteId !== 0 && world.entities.has(cmd.siteId)) {
+          const site = cmd.siteId
+          const skind = world.kind[site]
+          if (
+            world.team[site] === 0 &&
+            skind >= KIND_HALL &&
+            skind <= KIND_FARM &&
+            world.buildProgress[site] < world.buildTotal[site] &&
+            world.entities.has(cmd.workerId) &&
+            world.kind[cmd.workerId] === KIND_WORKER
+          ) {
+            orderBuild(world, cmd.workerId, site)
+          }
+          break
+        }
         const placed = placeStructure(world, 0, cmd.building, cmd.x, cmd.z)
         if (placed.ok && world.entities.has(cmd.workerId)) {
           orderBuild(world, cmd.workerId, placed.id)

@@ -15,6 +15,7 @@ import {
   NO_TARGET,
   NO_TRAINING,
   STATE_IDLE,
+  STATE_BUILD,
   KIND_GOLDMINE,
   KIND_TREE} from '../core/World'
 import { orderBuild, orderGather } from '../systems/gather.ts'
@@ -250,6 +251,7 @@ export class OpponentAI implements System {
     this.scout(world, hall, workers)
     this.expandBase(world, hall, workers)
     const reserveGold = this.expand(world, hall, workers)
+    this.resumeStalledBuilds(world, workers)
     this.trainSoldiers(world, workers.length, reserveGold)
     if (!this.defend(world, hall, soldiers)) this.attack(world, hall, soldiers)
   }
@@ -285,6 +287,11 @@ export class OpponentAI implements System {
     const dest = this.fleeDestination(world, hall, threat)
     for (const id of workers) {
       if (id === this.scoutId) continue // The scout keeps its mission.
+      // A worker mid-construction stays on the site: yanking it abandons the
+      // structure, and a raid scare is not worth a permanently stalled
+      // barracks (the supervisor below re-arms genuine losses, but avoiding
+      // the churn keeps the build on schedule).
+      if (world.state[id] === STATE_BUILD) continue
       if (!world.entities.has(id) || world.health[id] <= 0) continue
       const d = Math.hypot(
         world.positionX[id] - world.positionX[threat],
@@ -521,6 +528,50 @@ export class OpponentAI implements System {
       }
     }
     return false // No free spot; try again next decision.
+  }
+
+  /**
+   * Re-assign a builder to any structure stalled with nobody on it. A builder
+   * yanked off a site (raid evacuation, death) orphans it: the half-built
+   * husk still counts toward the build plan, so the AI never retries and the
+   * sunk cost never completes. Each think tick re-arms one idle worker per
+   * stalled site. Deterministic: entity-id order, first idle non-evacuated
+   * worker wins.
+   */
+  private resumeStalledBuilds(world: World, workers: number[]): void {
+    for (const id of world.entities.keys()) {
+      if (world.team[id] !== this.team) continue
+      const kind = world.kind[id]
+      if (kind < KIND_HALL || kind > KIND_FARM) continue
+      if (world.buildProgress[id] >= world.buildTotal[id]) continue
+      let hasBuilder = false
+      for (const w of workers) {
+        if (world.state[w] === STATE_BUILD && world.targetId[w] === id) {
+          hasBuilder = true
+          break
+        }
+      }
+      if (hasBuilder) continue
+      const builder =
+        workers.find((w) => world.state[w] === STATE_IDLE && !this.fleeing.has(w)) ??
+        workers.find((w) => !this.fleeing.has(w) && world.state[w] !== STATE_BUILD)
+      if (builder === undefined) continue
+      if (this.sink) {
+        this.emitResumeBuild(world, builder, id)
+      } else {
+        orderBuild(world, builder, id)
+      }
+    }
+  }
+
+  /**
+   * Lockstep form of the construction resume: the 'build' command's siteId
+   * targets an existing incomplete structure, and applyCommand orderBuilds
+   * the worker to it instead of placing a new one.
+   */
+  private emitResumeBuild(world: World, workerId: number, siteId: number): void {
+    const building = BUILDING_TYPE_BY_KIND[world.kind[siteId]]
+    this.sink!({ type: 'build', step: 0, workerId, building, x: 0, z: 0, siteId })
   }
 
   private trainSoldiers(world: World, workerCount: number, reserveGold: number): void {
