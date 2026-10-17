@@ -91,6 +91,7 @@ export class HudImpl implements Hud {
         </div>
         <div class="hud-bar">
           <button class="hud-pill hud-mode" id="hud-pvp">⚔️ PvP</button>
+          <button class="hud-pill hud-mode" id="hud-convergence" style="border: 1px solid #c084fc; color: #f5c542;">⚔️ 4 Factions Episode</button>
           <button class="hud-pill hud-mode" id="hud-td">🗼 Tower Defense</button>
           <button class="hud-pill hud-mode" id="hud-surrender" hidden>🏳️ Surrender</button>
         </div>
@@ -199,6 +200,13 @@ export class HudImpl implements Hud {
     pvpBtn?.addEventListener('click', () => {
       if (this.pvpLobby?.isVisible) this.pvpLobby.hide()
       else this.pvpLobby?.show()
+    })
+    const convBtn = parent.querySelector('#hud-convergence')
+    convBtn?.addEventListener('click', () => {
+      if (confirm('Launch The Shattered Convergence (4 Factions Episode)? Current game will restart.')) {
+        localStorage.setItem('krts-game-mode', 'convergence')
+        location.reload()
+      }
     })
     const tdBtn = parent.querySelector('#hud-td')
     tdBtn?.addEventListener('click', () => {

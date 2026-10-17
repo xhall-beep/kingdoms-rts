@@ -5,6 +5,7 @@ import { InputControllerImpl } from './input/input-controller'
 import { Renderer } from './render/renderer'
 import { seedScenario } from './scenario'
 import { setupTowerDefense, updateTowerDefense, startWaveNow, TD_MAX_WAVES, type TDState } from './modes/tower-defense.ts'
+import { setupConvergenceEpisode, updateConvergenceEpisode, type ConvergenceState } from './modes/convergence-slice.ts'
 import type { FactionId } from './data/factions.ts'
 import './style.css'
 import { CombatSystemImpl } from './systems/combat'
@@ -140,6 +141,41 @@ function showMatchEndModal(won: boolean, ratingBefore: number | null, ratingAfte
   }
 }
 
+
+function setupConvergenceUI(_state: ConvergenceState): void {
+  const overlay = document.createElement('div')
+  overlay.id = 'convergence-overlay'
+  overlay.innerHTML = `
+    <div id="conv-banner" style="position:fixed;top:10px;left:50%;transform:translateX(-50%);background:rgba(18,22,34,0.95);border:1px solid #aa3bff;color:#f3f4f6;padding:12px 24px;border-radius:10px;font-size:15px;z-index:1000;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,0.6);min-width:320px;max-width:90vw;">
+      <div id="conv-title" style="font-size:17px;font-weight:bold;color:#f5c542;margin-bottom:4px;">⚔️ The Shattered Convergence (4 Factions)</div>
+      <div id="conv-msg" style="font-size:13px;opacity:0.9;color:#38bdf8;margin-bottom:8px;">Reclaim the Central Relic and vanquish the Undead Host!</div>
+      <div id="conv-objs" style="font-size:12px;opacity:0.85;display:flex;gap:16px;justify-content:center;"></div>
+      <div style="margin-top:8px;">
+        <button id="conv-exit" style="padding:4px 12px;font-size:12px;background:#374151;color:#fff;border:none;border-radius:4px;cursor:pointer;">Exit Episode</button>
+      </div>
+    </div>
+  `
+  document.body.appendChild(overlay)
+  const exitBtn = document.getElementById('conv-exit')
+  if (exitBtn) {
+    exitBtn.onclick = () => {
+      localStorage.removeItem('krts-game-mode')
+      location.reload()
+    }
+  }
+}
+
+function updateConvergenceUI(state: ConvergenceState): void {
+  const msgEl = document.getElementById('conv-msg')
+  const objsEl = document.getElementById('conv-objs')
+  if (msgEl && state.messageBanner) {
+    msgEl.textContent = state.messageBanner
+  }
+  if (objsEl) {
+    objsEl.innerHTML = state.objectives.map(o => `<span style="color:${o.completed ? '#4ade80' : '#9ca3af'};">${o.completed ? '✓' : '○'} ${o.title}</span>`).join(' | ')
+  }
+}
+
 function setupTDUI(tdState: TDState): void {
   const overlay = document.createElement('div')
   overlay.id = 'td-overlay'
@@ -245,7 +281,16 @@ export function initializeGame(): GameComposition {
   const enemyFaction = (localStorage.getItem('krts-enemy-faction') || 'orc') as FactionId
   const gameMode = localStorage.getItem('krts-game-mode') || 'rts'
   let tdState: TDState | null = null
-  if (gameMode === 'tower-defense') {
+  let convState: ConvergenceState | null = null
+  if (gameMode === 'convergence') {
+    const world = composition.engine.world
+    convState = setupConvergenceEpisode(world)
+    const conv = convState
+    composition.tdTick.fn = (w) => {
+      updateConvergenceEpisode(w, conv)
+    }
+    setupConvergenceUI(convState)
+  } else if (gameMode === 'tower-defense') {
     // Tower Defense: no opponent AI, no standard victory check (TD has its own
     // win/lose), custom setup. TD update runs on the fixed sim tick.
     const world = composition.engine.world
@@ -520,6 +565,9 @@ export function initializeGame(): GameComposition {
     if (tdState) {
       ;(window as any).__gameComp = composition
       updateTDBanner()
+    }
+    if (convState) {
+      updateConvergenceUI(convState)
     }
     requestAnimationFrame(frame)
   }
