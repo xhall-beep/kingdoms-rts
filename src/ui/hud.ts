@@ -34,6 +34,8 @@ export interface HudCallbacks {
   onSelectBuilding(kind: number): void
   onNewGame(): void
   onSelectIdleWorkers(): void
+  /** Jump the camera back to the player's base (phone "lost in the dark" recovery). */
+  onLocateBase(): void
   onStop(): void
   onHold(): void
   onPause(): void
@@ -108,7 +110,7 @@ export class HudImpl implements Hud {
         </div>
       </div>
       <div class="hud-bar hud-buildings" id="hud-buildings"></div>
-      <div class="hud-bar hud-utility" id="hud-utility"><button class="hud-pill hud-action" id="hud-idle">Idle Workers</button></div>
+      <div class="hud-bar hud-utility" id="hud-utility"><button class="hud-pill hud-action" id="hud-idle">Idle Workers</button><button class="hud-pill hud-action" id="hud-locate" title="Jump camera back to your base">⌂ Base</button></div>
       <div class="hud-bar hud-actions" id="hud-actions"></div>
       <div class="hud-banner" id="hud-banner" hidden></div>
       <div class="hud-pvp-status" id="hud-pvp-status" hidden></div>
@@ -129,6 +131,8 @@ export class HudImpl implements Hud {
     this.buildingsEl = parent.querySelector('#hud-buildings')
     const idleBtn = parent.querySelector('#hud-idle')
     if (idleBtn) idleBtn.addEventListener('click', () => this.callbacks?.onSelectIdleWorkers())
+    const locateBtn = parent.querySelector('#hud-locate')
+    if (locateBtn) locateBtn.addEventListener('click', () => this.callbacks?.onLocateBase())
     this.bannerEl = parent.querySelector('#hud-banner')
     // First-launch tutorial.
     const tutorialEl = parent.querySelector<HTMLElement>('#hud-tutorial')

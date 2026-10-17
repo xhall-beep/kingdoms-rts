@@ -32,6 +32,8 @@ export interface InputController {
   setMode(mode: InputMode): void
   getMode(): InputMode
   handlePointer(position: readonly [number, number]): void
+  /** Jump the camera to the local team's town hall (phone "I'm lost" recovery). */
+  centerOnBase(): void
 }
 
 const PICK_RADIUS_PX = 40 // minimum tap target in screen pixels (finger-friendly)
@@ -99,6 +101,39 @@ export class InputControllerImpl implements InputController {
   /** Legacy entry: treat as a left-click at canvas pixel position. */
   handlePointer(position: readonly [number, number]): void {
     this.tapSelect(position[0], position[1])
+  }
+
+  /**
+   * Jump the camera to the local team's town hall (falling back to any own
+   * unit, then the default base corner). Phone players can lose the camera
+   * in unexplored dark map with no way back — this is the way back.
+   */
+  centerOnBase(): void {
+    const world = this.world
+    const renderer = this.renderer
+    if (!world || !renderer) return
+    let bx = -40
+    let bz = -40
+    let found = false
+    for (const id of world.entities.keys()) {
+      if (world.team[id] === this.localTeam && world.kind[id] === KIND_HALL) {
+        bx = world.positionX[id]
+        bz = world.positionZ[id]
+        found = true
+        break
+      }
+    }
+    if (!found) {
+      for (const id of world.entities.keys()) {
+        if (world.team[id] === this.localTeam) {
+          bx = world.positionX[id]
+          bz = world.positionZ[id]
+          found = true
+          break
+        }
+      }
+    }
+    if (found) renderer.centerOn(bx, bz, 8)
   }
 
   getSelected(): number[] {
@@ -257,7 +292,13 @@ export class InputControllerImpl implements InputController {
   }
 
   private onMove(e: PointerEvent): void {
-    if (!this.pointers.has(e.pointerId)) return
+    const prev = this.pointers.get(e.pointerId)
+    if (!prev) return
+    // movementX/Y are 0 (or unreliable) for touch pointers — derive the
+    // per-event delta from the last tracked position so drag-pan and
+    // two-finger pan actually work on phones.
+    const mdx = e.offsetX - prev.x
+    const mdy = e.offsetY - prev.y
     this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY })
     if (!this.renderer) return
     // Update build ghost preview.
@@ -270,7 +311,7 @@ export class InputControllerImpl implements InputController {
 
     if (this.pointers.size >= 2) {
       // Two-finger pan.
-      this.renderer.pan(e.movementX, e.movementY)
+      this.renderer.pan(mdx, mdy)
       this.dragStart = null
       return
     }
@@ -295,7 +336,7 @@ export class InputControllerImpl implements InputController {
     }
     if (!this.panning && dist > this.dragThreshold()) this.panning = true
     if (this.panning) {
-      this.renderer.pan(e.movementX, e.movementY)
+      this.renderer.pan(mdx, mdy)
       this.dragStart = { x: e.offsetX, y: e.offsetY, pointerType: this.dragStart?.pointerType ?? e.pointerType }
     }
   }

@@ -2,7 +2,7 @@
  * Input controller regression tests — selection, smart orders, box-select,
  * building quick-select. Uses a mock renderer (no canvas/DOM).
  */
-import { TEAM_PLAYER, KIND_WORKER } from '../core/World.ts'
+import { TEAM_PLAYER, KIND_HALL, KIND_WORKER } from '../core/World.ts'
 import { makeWorld } from './setup.ts'
 import { orderMove, orderStop } from '../systems/movement.ts'
 import { InputControllerImpl } from '../input/input-controller.ts'
@@ -186,4 +186,97 @@ test('entityAt finds tapped unit via spatial hash', () => {
   const miss = (input as unknown as { entityAt(x: number, z: number, anyTeam: boolean): number })
     .entityAt(500, 500, true)
   assertEqual(miss, -1, 'tap on empty ground misses')
+})
+
+suite('touch pan (movementX/Y unreliable on touch)')
+
+/** Renderer mock that records pan/centerOn calls. */
+function recordingRenderer() {
+  return {
+    pans: [] as [number, number][],
+    centers: [] as [number, number, number | undefined][],
+    setSelection(_sel: number[]) {},
+    setSelectionBox(_box: unknown) {},
+    screenToWorld(sx: number, sy: number) {
+      return { x: sx, z: sy }
+    },
+    getZoom() {
+      return 1
+    },
+    pan(dx: number, dy: number) {
+      this.pans.push([dx, dy])
+    },
+    centerOn(x: number, z: number, zoom?: number) {
+      this.centers.push([x, z, zoom])
+    },
+  }
+}
+
+interface CtlHarness {
+  onDown(e: unknown): void
+  onMove(e: unknown): void
+  onUp(e: unknown): void
+  mode: string
+  renderer: unknown
+  world: unknown
+}
+
+function touchSetup() {
+  const world = makeWorld()
+  const renderer = recordingRenderer()
+  const input = new InputControllerImpl()
+  const ctl = input as unknown as CtlHarness
+  ctl.renderer = renderer
+  ctl.world = world
+  ctl.mode = 'move' // non-selection mode: a drag pans instead of box-selecting
+  return { world, renderer, input, ctl }
+}
+
+function touchDown(ctl: CtlHarness, id: number, x: number, y: number): void {
+  ctl.onDown({ button: 0, pointerId: id, offsetX: x, offsetY: y, pointerType: 'touch' })
+}
+
+function touchMove(ctl: CtlHarness, id: number, x: number, y: number): void {
+  // movementX/Y are 0 for touch pointers in mobile Chrome — the controller
+  // must derive deltas from tracked positions instead.
+  ctl.onMove({ pointerId: id, offsetX: x, offsetY: y, movementX: 0, movementY: 0, pointerType: 'touch' })
+}
+
+test('single-finger drag pans from tracked positions, not movementX/Y', () => {
+  const { renderer, ctl } = touchSetup()
+  touchDown(ctl, 1, 100, 100)
+  touchMove(ctl, 1, 130, 110) // dist ~31.6 > 16px touch threshold -> panning
+  assert(renderer.pans.length > 0, 'pan was called on touch drag')
+  const [dx, dy] = renderer.pans[renderer.pans.length - 1]
+  assertEqual(dx, 30, 'pan dx from position delta')
+  assertEqual(dy, 10, 'pan dy from position delta')
+})
+
+test('two-finger pan uses tracked deltas', () => {
+  const { renderer, ctl } = touchSetup()
+  touchDown(ctl, 1, 100, 100)
+  touchDown(ctl, 2, 200, 200)
+  touchMove(ctl, 2, 210, 190)
+  assert(renderer.pans.length > 0, 'two-finger pan called')
+  const [dx, dy] = renderer.pans[renderer.pans.length - 1]
+  assertEqual(dx, 10, 'two-finger pan dx')
+  assertEqual(dy, -10, 'two-finger pan dy')
+})
+
+test('centerOnBase jumps the camera to the town hall', () => {
+  const { world, renderer, input } = touchSetup()
+  let hallId = -1
+  for (const id of world.entities.keys()) {
+    if (world.team[id] === TEAM_PLAYER && world.kind[id] === KIND_HALL) {
+      hallId = id
+      break
+    }
+  }
+  assert(hallId !== -1, 'seed has a player hall')
+  input.centerOnBase()
+  assertEqual(renderer.centers.length, 1, 'centerOn called once')
+  const [x, z, zoom] = renderer.centers[0]
+  assertEqual(x, world.positionX[hallId], 'centered on hall x')
+  assertEqual(z, world.positionZ[hallId], 'centered on hall z')
+  assertEqual(zoom, 8, 'default gameplay zoom')
 })

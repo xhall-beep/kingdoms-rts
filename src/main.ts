@@ -324,6 +324,7 @@ export function initializeGame(): GameComposition {
     onBuildType: (type) => composition.inputController.setPendingBuilding(type),
     onSelectBuilding: (kind) => composition.inputController.selectBuilding(kind),
     onSelectIdleWorkers: () => composition.inputController.selectIdleWorkers(),
+    onLocateBase: () => composition.inputController.centerOnBase(),
     onStop: () => composition.inputController.stopSelected(),
     onHold: () => composition.inputController.holdSelected(),
     onResearch: (type) => {
