@@ -142,7 +142,7 @@ function showMatchEndModal(won: boolean, ratingBefore: number | null, ratingAfte
 }
 
 
-function setupConvergenceUI(state: ConvergenceState): void {
+function setupConvergenceUI(_state: ConvergenceState): void {
   const overlay = document.createElement('div')
   overlay.id = 'convergence-overlay'
   overlay.innerHTML = `

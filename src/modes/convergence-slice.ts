@@ -10,8 +10,7 @@
  * 5. Dynamic Boss Raid & Objective Progression (Eliminate the Defiler to save the realm)
  */
 
-import { World, TEAM_PLAYER, TEAM_ENEMY, KIND_HALL, KIND_TOWER, KIND_MELEE, KIND_RANGED, KIND_WORKER, KIND_FARM } from '../core/World.ts'
-import { FACTIONS, type FactionId } from '../data/factions.ts'
+import { World, TEAM_PLAYER, TEAM_ENEMY, KIND_HALL } from '../core/World.ts'
 import { orderAttackMove } from '../systems/combat.ts'
 
 export interface ConvergenceObjective {
@@ -175,8 +174,8 @@ export function updateConvergenceEpisode(world: World, state: ConvergenceState):
     // Spawn 2 skellies targeting player base
     const skel1 = world.spawnUnit('melee', TEAM_ENEMY, 25, 25)
     const skel2 = world.spawnUnit('ranged', TEAM_ENEMY, 27, 23)
-    orderAttackMove(world, skel1, -40, -40)
-    orderAttackMove(world, skel2, -40, -40)
+    orderAttackMove(world, skel1.id, -40, -40)
+    orderAttackMove(world, skel2.id, -40, -40)
   }
 
   // 3. Orc Enrage Mechanic: If Orc Hall HP < 50%, triggers Warlord Frenzy
@@ -192,7 +191,7 @@ export function updateConvergenceEpisode(world: World, state: ConvergenceState):
           state.messageTimer = 60 * 5
           for (const u of world.entities.keys()) {
             if (world.team[u] === TEAM_ENEMY) {
-              world.cooldownTicks[u] = Math.max(10, Math.floor(world.cooldownTicks[u] * 0.5))
+              world.cooldownTotal[u] = Math.max(0.1, world.cooldownTotal[u] * 0.5)
             }
           }
         }
