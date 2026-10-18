@@ -318,7 +318,26 @@ export function initializeGame(): GameComposition {
   let pvpActive = false
   const replayPlayer = new ReplayPlayer(composition.engine.world)
   composition.renderer.centerOn(-40, -40, 8)
-  composition.renderer.resize(canvas.clientWidth || 1280, canvas.clientHeight || 720)
+  // Keep the canvas backing store in sync with the CSS viewport. A stale or
+  // fallback size (the old code measured once and never again) desyncs the
+  // renderer from pointer input: the world renders tiny and every tap
+  // misroutes — the Pixel black-screen + broken-tap bug. Re-measure after
+  // layout settles and on every viewport change (rotation, URL-bar show/hide).
+  const fitCanvas = (): void => {
+    const w = canvas.clientWidth || window.innerWidth || 1280
+    const h = canvas.clientHeight || window.innerHeight || 720
+    composition.renderer.resize(w, h)
+  }
+  fitCanvas()
+  requestAnimationFrame(fitCanvas)
+  let fitTimer = 0
+  window.addEventListener('resize', () => {
+    window.clearTimeout(fitTimer)
+    fitTimer = window.setTimeout(fitCanvas, 150)
+  })
+  window.addEventListener('orientationchange', () => {
+    window.setTimeout(fitCanvas, 300)
+  })
   const hudCallbacks: HudCallbacks = {
     onMode: (mode) => composition.inputController.setMode(mode),
     onBuildType: (type) => composition.inputController.setPendingBuilding(type),
@@ -560,7 +579,7 @@ export function initializeGame(): GameComposition {
     } else {
       composition.renderer.setGhost(null, 0, 0, true)
     }
-    composition.renderer.render(composition.engine.world, TEAM_PLAYER)
+    composition.renderer.render(composition.engine.world, TEAM_PLAYER, dt)
     composition.hud.update(composition.engine.world, composition.inputController.getSelected())
     // Tower Defense: banner is UI-only; sim update runs on the fixed tick.
     if (tdState) {

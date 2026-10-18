@@ -123,6 +123,9 @@ export class PvPGame {
     const localTeam = this.peer.playerIndex === 0 ? TEAM_PLAYER : TEAM_ENEMY
     this.composition.inputController.setLocalTeam(localTeam)
     this.composition.inputController.setDeferredExecution(true)
+    // Slot 1 plays TEAM_ENEMY whose base is at (40,40); the boot camera sits
+    // at (-40,-40), which is unexplored blackness for them. Jump to our base.
+    this.composition.inputController.centerOnBase()
 
     // Disable the AI opponent — the human is the opponent now
     const world = this.composition.engine.world

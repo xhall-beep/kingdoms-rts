@@ -49,6 +49,16 @@ export class Renderer {
   private selected = new Set<number>()
   private selectionBox: { x0: number; y0: number; x1: number; y1: number } | null = null
   private frame = 0
+  /**
+   * CSS-pixel viewport size. The canvas backing store is cssSize * dpr, with
+   * the context transform scaled by dpr, so ALL drawing and coordinate math
+   * in this class works in CSS pixels — the same units pointer events use.
+   * Mixing backing pixels into the math (e.g. sizing from a stale or
+   * fallback canvas.width) shrinks the visible world and misroutes every
+   * tap, which is exactly the Pixel black-screen + broken-tap bug.
+   */
+  private cssWidth = 0
+  private cssHeight = 0
   // Fog is cached to an offscreen canvas (one px per cell) and rebuilt when
   // the fog revision changes or every 20 frames (whichever comes first);
   // per-frame we do a single drawImage instead of ~8k rects.
@@ -63,9 +73,33 @@ export class Renderer {
     this.ctx = ctx
   }
 
-  resize(width: number, height: number): void {
-    this.canvas.width = width
-    this.canvas.height = height
+  /**
+   * Size the canvas to the CSS viewport. Backing store is scaled by
+   * devicePixelRatio (capped at 3 for fill-rate safety on phones) so the
+   * game stays crisp on high-DPI screens; the context transform keeps all
+   * drawing math in CSS pixels. Must be called after layout settles and on
+   * every viewport change (rotation, URL-bar show/hide) — a stale backing
+   * size desyncs rendering from input.
+   */
+  resize(cssWidth: number, cssHeight: number): void {
+    const w = Math.max(1, Math.round(cssWidth))
+    const h = Math.max(1, Math.round(cssHeight))
+    const dpr =
+      typeof window !== 'undefined' && window.devicePixelRatio
+        ? Math.min(3, window.devicePixelRatio)
+        : 1
+    this.cssWidth = w
+    this.cssHeight = h
+    this.canvas.width = Math.round(w * dpr)
+    this.canvas.height = Math.round(h * dpr)
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    // Changing the backing store resets the context, including the fog
+    // cache positions — they rebuild automatically from revision/frame.
+  }
+
+  /** CSS-pixel viewport size (what pointer events and layout use). */
+  getCssSize(): { w: number; h: number } {
+    return { w: this.cssWidth, h: this.cssHeight }
   }
 
   setSelection(ids: number[]): void {
@@ -98,8 +132,8 @@ export class Renderer {
   }
 
   zoomBy(factor: number, cx?: number, cy?: number): void {
-    const px = cx ?? this.canvas.width / 2
-    const py = cy ?? this.canvas.height / 2
+    const px = cx ?? this.cssWidth / 2
+    const py = cy ?? this.cssHeight / 2
     const before = this.screenToWorld(px, py)
     this.zoom = Math.min(40, Math.max(2, this.zoom * factor))
     const after = this.screenToWorld(px, py)
@@ -109,8 +143,8 @@ export class Renderer {
 
   screenToWorld(sx: number, sy: number): { x: number; z: number } {
     return {
-      x: (sx - this.canvas.width / 2) / this.zoom + this.camX,
-      z: (sy - this.canvas.height / 2) / this.zoom + this.camZ,
+      x: (sx - this.cssWidth / 2) / this.zoom + this.camX,
+      z: (sy - this.cssHeight / 2) / this.zoom + this.camZ,
     }
   }
 
@@ -141,11 +175,23 @@ export class Renderer {
     if (this.moveIndicators.length > 10) this.moveIndicators.shift()
   }
 
-  render(world: World, team: 0 | 1): void {
+  render(world: World, team: 0 | 1, dtSeconds = 1 / 60): void {
     this.frame += 1
-    const { ctx, canvas } = this
+    // A corrupted camera transform (NaN/Infinity from a bad event or a
+    // desync) would paint nothing and misroute every tap. Recover to the
+    // default base view instead of leaving the player in a black void.
+    if (
+      !Number.isFinite(this.camX) ||
+      !Number.isFinite(this.camZ) ||
+      !Number.isFinite(this.zoom)
+    ) {
+      this.camX = -40
+      this.camZ = -40
+      this.zoom = 8
+    }
+    const { ctx } = this
     ctx.fillStyle = '#16241a'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.fillRect(0, 0, this.cssWidth, this.cssHeight)
     this.drawGrid()
     for (const id of world.entities.keys()) {
       if (!canSee(world, team, id)) continue
@@ -153,17 +199,17 @@ export class Renderer {
     }
     this.drawFog(world, team)
     this.drawSelectionBox()
-    this.drawDamageNumbers(world)
+    this.drawDamageNumbers(world, dtSeconds)
     this.drawGhost()
     this.drawRallyPoints(world)
-    this.drawMoveIndicators()
+    this.drawMoveIndicators(dtSeconds)
   }
 
-  private drawMoveIndicators(): void {
+  private drawMoveIndicators(dtSeconds: number): void {
     const { ctx } = this
     const keep: typeof this.moveIndicators = []
     for (const m of this.moveIndicators) {
-      m.ttl -= 0.016 // ~1 frame at 60fps
+      m.ttl -= dtSeconds
       if (m.ttl <= 0) continue
       keep.push(m)
       const p = this.toScreen(m.x, m.z)
@@ -235,17 +281,17 @@ export class Renderer {
     ctx.strokeRect(p.x - size / 2, p.y - size / 2, size, size)
   }
 
-  /** Floating combat text. Visual-only; ages and fades. */
-  private drawDamageNumbers(world: World): void {
+  /** Floating combat text. Visual-only (excluded from lockstep hash); ages in real seconds. */
+  private drawDamageNumbers(world: World, dtSeconds: number): void {
     const { ctx } = this
     const keep: typeof world.damageNumbers = []
     for (const dn of world.damageNumbers) {
-      dn.age += 1
-      if (dn.age > 40) continue // ~0.66s at 60fps
+      dn.age += dtSeconds
+      if (dn.age > 0.66) continue
       keep.push(dn)
       const p = this.toScreen(dn.x, dn.z)
-      const alpha = 1 - dn.age / 40
-      const yOff = dn.age * 0.8 // float upward
+      const alpha = 1 - dn.age / 0.66
+      const yOff = dn.age * 48 // float upward (~0.8px/frame at 60fps)
       ctx.globalAlpha = alpha
       ctx.font = 'bold 14px system-ui, sans-serif'
       ctx.textAlign = 'center'
@@ -278,26 +324,26 @@ export class Renderer {
 
   private toScreen(x: number, z: number): { x: number; y: number } {
     return {
-      x: (x - this.camX) * this.zoom + this.canvas.width / 2,
-      y: (z - this.camZ) * this.zoom + this.canvas.height / 2,
+      x: (x - this.camX) * this.zoom + this.cssWidth / 2,
+      y: (z - this.camZ) * this.zoom + this.cssHeight / 2,
     }
   }
 
   private drawGrid(): void {
-    const { ctx, canvas } = this
+    const { ctx } = this
     ctx.strokeStyle = 'rgba(255,255,255,0.04)'
     ctx.lineWidth = 1
     const step = 10 * this.zoom
-    const ox = canvas.width / 2 - this.camX * this.zoom
-    const oy = canvas.height / 2 - this.camZ * this.zoom
+    const ox = this.cssWidth / 2 - this.camX * this.zoom
+    const oy = this.cssHeight / 2 - this.camZ * this.zoom
     ctx.beginPath()
-    for (let x = ox % step; x < canvas.width; x += step) {
+    for (let x = ox % step; x < this.cssWidth; x += step) {
       ctx.moveTo(x, 0)
-      ctx.lineTo(x, canvas.height)
+      ctx.lineTo(x, this.cssHeight)
     }
-    for (let y = oy % step; y < canvas.height; y += step) {
+    for (let y = oy % step; y < this.cssHeight; y += step) {
       ctx.moveTo(0, y)
-      ctx.lineTo(canvas.width, y)
+      ctx.lineTo(this.cssWidth, y)
     }
     ctx.stroke()
   }
