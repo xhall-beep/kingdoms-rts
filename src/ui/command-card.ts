@@ -17,6 +17,7 @@ import type { UnitType } from '../data/units.ts'
 import { BUILDINGS } from '../data/buildings.ts'
 import { PLAYER_BUILDABLE, canAfford } from '../world/construction.ts'
 import { FACTIONS } from '../data/factions.ts'
+import type { FactionId } from '../data/factions.ts'
 
 export interface CommandCardCallbacks {
   onMode(mode: 'move' | 'attack' | 'gather' | 'build' | 'patrol'): void
@@ -36,11 +37,28 @@ function factionColor(world: World, id: number): string {
   return `#${colors[0].toString(16).padStart(6, '0')}`
 }
 
-function unitLabel(kind: number): string {
-  if (kind === KIND_WORKER) return 'Worker'
-  if (kind === KIND_MELEE) return 'Melee'
-  if (kind === KIND_RANGED) return 'Ranged'
-  return '?'
+function unitKindToType(kind: number): UnitType | null {
+  if (kind === KIND_WORKER) return 'worker'
+  if (kind === KIND_MELEE) return 'melee'
+  if (kind === KIND_RANGED) return 'ranged'
+  return null
+}
+
+function factionIdFor(world: World, team: number): FactionId {
+  return world.factionOfTeam?.[team] ?? 'human'
+}
+
+/** Faction-aware display name, e.g. 'Peasant' for a human worker (game-soul canon). */
+function factionUnitName(world: World, team: number, utype: UnitType): string {
+  const fid = factionIdFor(world, team)
+  return FACTIONS[fid]?.units[utype] ?? utype
+}
+
+/** Faction-aware unit label for the selected entity's owning team. */
+function unitLabel(world: World, kind: number, id: number): string {
+  const utype = unitKindToType(kind)
+  if (!utype) return '?'
+  return factionUnitName(world, world.team[id] as 0 | 1, utype)
 }
 
 function buildingLabel(kind: number): string {
@@ -86,7 +104,7 @@ export function renderCommandCard(
   const initial = isResource
     ? (kind === KIND_TREE ? '🌲' : '⛏')
     : isUnit
-      ? unitLabel(kind)[0]
+      ? unitLabel(world, kind, id)[0]
       : buildingLabel(kind)[0]
   portrait.textContent = initial
   header.appendChild(portrait)
@@ -103,7 +121,7 @@ export function renderCommandCard(
         ? 'Tree'
         : 'Gold Mine'
       : isUnit
-        ? unitLabel(kind)
+        ? unitLabel(world, kind, id)
         : buildingLabel(kind)) +
     (selected.length > 1 ? ` ×${selected.length}` : '')
   titleWrap.appendChild(title)
@@ -164,7 +182,7 @@ export function renderCommandCard(
       if (kind === KIND_FARM) stat('Supply', '+8')
       // Trainable units
       const trainable = kind === KIND_HALL ? ['worker'] : kind === KIND_BARRACKS ? ['melee'] : kind === KIND_ARCHERY ? ['ranged'] : []
-      if (trainable.length > 0) stat('Trains', trainable.map((t) => t[0].toUpperCase() + t.slice(1)).join(', '))
+      if (trainable.length > 0) stat('Trains', trainable.map((t) => factionUnitName(world, TEAM_PLAYER, t as UnitType)).join(', '))
     }
   } else if (isResource) {
     const res = kind === KIND_TREE ? 'Wood' : 'Gold'
@@ -225,7 +243,7 @@ export function renderCommandCard(
         const afford =
           world.gold[TEAM_PLAYER] >= udef.cost.gold &&
           world.wood[TEAM_PLAYER] >= udef.cost.wood
-        cmd(`${utype[0].toUpperCase() + utype.slice(1)} ${udef.cost.gold}g`, () => cb.onTrain(utype), !afford)
+        cmd(`${factionUnitName(world, TEAM_PLAYER, utype)} ${udef.cost.gold}g`, () => cb.onTrain(utype), !afford)
       }
       // Upgrade buttons
       if (kind === KIND_BARRACKS) {
