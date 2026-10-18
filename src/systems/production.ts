@@ -39,10 +39,20 @@ const KIND_BY_UNIT: Record<UnitType, number> = {
  * Production: each finished building trains one unit at a time. When the
  * timer completes the unit spawns at the building's edge and walks to the
  * rally point. Costs are charged when the item is queued (enqueueTrain).
+ * Also ticks Orc in-place building upgrades (upgradeLeft).
  */
 export class ProductionSystemImpl implements System {
   update(world: World, dt: number): void {
     for (const id of world.entities.keys()) {
+      // Orc in-place upgrading: the building reforges itself, tier by tier.
+      if (world.upgradeLeft[id] > 0) {
+        world.upgradeLeft[id] -= dt
+        if (world.upgradeLeft[id] <= 0) {
+          world.upgradeLeft[id] = 0
+          completeUpgrade(world, id)
+        }
+        continue // A building mid-upgrade neither trains nor starts another.
+      }
       if (world.trainKind[id] === NO_TRAINING) continue
       if (world.buildProgress[id] < world.buildTotal[id]) continue // still under construction
       world.trainLeft[id] -= dt
@@ -60,6 +70,15 @@ export class ProductionSystemImpl implements System {
         world.positionZ[id],
       )
       const uid = unit.id
+      // Orc Foundry: higher tiers forge tougher soldiers.
+      const bTier = world.tier[id]
+      if (world.factionOfTeam[team] === 'orc' && bTier > 1 && kind !== KIND_WORKER) {
+        const hpMult = 1 + 0.15 * (bTier - 1)
+        const dmgMult = 1 + 0.1 * (bTier - 1)
+        world.health[uid] *= hpMult
+        world.maxHealth[uid] *= hpMult
+        world.damage[uid] *= dmgMult
+      }
       world.targetX[uid] = world.rallyX[id]
       world.targetZ[uid] = world.rallyZ[id]
       world.stopDist[uid] = 0.5
@@ -67,6 +86,49 @@ export class ProductionSystemImpl implements System {
       world.state[uid] = STATE_MOVE
     }
   }
+}
+
+/** Orc tier names for the in-place upgrade path. */
+export const ORC_TIER_NAMES = ["Iron-Bound", "Blood-Forged", "Warlord's Anvil"] as const
+
+/** Upgrade costs and build time per step (index = current tier). */
+const TIER_UPGRADES = [
+  { gold: 0, wood: 0, time: 0 }, // tier 1: base
+  { gold: 150, wood: 100, time: 20 }, // 1 -> 2
+  { gold: 300, wood: 200, time: 30 }, // 2 -> 3
+]
+
+/**
+ * Orc in-place upgrading (v2.0 spec): War-Halls and Foundries reforge
+ * themselves through three tiers without rebuilding. Returns true when the
+ * upgrade starts. The building cannot train while upgrading.
+ */
+export function upgradeBuilding(world: World, buildingId: number): boolean {
+  if (!world.entities.has(buildingId)) return false
+  const team = world.team[buildingId] as 0 | 1
+  if (world.factionOfTeam[team] !== 'orc') return false
+  const kind = world.kind[buildingId]
+  if (kind !== KIND_HALL && kind !== KIND_BARRACKS) return false
+  if (world.buildProgress[buildingId] < world.buildTotal[buildingId]) return false // unfinished
+  if (world.upgradeLeft[buildingId] > 0) return false // already upgrading
+  const tier = world.tier[buildingId]
+  if (tier >= 3) return false
+  const cost = TIER_UPGRADES[tier]
+  if (world.gold[team] < cost.gold || world.wood[team] < cost.wood) return false
+  world.gold[team] -= cost.gold
+  world.wood[team] -= cost.wood
+  world.upgradeLeft[buildingId] = cost.time
+  return true
+}
+
+/** Finish a tier upgrade: bump the tier and reinforce the structure. */
+function completeUpgrade(world: World, id: number): void {
+  world.tier[id] = Math.min(3, world.tier[id] + 1) as 1 | 2 | 3
+  // Each tier adds 40% max HP; heal the building by the same proportion.
+  const newMax = world.maxHealth[id] * 1.4
+  const ratio = world.health[id] / world.maxHealth[id]
+  world.maxHealth[id] = newMax
+  world.health[id] = newMax * ratio
 }
 
 /**
@@ -83,6 +145,7 @@ export function enqueueTrain(world: World, buildingId: number, type: UnitType): 
   if (!def.trains.includes(type)) return false
   if (world.buildProgress[buildingId] < world.buildTotal[buildingId]) return false
   if (world.trainKind[buildingId] !== NO_TRAINING) return false
+  if (world.upgradeLeft[buildingId] > 0) return false // mid-upgrade: no training
 
   const team = world.team[buildingId]
   const mods = FACTIONS[world.factionOfTeam[team]].mods
@@ -95,7 +158,9 @@ export function enqueueTrain(world: World, buildingId: number, type: UnitType): 
   world.gold[team] -= goldCost
   world.wood[team] -= woodCost
   world.trainKind[buildingId] = KIND_BY_UNIT[type]
-  world.trainTotal[buildingId] = (unitDef.trainTicks / TICK_RATE) * mods.train
+  // Orc War-Hall: higher tiers muster troops faster.
+  const tierBonus = world.factionOfTeam[team] === 'orc' ? Math.pow(0.85, world.tier[buildingId] - 1) : 1
+  world.trainTotal[buildingId] = (unitDef.trainTicks / TICK_RATE) * mods.train * tierBonus
   world.trainLeft[buildingId] = world.trainTotal[buildingId]
   return true
 }

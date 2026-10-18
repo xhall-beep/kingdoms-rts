@@ -159,6 +159,9 @@ const CmdTag = {
   Stop: 8,
   Hold: 9,
   Surrender: 10,
+  Militia: 11,
+  Upgrade: 12,
+  WarHorn: 13,
 } as const
 type CmdTag = (typeof CmdTag)[keyof typeof CmdTag]
 
@@ -190,6 +193,12 @@ function cmdSize(cmd: Command): number {
       return 1 + varintSize(cmd.buildingId) + 4 + 4
     case 'surrender':
       return 1 + 1
+    case 'militia':
+      return 1 + 1
+    case 'upgrade':
+      return 1 + varintSize(cmd.buildingId)
+    case 'warhorn':
+      return 1 + 1 + 1
   }
 }
 
@@ -272,6 +281,19 @@ function writeCommand(view: DataView, o: number, cmd: Command): number {
       view.setUint8(o++, CmdTag.Surrender)
       view.setUint8(o++, cmd.player)
       return o
+    case 'militia':
+      view.setUint8(o++, CmdTag.Militia)
+      view.setUint8(o++, cmd.team)
+      return o
+    case 'upgrade':
+      view.setUint8(o++, CmdTag.Upgrade)
+      o = writeVarint(view, o, cmd.buildingId)
+      return o
+    case 'warhorn':
+      view.setUint8(o++, CmdTag.WarHorn)
+      view.setUint8(o++, cmd.team)
+      view.setUint8(o++, cmd.rally)
+      return o
   }
 }
 
@@ -336,6 +358,20 @@ function readCommand(view: DataView, o: number): { cmd: Command; next: number } 
     case CmdTag.Surrender: {
       const p = view.getUint8(o++)
       return { cmd: { type: 'surrender', step: 0, player: (p === 1 ? 1 : 0) as 0 | 1 }, next: o }
+    }
+    case CmdTag.Militia: {
+      const t = view.getUint8(o++)
+      return { cmd: { type: 'militia', step: 0, team: (t === 1 ? 1 : 0) as 0 | 1 }, next: o }
+    }
+    case CmdTag.Upgrade: {
+      const b = readVarint(view, o); o = b.next
+      return { cmd: { type: 'upgrade', step: 0, buildingId: b.value }, next: o }
+    }
+    case CmdTag.WarHorn: {
+      const t = view.getUint8(o++)
+      const r = view.getUint8(o++)
+      const rally = r === 2 ? 2 : r === 3 ? 3 : 1
+      return { cmd: { type: 'warhorn', step: 0, team: (t === 1 ? 1 : 0) as 0 | 1, rally: rally as 1 | 2 | 3 }, next: o }
     }
     default:
       throw new Error(`unknown command tag ${tag}`)

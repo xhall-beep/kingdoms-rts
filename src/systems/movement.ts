@@ -2,6 +2,7 @@ import type { System, World } from '../core/World'
 import { KIND_TREE } from '../core/World'
 import { SpatialHash } from '../core/spatial-hash.ts'
 import { FACTIONS } from '../data/factions.ts'
+import { rallySpeedMult } from './warhorn.ts'
 import { HARVEST_OFF, KIND_WORKER, NO_TARGET, STATE_IDLE, STATE_MOVE , STATE_PATROL, STATE_HOLD} from '../core/World'
 
 /**
@@ -16,8 +17,10 @@ import { HARVEST_OFF, KIND_WORKER, NO_TARGET, STATE_IDLE, STATE_MOVE , STATE_PAT
 function getEffectiveSpeed(world: World, id: number, hash: SpatialHash): number {
   const base = world.moveSpeed[id]
   const team = world.team[id] as 0 | 1
+  // War Horn: Gale March quickens the army's stride.
+  const rally = rallySpeedMult(world, team)
   const woodland = FACTIONS[world.factionOfTeam[team]].signature?.woodland
-  if (!woodland) return base
+  if (!woodland) return base * rally
 
   // Check if near any tree (cell 24 > treeRadius 8, so 3x3 covers it)
   const px = world.positionX[id]
@@ -31,7 +34,7 @@ function getEffectiveSpeed(world: World, id: number, hash: SpatialHash): number 
     const dz = world.positionZ[tid] - pz
     if (dx * dx + dz * dz <= r2) nearTree = true
   })
-  return nearTree ? base * (1 + woodland.speedBonus) : base
+  return (nearTree ? base * (1 + woodland.speedBonus) : base) * rally
 }
 
 export class MovementSystemImpl implements System {

@@ -17,11 +17,12 @@ import {
   STATE_IDLE,
   STATE_BUILD,
   KIND_GOLDMINE,
+  KIND_SHRINE,
   KIND_TREE} from '../core/World'
 import { orderBuild, orderGather } from '../systems/gather.ts'
 import { orderAttackMove } from '../systems/combat.ts'
 import { orderMove } from '../systems/movement.ts'
-import { enqueueTrain } from '../systems/production.ts'
+import { enqueueTrain, upgradeBuilding } from '../systems/production.ts'
 import {
   BUILDING_TYPE_BY_KIND,
   placeStructure,
@@ -252,8 +253,52 @@ export class OpponentAI implements System {
     this.expandBase(world, hall, workers)
     const reserveGold = this.expand(world, hall, workers)
     this.resumeStalledBuilds(world, workers)
+    this.upgradeOrcBuildings(world, hall)
+    this.contestShrine(world, soldiers)
     this.trainSoldiers(world, workers.length, reserveGold)
     if (!this.defend(world, hall, soldiers)) this.attack(world, hall, soldiers)
+  }
+
+  /**
+   * Shrine contest: if the shrine isn't held by us and we have troops to
+   * spare beyond the army the personality wants to attack with, send a small
+   * party to take it. Never splits the main army — Victory Points punish
+   * turtling, not disciplined force concentration.
+   */
+  private contestShrine(world: World, soldiers: number[]): void {
+    let shrine = -1
+    for (const id of world.entities.keys()) {
+      if (world.kind[id] === KIND_SHRINE) {
+        shrine = id
+        break
+      }
+    }
+    if (shrine === -1 || world.shrineHeld[shrine] === this.team) return
+    const idle = soldiers.filter(
+      (id) => world.state[id] === STATE_IDLE && !this.fleeing.has(id),
+    )
+    const surplus = idle.length - this.tuning.attackArmy
+    if (surplus < 3) return
+    const party = idle.slice(0, 3)
+    for (const id of party) {
+      this.emitAttackMove(world, id, world.positionX[shrine], world.positionZ[shrine])
+    }
+  }
+
+  /**
+   * Orc racial: reforge the War-Hall and Foundries through the tiers when the
+   * war chest allows. Runs before trainSoldiers so upgrades compete honestly
+   * with unit production for the same gold.
+   */
+  private upgradeOrcBuildings(world: World, hall: number): void {
+    if (world.factionOfTeam[this.team] !== 'orc') return
+    // Only once the economy is rolling: keep an early-game reserve.
+    if (world.gold[this.team] < 400) return
+    if (upgradeBuilding(world, hall)) return
+    for (const id of world.entities.keys()) {
+      if (world.team[id] !== this.team || world.kind[id] !== KIND_BARRACKS) continue
+      if (upgradeBuilding(world, id)) return
+    }
   }
 
   private trainWorkers(world: World, hall: number, workerCount: number): void {
@@ -482,11 +527,13 @@ export class OpponentAI implements System {
 
     // Priority order. Farms only jump the queue when population is truly blocked,
     // otherwise cheap farms would starve the military buildings forever.
+    // Undead raise no farms — Soul-Ash from the fallen feeds their supply cap.
+    const needsFarms = world.factionOfTeam[team] !== 'undead'
     let want: number | null = null
     if (ready && all(KIND_BARRACKS) === 0) want = KIND_BARRACKS
-    else if (slack <= 1 && pending(KIND_FARM) === 0) want = KIND_FARM
+    else if (needsFarms && slack <= 1 && pending(KIND_FARM) === 0) want = KIND_FARM
     else if (ready && all(KIND_ARCHERY) === 0) want = KIND_ARCHERY
-    else if (slack <= 3 && pending(KIND_FARM) === 0) want = KIND_FARM
+    else if (needsFarms && slack <= 3 && pending(KIND_FARM) === 0) want = KIND_FARM
     else if (ready && world.gold[team] >= 400 && all(KIND_BARRACKS) < 2 && pending(KIND_BARRACKS) === 0) {
       want = KIND_BARRACKS
     }
@@ -656,6 +703,9 @@ export class OpponentAI implements System {
 
   /** Once strong enough, idle soldiers march on the enemy hall (or search for it). */
   private attack(world: World, hall: number, soldiers: number[]): void {
+    // The quiet opening: no AI attacks before the First Bell (3:00).
+    // The Warlord personality still hits *at* the bell — see tuning.
+    if (world.bellsRung[0] !== 1) return
     const garrisonSize = this.getGarrisonSize()
     const available = soldiers.length - garrisonSize
     const forced = this.gameTime > 240 && available >= 3 // 4 min: attack with what you have

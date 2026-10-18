@@ -8,6 +8,7 @@ import {
   KIND_HALL,
   KIND_MELEE,
   KIND_RANGED,
+  KIND_SHRINE,
   KIND_TREE,
   KIND_WORKER,
   KIND_TOWER,
@@ -365,6 +366,14 @@ export class Renderer {
     } else if (kind === KIND_GOLDMINE) {
       this.circle(p.x, p.y, r, '#b8912f')
       this.circle(p.x, p.y, r * 0.55, '#f5c542')
+    } else if (kind === KIND_SHRINE) {
+      // Shrine of Kings: stone ring, glowing rune colored by holder.
+      const held = world.shrineHeld[id]
+      const holderFaction = held === 0 || held === 1 ? world.factionOfTeam[held as 0 | 1] : null
+      const rune = holderFaction ? css(FACTIONS[holderFaction].colors[0]) : '#f5c542'
+      this.circle(p.x, p.y, r, '#4a4a55')
+      this.circle(p.x, p.y, r * 0.7, '#2a2a32')
+      this.circle(p.x, p.y, r * 0.35, rune)
     } else if (kind >= KIND_HALL && kind <= KIND_FARM) {
       // Building: try sprite first, fall back to procedural.
       const spriteKey = SPRITE_FOR_KIND[kind]

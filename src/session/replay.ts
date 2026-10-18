@@ -10,7 +10,8 @@ import {
 import { orderAttack, orderAttackMove } from '../systems/combat.ts'
 import { orderBuild, orderGather } from '../systems/gather.ts'
 import { orderMove, orderPatrol } from '../systems/movement.ts'
-import { enqueueTrain, setRally } from '../systems/production.ts'
+import { enqueueTrain, setRally, upgradeBuilding } from '../systems/production.ts'
+import { soundWarHorn } from '../systems/warhorn.ts'
 import { placeStructure } from '../world/construction.ts'
 import type { Command } from './commands.ts'
 
@@ -155,6 +156,15 @@ export class ReplayPlayer {
         if (world.entities.has(cmd.buildingId)) {
           setRally(world, cmd.buildingId, cmd.x, cmd.z)
         }
+        break
+      case 'militia':
+        world.ringMilitiaBell(cmd.team)
+        break
+      case 'upgrade':
+        if (world.entities.has(cmd.buildingId)) upgradeBuilding(world, cmd.buildingId)
+        break
+      case 'warhorn':
+        soundWarHorn(world, cmd.team, cmd.rally)
         break
       case 'patrol':
         for (const id of cmd.unitIds) {

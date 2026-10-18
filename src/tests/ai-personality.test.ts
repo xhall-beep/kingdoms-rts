@@ -55,6 +55,9 @@ suite('ai-personality: behavior')
 /** Reveal the player hall to the enemy AI and hand it `count` idle melee units. */
 function armedScenario(count: number): { world: World; soldiers: number[] } {
   const world = makeWorld()
+  // Mid-game scenario: the First Bell has rung (the AI only attacks post-bell).
+  world.matchTime = 200
+  world.bellsRung[0] = 1
   let playerHallX = 0
   let playerHallZ = 0
   let enemyHallX = 0

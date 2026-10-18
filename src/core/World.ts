@@ -21,6 +21,7 @@ export const KIND_FARM = 6
 export const KIND_TOWER = 9
 export const KIND_TREE = 7
 export const KIND_GOLDMINE = 8
+export const KIND_SHRINE = 10
 
 // ---- unit states ----
 export const STATE_IDLE = 0
@@ -131,12 +132,16 @@ export class World {
   // ---- workers ----
   readonly carryKind: Uint8Array
   readonly carryAmount: Float32Array
+  /** Per-worker carry capacity (racial: Drudge hauls double). */
+  readonly carryMax: Float32Array
   readonly gatherTimer: Float32Array
   readonly amount: Float32Array // resource node stock
 
   // ---- construction ----
   readonly buildProgress: Float32Array
   readonly buildTotal: Float32Array
+  /** Seed-warp sites (undead): the structure pulls itself up with no worker present. */
+  readonly buildAuto: Uint8Array
 
   // ---- production (single active training slot per building) ----
   readonly trainKind: Int8Array
@@ -166,6 +171,33 @@ export class World {
   factionOfTeam: [FactionId, FactionId] = ['human', 'human']
   /** Simulation tick counter (for deterministic rolls). */
   tick = 0
+  /** Match clock in seconds — drives the Three Bells pacing system. */
+  matchTime = 0
+  /** Bells rung: index 0 = First (3:00), 1 = Second (6:00), 2 = Third (9:00). */
+  readonly bellsRung: Uint8Array = new Uint8Array(3)
+  /** Militia Bell: per-worker expiry timestamp (human racial). While
+   *  matchTime < militiaUntil[id], the peasant fights as a Levy Pikeman. */
+  readonly militiaUntil: Float32Array
+  /** Militia Bell cooldown per team (matchTime seconds). */
+  militiaCooldown: number[] = [0, 0]
+  /** Orc in-place upgrading: building tier 1-3 (per building entity). */
+  readonly tier: Uint8Array
+  /** Orc in-place upgrading: seconds remaining on the current tier upgrade. */
+  readonly upgradeLeft: Float32Array
+  /** Soul-Ash: corpse count harvested per team (undead racial economy). */
+  soulAsh: number[] = [0, 0]
+  /** War Horn: rally charge 0-100 per team, earned by dealing damage. */
+  warCharge: number[] = [0, 0]
+  /** War Horn: last tick the team dealt damage (for Coward's Decay). */
+  warLastTick: number[] = [0, 0]
+  /** War Horn: active rally per team (0=none, 1=Gale March, 2=Ironblood). */
+  rallyKind: number[] = [0, 0]
+  /** War Horn: rally expiry timestamp (matchTime seconds) per team. */
+  rallyUntil: number[] = [0, 0]
+  /** Victory Points: holding shrines drains the enemy's score (anti-stall). */
+  victoryPoints: number[] = [1000, 1000]
+  /** Shrine holder per entity (-1 = neutral, 0/1 = team). */
+  readonly shrineHeld: Int8Array
   /** Remaining ticks for reanimated units (0 = not reanimated). */
   readonly reanimateTicks: Int32Array
   /** Consecutive ticks in combat (for Orc momentum). */
@@ -227,10 +259,16 @@ export class World {
     this.targetId = new Int32Array(length).fill(NO_TARGET)
     this.carryKind = new Uint8Array(length)
     this.carryAmount = new Float32Array(length)
+    this.carryMax = new Float32Array(length).fill(10)
     this.gatherTimer = new Float32Array(length)
     this.amount = new Float32Array(length)
     this.buildProgress = new Float32Array(length)
     this.buildTotal = new Float32Array(length)
+    this.buildAuto = new Uint8Array(length)
+    this.militiaUntil = new Float32Array(length)
+    this.tier = new Uint8Array(length).fill(1)
+    this.upgradeLeft = new Float32Array(length)
+    this.shrineHeld = new Int8Array(length).fill(-1)
     this.trainKind = new Int8Array(length).fill(NO_TRAINING)
     this.trainLeft = new Float32Array(length)
     this.trainTotal = new Float32Array(length)
@@ -325,6 +363,7 @@ export class World {
 
   update(deltaSeconds: number): void {
     this.tick++
+    this.matchTime += deltaSeconds
     // Rebuild the shared spatial index (deterministic world order).
     // Only the movement system changes positions, and it runs last,
     // so this snapshot is position-identical for every system this tick.
@@ -428,6 +467,10 @@ export class World {
     this.cooldownTotal[id] = def.cooldownTicks / TICK_RATE
     this.moveSpeed[id] = def.speed * mods.speed * TICK_RATE
     this.radius[id] = 0.5
+    // Racial worker identity: carry capacity comes from the faction's worker profile.
+    if (type === 'worker') {
+      this.carryMax[id] = FACTIONS[this.factionOfTeam[team]].worker.carryMax
+    }
     this.state[id] = STATE_IDLE
     this.setPosition(entity, x, 0, z)
     this.supplyUsed[team] += def.popCost
@@ -452,6 +495,8 @@ export class World {
     this.rallyX[id] = x - Math.sign(x) * (def.radius + 4)
     this.rallyZ[id] = z - Math.sign(z) * (def.radius + 4)
     this.state[id] = STATE_IDLE
+    this.tier[id] = 1
+    this.upgradeLeft[id] = 0
     this.setPosition(entity, x, 0, z)
     if (built) this.supplyCap[team] += def.supply
     // Towers get combat stats for auto-attack
@@ -475,5 +520,70 @@ export class World {
     this.maxHealth[id] = 1
     this.setPosition(entity, x, 0, z)
     return entity
+  }
+
+  /**
+   * Spawn a neutral shrine. Shrines are capturable map objectives: holding
+   * one drains the enemy's Victory Points (anti-stall).
+   */
+  spawnShrine(x: number, z: number): Entity {
+    const entity = this.createEntity()
+    const id = entity.id
+    this.kind[id] = KIND_SHRINE
+    this.team[id] = 0 // neutral; holder tracked in shrineHeld
+    this.health[id] = 500
+    this.maxHealth[id] = 500
+    this.radius[id] = 3
+    this.sight[id] = 0
+    this.shrineHeld[id] = -1
+    this.state[id] = STATE_IDLE
+    this.setPosition(entity, x, 0, z)
+    return entity
+  }
+
+  /**
+   * Militia Bell (human racial, v2.0 spec): the Town Hall rings the alarm and
+   * nearby Peasants take up pikes as Levy Pikemen for 25 seconds — at the cost
+   * of halting all resource collection (militia don't gather). 120s cooldown.
+   * Returns the number of peasants mustered, or 0 if unavailable/on cooldown.
+   */
+  ringMilitiaBell(team: 0 | 1): number {
+    if (this.factionOfTeam[team] !== 'human') return 0
+    if (this.matchTime < this.militiaCooldown[team]) return 0
+    // Find the team's hall as the muster point.
+    let hx = 0
+    let hz = 0
+    let found = false
+    for (const id of this.entities.keys()) {
+      if (this.team[id] === team && this.kind[id] === KIND_HALL) {
+        hx = this.positionX[id]
+        hz = this.positionZ[id]
+        found = true
+        break
+      }
+    }
+    if (!found) return 0
+    const MUSTER_RADIUS = 25
+    const DURATION = 25
+    let mustered = 0
+    for (const id of this.entities.keys()) {
+      if (this.team[id] !== team || this.kind[id] !== KIND_WORKER) continue
+      const d = Math.hypot(this.positionX[id] - hx, this.positionZ[id] - hz)
+      if (d > MUSTER_RADIUS) continue
+      this.militiaUntil[id] = this.matchTime + DURATION
+      // Drop what they're carrying and stand ready — militia don't gather.
+      this.carryAmount[id] = 0
+      this.carryKind[id] = 0
+      this.state[id] = STATE_IDLE
+      mustered += 1
+    }
+    if (mustered === 0) return 0
+    this.militiaCooldown[team] = this.matchTime + 120
+    return mustered
+  }
+
+  /** True while the given worker serves as militia. */
+  isMilitia(id: number): boolean {
+    return this.militiaUntil[id] > this.matchTime
   }
 }

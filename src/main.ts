@@ -10,9 +10,12 @@ import type { FactionId } from './data/factions.ts'
 import './style.css'
 import { CombatSystemImpl } from './systems/combat'
 import { GatherSystemImpl } from './systems/gather'
+import { BellSystemImpl } from './systems/bells'
+import { WarHornSystemImpl, soundWarHorn } from './systems/warhorn'
+import { ShrineSystemImpl } from './systems/shrines'
 import { MovementSystemImpl } from './systems/movement'
 import { ProductionSystemImpl } from './systems/production'
-import { enqueueTrain, researchUpgrade } from './systems/production'
+import { enqueueTrain, researchUpgrade, upgradeBuilding } from './systems/production'
 import type { UpgradeType } from './data/upgrades.ts'
 import { VictorySystemImpl } from './systems/victory'
 import { VisionSystemImpl } from './systems/vision'
@@ -77,6 +80,9 @@ export function composeGame(canvas: HTMLCanvasElement): GameComposition {
     combat: new CombatSystemImpl(),
     vision: new VisionSystemImpl(),
     victory: new VictorySystemImpl(),
+    bells: new BellSystemImpl(),
+    warhorn: new WarHornSystemImpl(),
+    shrines: new ShrineSystemImpl(),
     opponent: new OpponentAI(TEAM_ENEMY),
     movement: new MovementSystemImpl(),
   }
@@ -86,6 +92,9 @@ export function composeGame(canvas: HTMLCanvasElement): GameComposition {
   engine.world.registerSystem(systems.combat)
   engine.world.registerSystem(systems.vision)
   engine.world.registerSystem(systems.victory)
+  engine.world.registerSystem(systems.bells)
+  engine.world.registerSystem(systems.warhorn)
+  engine.world.registerSystem(systems.shrines)
   engine.world.registerSystem(systems.opponent)
   engine.world.registerSystem(systems.movement)
   inputController.attach(canvas, engine.world, renderer)
@@ -362,6 +371,38 @@ export function initializeGame(): GameComposition {
           step: composition.engine.getSimulationSteps(),
           buildingId,
           unit: type,
+        })
+      }
+    },
+    onMilitia: () => {
+      const mustered = composition.engine.world.ringMilitiaBell(TEAM_PLAYER)
+      if (mustered > 0) {
+        commandLog.record({
+          type: 'militia',
+          step: composition.engine.getSimulationSteps(),
+          team: TEAM_PLAYER,
+        })
+      }
+    },
+    onUpgrade: () => {
+      const selected = composition.inputController.getSelected()
+      if (selected.length !== 1) return
+      const buildingId = selected[0]
+      if (upgradeBuilding(composition.engine.world, buildingId)) {
+        commandLog.record({
+          type: 'upgrade',
+          step: composition.engine.getSimulationSteps(),
+          buildingId,
+        })
+      }
+    },
+    onWarHorn: (rally) => {
+      if (soundWarHorn(composition.engine.world, TEAM_PLAYER, rally)) {
+        commandLog.record({
+          type: 'warhorn',
+          step: composition.engine.getSimulationSteps(),
+          team: TEAM_PLAYER,
+          rally,
         })
       }
     },

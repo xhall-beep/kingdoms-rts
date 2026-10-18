@@ -27,6 +27,10 @@ export function placeStructure(
   z: number,
 ): { ok: boolean; id: number } {
   const def = BUILDINGS[type]
+  // Undead raise no farms: Soul-Ash from the fallen feeds their supply cap.
+  if (type === 'farm' && world.factionOfTeam[team] === 'undead') {
+    return { ok: false, id: NO_TARGET }
+  }
   if (world.gold[team] < def.cost.gold || world.wood[team] < def.cost.wood) {
     return { ok: false, id: NO_TARGET }
   }

@@ -1,4 +1,5 @@
 import type { System, World } from '../core/World'
+import { FACTIONS } from '../data/factions.ts'
 import { BUILDINGS } from '../data/buildings.ts'
 import { BUILDING_TYPE_BY_KIND } from '../world/construction.ts'
 import {
@@ -24,8 +25,40 @@ import {
 
 const GATHER_TIME = 0.8 // seconds per swing
 const GATHER_AMOUNT = 2 // resource taken per swing
-const CARRY_MAX = 10
 const ARRIVE_MARGIN = 0.8 // stand this far from the target's edge
+/** Seed-warp self-construction rate (undead): progress per second with no worker. */
+const SEED_WARP_RATE = 1.2
+
+/**
+ * Shared construction-completion handling: full health and supply grant.
+ * Used by both worker construction and undead seed-warp self-building.
+ */
+function finishConstruction(world: World, site: number): void {
+  // Grant supply on completion (not on placement).
+  const bkind = world.kind[site]
+  if (bkind >= KIND_HALL && bkind <= KIND_FARM) {
+    const btype = BUILDING_TYPE_BY_KIND[bkind]
+    world.supplyCap[world.team[site]] += BUILDINGS[btype].supply
+  }
+}
+
+/**
+ * Tilled Farmland (human racial): finished farms quicken nearby labor —
+ * workers within 12 world units of their team's farm work 15% faster.
+ */
+const FARM_AURA_RADIUS = 12
+function nearFinishedFarm(world: World, id: number): boolean {
+  if (world.factionOfTeam[world.team[id] as 0 | 1] !== 'human') return false
+  const x = world.positionX[id]
+  const z = world.positionZ[id]
+  for (const fid of world.entities.keys()) {
+    if (world.kind[fid] !== KIND_FARM || world.team[fid] !== world.team[id]) continue
+    if (world.buildProgress[fid] < world.buildTotal[fid]) continue
+    const d = Math.hypot(world.positionX[fid] - x, world.positionZ[fid] - z)
+    if (d <= FARM_AURA_RADIUS) return true
+  }
+  return false
+}
 
 /**
  * Worker FSM, adapted from the sim's workerStates:
@@ -46,6 +79,8 @@ export class GatherSystemImpl implements System {
             sendToHall(world, id)
             break
           }
+          // Militia Bell: levy pikemen hold their ground — they don't gather.
+          if (world.isMilitia(id)) break
           // HARVEST_OFF: an explicit move order disarmed auto-gather; hold position.
           if (world.harvestKind[id] === HARVEST_OFF) break
           const node = nearestNode(world, id)
@@ -73,19 +108,24 @@ export class GatherSystemImpl implements System {
             break
           }
           if (world.moving[id] === 1) break // still walking there
-          world.gatherTimer[id] += dt
+          // Tilled Farmland: human workers near a finished farm swing 15% faster.
+          const haste = nearFinishedFarm(world, id) ? 1.15 : 1
+          world.gatherTimer[id] += dt * haste
           if (world.gatherTimer[id] < GATHER_TIME) break
           world.gatherTimer[id] = 0
           world.carryKind[id] = world.kind[node] === KIND_TREE ? CARRY_WOOD : CARRY_GOLD
+          const carryMax = world.carryMax[id]
           const taken = Math.min(
             GATHER_AMOUNT,
-            CARRY_MAX - world.carryAmount[id],
+            carryMax - world.carryAmount[id],
             world.amount[node],
           )
-          world.amount[node] -= taken
+          // Elf symbiotic harvest: sap-tapping never depletes the tree.
+          const sapTap = FACTIONS[world.factionOfTeam[world.team[id]]].worker.sapTap
+          if (!sapTap) world.amount[node] -= taken
           world.carryAmount[id] += taken
           if (world.amount[node] <= 0) spentNodes.push(node)
-          if (world.carryAmount[id] >= CARRY_MAX || world.amount[node] <= 0) {
+          if (world.carryAmount[id] >= carryMax || world.amount[node] <= 0) {
             world.state[id] = STATE_RETURN
             sendToHall(world, id)
           }
@@ -112,7 +152,18 @@ export class GatherSystemImpl implements System {
             break
           }
           if (world.moving[id] === 1) break // still walking to the site
-          world.buildProgress[site] += dt
+          const workerDef = FACTIONS[world.factionOfTeam[world.team[id]]].worker
+          // Undead seed-warp: the Husk plants the bone-seed and walks away;
+          // the structure pulls itself up from the earth on its own.
+          if (workerDef.seedWarp) {
+            world.buildAuto[site] = 1
+            world.targetId[id] = NO_TARGET
+            world.state[id] = STATE_IDLE
+            break
+          }
+          // Tilled Farmland: human builders near a finished farm work 15% faster.
+          const haste = nearFinishedFarm(world, id) ? 1.15 : 1
+          world.buildProgress[site] += dt * workerDef.buildRate * haste
           const done = world.buildProgress[site] >= world.buildTotal[site]
           world.health[site] = done
             ? world.maxHealth[site]
@@ -123,18 +174,33 @@ export class GatherSystemImpl implements System {
                 ),
               )
           if (done) {
+            finishConstruction(world, site)
             world.state[id] = STATE_IDLE
-            // Grant supply on completion (not on placement).
-            const bkind = world.kind[site]
-            if (bkind >= KIND_HALL && bkind <= KIND_FARM) {
-              const btype = BUILDING_TYPE_BY_KIND[bkind]
-              world.supplyCap[world.team[site]] += BUILDINGS[btype].supply
-            }
           }
           break
         }
         default:
           break
+      }
+    }
+    // Seed-warp sites (undead) pull themselves up with no worker present.
+    for (const id of world.entities.keys()) {
+      if (world.buildAuto[id] !== 1) continue
+      if (world.buildProgress[id] >= world.buildTotal[id]) {
+        world.buildAuto[id] = 0
+        continue
+      }
+      world.buildProgress[id] += dt * SEED_WARP_RATE
+      const done = world.buildProgress[id] >= world.buildTotal[id]
+      world.health[id] = done
+        ? world.maxHealth[id]
+        : Math.max(
+            world.health[id],
+            Math.floor((world.maxHealth[id] * world.buildProgress[id]) / world.buildTotal[id]),
+          )
+      if (done) {
+        world.buildAuto[id] = 0
+        finishConstruction(world, id)
       }
     }
     for (const node of spentNodes) world.removeEntityById(node)

@@ -33,6 +33,12 @@ export class VictorySystemImpl implements System {
       world.winner = 0
     } else if (!alive0) {
       world.winner = 1
+    } else if (world.victoryPoints[0] <= 0 && world.victoryPoints[1] <= 0) {
+      world.winner = 0 // simultaneous drain: player held out
+    } else if (world.victoryPoints[0] <= 0) {
+      world.winner = 1 // Victory Points: stalled out
+    } else if (world.victoryPoints[1] <= 0) {
+      world.winner = 0 // Victory Points: enemy stalled out
     }
   }
 

@@ -14,6 +14,7 @@ import {
 } from '../core/World'
 import { getUnits } from '../data/stats.ts'
 import type { UnitType } from '../data/units.ts'
+import { ORC_TIER_NAMES } from '../systems/production.ts'
 import { BUILDINGS } from '../data/buildings.ts'
 import { PLAYER_BUILDABLE, canAfford } from '../world/construction.ts'
 import { FACTIONS } from '../data/factions.ts'
@@ -26,6 +27,9 @@ export interface CommandCardCallbacks {
   onBuildType(type: string): void
   onTrain(type: string): void
   onResearch(type: string): void
+  onMilitia(): void
+  onUpgrade(): void
+  onWarHorn(rally: 1 | 2 | 3): void
   onSetRally?(): void
 }
 
@@ -222,6 +226,8 @@ export function renderCommandCard(
         cmd('Gather', () => cb.onMode('gather'), false, 'G')
         // Build options as separate buttons
         for (const btype of PLAYER_BUILDABLE) {
+          // Undead raise no farms — Soul-Ash feeds their supply cap.
+          if (btype === 'farm' && world.factionOfTeam[TEAM_PLAYER] === 'undead') continue
           const bdef = BUILDINGS[btype]
           const afford = canAfford(world, TEAM_PLAYER, btype)
           cmd(
@@ -263,6 +269,43 @@ export function renderCommandCard(
         if (dmgLvl < 3) {
           const afford = world.gold[TEAM_PLAYER] >= 100 && world.wood[TEAM_PLAYER] >= 50
           cmd(`Ranged +${dmgLvl + 1} 100g`, () => cb.onResearch('rangedDmg'), !afford)
+        }
+      }
+      // Militia Bell (human racial): muster nearby peasants as Levy Pikemen.
+      if (kind === KIND_HALL && world.factionOfTeam[TEAM_PLAYER] === 'human') {
+        const onCooldown = world.matchTime < world.militiaCooldown[TEAM_PLAYER]
+        cmd(
+          onCooldown ? 'Militia Bell (cooldown)' : '🔔 Militia Bell',
+          () => cb.onMilitia(),
+          onCooldown,
+        )
+      }
+      // Orc in-place upgrading: reforge the War-Hall / Foundry through 3 tiers.
+      if ((kind === KIND_HALL || kind === KIND_BARRACKS) && world.factionOfTeam[TEAM_PLAYER] === 'orc') {
+        const tier = world.tier[id]
+        if (tier < 3) {
+          const costs = [{ gold: 0, wood: 0 }, { gold: 150, wood: 100 }, { gold: 300, wood: 200 }]
+          const cost = costs[tier]
+          const afford = world.gold[TEAM_PLAYER] >= cost.gold && world.wood[TEAM_PLAYER] >= cost.wood
+          const upgrading = world.upgradeLeft[id] > 0
+          const label = upgrading
+            ? `Upgrading…`
+            : `⬆ ${ORC_TIER_NAMES[tier]} ${cost.gold}g ${cost.wood}w`
+          cmd(label, () => cb.onUpgrade(), !afford || upgrading)
+        }
+      }
+      // War Horn: sound a rally when the horn is charged (all races).
+      if (kind === KIND_HALL) {
+        const charge = Math.floor(world.warCharge[TEAM_PLAYER])
+        const rallying = world.rallyKind[TEAM_PLAYER] !== 0 && world.rallyUntil[TEAM_PLAYER] > world.matchTime
+        const labels: Record<number, string> = { 1: '🌪 Gale March', 2: '🩸 Ironblood', 3: '💨 Second Wind' }
+        for (const r of [1, 2, 3] as const) {
+          const ready = charge >= 50 && !rallying
+          cmd(
+            `${labels[r]}${ready ? ` (${charge})` : ''}`,
+            () => cb.onWarHorn(r),
+            !ready,
+          )
         }
       }
       if (cb.onSetRally) cmd('Rally', () => cb.onSetRally!(), false, 'R')

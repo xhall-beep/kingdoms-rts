@@ -38,6 +38,9 @@ export interface HudCallbacks {
   onLocateBase(): void
   onStop(): void
   onHold(): void
+  onMilitia(): void
+  onUpgrade(): void
+  onWarHorn(rally: 1 | 2 | 3): void
   onPause(): void
   onSave(): void
   onLoad(): void
@@ -297,6 +300,29 @@ export class HudImpl implements Hud {
     this.update(world, [])
   }
 
+  /** The Three Bells: announce each bell once via the HUD banner when it rings. */
+  private announcedBells = [false, false, false]
+  private announceBells(world: World): void {
+    const names = ['🔔 First Bell — the Raid Bell', '🔔 Second Bell — the Turn', '🔔 Third Bell — the War Bell']
+    for (let i = 0; i < 3; i += 1) {
+      if (world.bellsRung[i] === 1 && !this.announcedBells[i]) {
+        this.announcedBells[i] = true
+        if (this.bannerEl) {
+          this.bannerEl.textContent = names[i]
+          this.bannerEl.hidden = false
+          setTimeout(() => {
+            if (this.bannerEl) this.bannerEl.hidden = true
+          }, 4000)
+        }
+        try {
+          if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate(80)
+        } catch { /* noop */ }
+      }
+      // A fresh match resets announcements (bellsRung cleared on new world).
+      if (world.bellsRung[i] === 0) this.announcedBells[i] = false
+    }
+  }
+
   /** Show or hide the PvP surrender button (visible only during a live match). */
   setPvpActive(active: boolean): void {
     const btn = document.querySelector<HTMLElement>('#hud-surrender')
@@ -306,8 +332,7 @@ export class HudImpl implements Hud {
 
   /** Match-phase status line; separate from the banner so the per-frame
    *  updateBanner() (victory/defeat) never clobbers it. */
-  setPvpStatus(msg: string | null): void {
-    const el = document.querySelector<HTMLElement>('#hud-pvp-status')
+  setPvpStatus(msg: string | null): void {    const el = document.querySelector<HTMLElement>('#hud-pvp-status')
     if (!el) return
     if (msg === null) {
       el.hidden = true
@@ -323,6 +348,7 @@ export class HudImpl implements Hud {
     if (this.supplyEl) {
       this.supplyEl.textContent = `${world.supplyUsed[TEAM_PLAYER]}/${world.supplyCap[TEAM_PLAYER]}`
     }
+    this.announceBells(world)
     if (this.infoEl) {
       let workers = 0
       let army = 0
@@ -331,7 +357,19 @@ export class HudImpl implements Hud {
         if (world.kind[id] === KIND_WORKER) workers += 1
         else if (world.kind[id] <= 2) army += 1
       }
-      this.infoEl.textContent = `Workers ${workers} · Army ${army}`
+      let text = `Workers ${workers} · Army ${army}`
+      // Undead economy: show harvested Soul-Ash feeding the supply cap.
+      if (world.factionOfTeam[TEAM_PLAYER] === 'undead') {
+        text += ` · ☠ ${world.soulAsh[TEAM_PLAYER]}`
+      }
+      // War Horn charge.
+      const charge = Math.floor(world.warCharge[TEAM_PLAYER])
+      if (charge > 0 || (world.rallyKind[TEAM_PLAYER] !== 0 && world.rallyUntil[TEAM_PLAYER] > world.matchTime)) {
+        text += ` · 📯 ${charge}`
+      }
+      // Victory Points.
+      text += ` · VP ${Math.ceil(world.victoryPoints[TEAM_PLAYER])}`
+      this.infoEl.textContent = text
     }
     this.updateActions(world, selected)
     this.updateBuildings(world)
@@ -385,6 +423,9 @@ export class HudImpl implements Hud {
       onBuildType: (type) => this.callbacks?.onBuildType(type as never),
       onTrain: (type) => this.callbacks?.onTrain(type as never),
       onResearch: (type) => this.callbacks?.onResearch(type),
+      onMilitia: () => this.callbacks?.onMilitia(),
+      onUpgrade: () => this.callbacks?.onUpgrade(),
+      onWarHorn: (r) => this.callbacks?.onWarHorn(r),
     })
   }
 

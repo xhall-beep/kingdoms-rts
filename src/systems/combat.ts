@@ -1,11 +1,16 @@
 import type { System, World } from '../core/World'
 import { KIND_TOWER } from '../core/World'
+import { chargeWarHorn, rallyDamageMult, rallySpeedMult } from './warhorn.ts'
 import { SpatialHash } from '../core/spatial-hash.ts'
 import { FACTIONS } from '../data/factions.ts'
 import { TICK_RATE } from '../core/time.ts'
 import {
   KIND_MELEE,
   KIND_RANGED,
+  KIND_WORKER,
+  KIND_HALL,
+  KIND_TREE,
+  KIND_GOLDMINE,
   NO_TARGET,
   STATE_ATTACK,
   STATE_ATTACKMOVE,
@@ -28,8 +33,10 @@ import {
  * - Workers are weak fighters vs everything
  */
 function getCounterMultiplier(world: World, attacker: number, target: number): number {
-  const aKind = world.kind[attacker]
+  let aKind = world.kind[attacker]
   const tKind = world.kind[target]
+  // Militia Bell: levy pikemen fight as soldiers, not workers.
+  if (aKind === KIND_WORKER && world.isMilitia(attacker)) aKind = 1 // KIND_MELEE
   // KIND_WORKER=0, KIND_MELEE=1, KIND_RANGED=2 (from World.ts)
   if (aKind === 1 && tKind === 0) return 1.5 // Melee vs Worker: slaughter
   if (aKind === 2 && tKind === 1) return 0.7 // Ranged vs Melee: resisted
@@ -46,7 +53,9 @@ export class CombatSystemImpl implements System {
     this.updateTowers(world, dt, dead, hash)
     for (const id of world.entities.keys()) {
       const kind = world.kind[id]
-      if (kind !== KIND_MELEE && kind !== KIND_RANGED) continue
+      // Militia Bell: human peasants serving as Levy Pikemen fight alongside soldiers.
+      const isMilitia = kind === KIND_WORKER && world.isMilitia(id)
+      if (kind !== KIND_MELEE && kind !== KIND_RANGED && !isMilitia) continue
 
       // Explicit move order finished: back to idle so the AI (and player)
       // can issue fresh orders. (Workers get this from the gather system.)
@@ -130,14 +139,31 @@ export class CombatSystemImpl implements System {
         world.velocityZ[id] = 0
         world.state[id] = STATE_ATTACK
         if (world.cooldown[id] <= 0) {
-          world.cooldown[id] = world.cooldownTotal[id]
+          // Gale March: the rally quickens blades as well as boots.
+          world.cooldown[id] = world.cooldownTotal[id] / rallySpeedMult(world, world.team[id] as 0 | 1)
           // Mark both combatants (for momentum tracking)
           world.lastCombatTick[id] = world.tick
           world.lastCombatTick[target] = world.tick
           // Apply Orc momentum bonus
           const momentumBonus = this.getMomentumBonus(world, id)
-          const dmg = world.damage[id] * getCounterMultiplier(world, id, target) * momentumBonus
+          // Militia Bell: human peasants fight as Levy Pikemen (4x damage).
+          const militiaBonus =
+            world.kind[id] === KIND_WORKER && world.isMilitia(id) ? 4 : 1
+          // War Horn: Ironblood lends its edge.
+          const rallyBonus = rallyDamageMult(world, world.team[id] as 0 | 1)
+          const dmg = world.damage[id] * getCounterMultiplier(world, id, target) * momentumBonus * militiaBonus * rallyBonus
           world.health[target] -= dmg
+          // War Horn: every blow struck charges the horn.
+          chargeWarHorn(world, world.team[id] as 0 | 1, dmg)
+          // Orc Plunder: sacking enemy buildings yields gold (10% of damage dealt).
+          const atkTeam = world.team[id] as 0 | 1
+          if (world.factionOfTeam[atkTeam] === 'orc') {
+            const tk = world.kind[target]
+            const isBuilding = tk >= KIND_HALL && tk !== KIND_TREE && tk !== KIND_GOLDMINE
+            if (isBuilding && world.team[target] !== atkTeam) {
+              world.gold[atkTeam] += dmg * 0.1
+            }
+          }
           world.damageNumbers.push({
             x: world.positionX[target],
             z: world.positionZ[target],
@@ -157,7 +183,27 @@ export class CombatSystemImpl implements System {
     }
     for (const id of dead) {
       this.tryReanimate(world, id)
+      // Soul-Ash (undead racial): every fallen unit feeds the Undead supply
+      // cap — three corpses render one soul-ash worth of capacity.
+      if (world.kind[id] <= KIND_RANGED) {
+        for (const t of [0, 1] as const) {
+          if (world.factionOfTeam[t] === 'undead') {
+            world.soulAsh[t] += 1
+            if (world.soulAsh[t] % 3 === 0) world.supplyCap[t] += 1
+          }
+        }
+      }
       world.removeEntityById(id)
+    }
+    // Creeping Blight (undead racial): the dead knit themselves back together.
+    // Undead units regenerate 2% max HP/sec after 5 seconds out of combat.
+    for (const id of world.entities.keys()) {
+      const kind = world.kind[id]
+      if (kind !== KIND_MELEE && kind !== KIND_RANGED && kind !== KIND_WORKER) continue
+      if (world.factionOfTeam[world.team[id] as 0 | 1] !== 'undead') continue
+      if (world.tick - world.lastCombatTick[id] < 5 * 60) continue
+      if (world.health[id] >= world.maxHealth[id]) continue
+      world.health[id] = Math.min(world.maxHealth[id], world.health[id] + world.maxHealth[id] * 0.02 * dt)
     }
   }
 
@@ -235,6 +281,8 @@ export class CombatSystemImpl implements System {
       world.cooldown[id] = world.cooldownTotal[id]
       const dmg = world.damage[id]
       world.health[target] -= dmg
+      // War Horn: tower kills charge the horn too.
+      chargeWarHorn(world, world.team[id] as 0 | 1, dmg)
       world.damageNumbers.push({
         x: world.positionX[target],
         z: world.positionZ[target],

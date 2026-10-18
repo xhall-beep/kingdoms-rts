@@ -37,6 +37,9 @@ export function seedScenario(world: World, playerFaction: FactionId = 'human', e
   for (let i = 0; i < 4; i += 1) world.spawnResource('gold', -28 + i * 4, -32)
   for (let i = 0; i < 4; i += 1) world.spawnResource('gold', 28 - i * 4, 32)
 
+  // The Shrine of Kings: central capturable objective (Victory Points).
+  world.spawnShrine(0, 0)
+
   world.gold[TEAM_PLAYER] = 200
   world.wood[TEAM_PLAYER] = 100
   world.gold[TEAM_ENEMY] = 200

@@ -13,10 +13,10 @@ const ARRAY_FIELDS = [
   'health', 'maxHealth', 'damage', 'attackRange', 'sight', 'cooldown', 'cooldownTotal',
   'moving', 'moveSpeed', 'targetX', 'targetZ', 'stopDist', 'radius',
   'targetId',
-  'carryKind', 'carryAmount', 'gatherTimer', 'amount',
-  'buildProgress', 'buildTotal',
+  'carryKind', 'carryAmount', 'carryMax', 'gatherTimer', 'amount',
+  'buildProgress', 'buildTotal', 'buildAuto',
   'trainKind', 'trainLeft', 'trainTotal', 'rallyX', 'rallyZ',
-  'harvestKind',
+  'harvestKind', 'bellsRung', 'militiaUntil', 'tier', 'upgradeLeft', 'shrineHeld',
 ] as const
 
 interface WorldSave {
@@ -31,6 +31,14 @@ interface WorldSave {
   supplyCap: number[]
   factionOfTeam: [FactionId, FactionId]
   winner: -1 | 0 | 1
+  matchTime: number
+  militiaCooldown: number[]
+  soulAsh: number[]
+  warCharge: number[]
+  warLastTick: number[]
+  rallyKind: number[]
+  rallyUntil: number[]
+  victoryPoints: number[]
   fog: number[][]
   commands: readonly Command[]
 }
@@ -63,6 +71,14 @@ export function serializeWorld(world: World, step: number, commands: readonly Co
     supplyCap: [...world.supplyCap],
     factionOfTeam: [...world.factionOfTeam] as [FactionId, FactionId],
     winner: world.winner,
+    matchTime: world.matchTime,
+    militiaCooldown: [...world.militiaCooldown],
+    soulAsh: [...world.soulAsh],
+    warCharge: [...world.warCharge],
+    warLastTick: [...world.warLastTick],
+    rallyKind: [...world.rallyKind],
+    rallyUntil: [...world.rallyUntil],
+    victoryPoints: [...world.victoryPoints],
     fog: world.fog.map((f) => f.snapshotCells()),
     commands: commands.map((c) => ({ ...c })),
   }
@@ -91,6 +107,15 @@ export function deserializeWorld(world: World, save: WorldSave): void {
   world.supplyCap = [...save.supplyCap]
   world.factionOfTeam = [...save.factionOfTeam] as [FactionId, FactionId]
   world.winner = save.winner
+  world.matchTime = save.matchTime ?? 0
+  world.militiaCooldown = save.militiaCooldown ? [...save.militiaCooldown] : [0, 0]
+  world.soulAsh = save.soulAsh ? [...save.soulAsh] : [0, 0]
+  world.warCharge = save.warCharge ? [...save.warCharge] : [0, 0]
+  world.warLastTick = save.warLastTick ? [...save.warLastTick] : [0, 0]
+  world.rallyKind = save.rallyKind ? [...save.rallyKind] : [0, 0]
+  world.rallyUntil = save.rallyUntil ? [...save.rallyUntil] : [0, 0]
+  world.victoryPoints = save.victoryPoints ? [...save.victoryPoints] : [1000, 1000]
+  // bellsRung rides in ARRAY_FIELDS; older saves predate it and stay unrung.
   save.fog.forEach((cells, i) => {
     if (world.fog[i]) world.fog[i].restoreCells(cells)
   })

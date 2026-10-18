@@ -28,6 +28,9 @@ export type Command =
   | { type: 'patrol'; step: number; unitIds: number[]; x: number; z: number }
   | { type: 'stop'; step: number; unitIds: number[] }
   | { type: 'hold'; step: number; unitIds: number[] }
+  | { type: 'militia'; step: number; team: 0 | 1 }
+  | { type: 'upgrade'; step: number; buildingId: number }
+  | { type: 'warhorn'; step: number; team: 0 | 1; rally: 1 | 2 | 3 }
   | { type: 'surrender'; step: number; player: 0 | 1 }
 
 export class CommandLog {
