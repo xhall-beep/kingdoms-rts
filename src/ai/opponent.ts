@@ -16,6 +16,8 @@ import {
   NO_TRAINING,
   STATE_IDLE,
   STATE_BUILD,
+  STATE_ATTACK,
+  STATE_ATTACKMOVE,
   KIND_GOLDMINE,
   KIND_SHRINE,
   KIND_TREE} from '../core/World'
@@ -78,6 +80,24 @@ function nearestResourceNode(world: World, workerId: number, wantWood: boolean):
 
 const FLEE_TRIGGER = 32 // A worker evacuates when a visible enemy is this close.
 const FLEE_STANDOFF = 16 // Rally distance behind the hall, away from the threat.
+/**
+ * Battle micro: each engaged soldier compares local strength (its own side's
+ * health within MICRO_RADIUS vs the visible enemy's) and pulls back to the
+ * hall when outmatched. Deterministic: pure world-state evaluation, no RNG.
+ */
+const MICRO_RADIUS = 18 // Local fight window for the strength comparison.
+const WOUNDED_FRACTION = 0.3 // Below this health fraction a soldier withdraws.
+/**
+ * Retreat trigger: enemyLocal > ownLocal * ratio orders a pullback.
+ * The aggressor fights on until the fight is hopeless; the defender
+ * preserves its army first. The aggressor also never withdraws wounded —
+ * it holds the line while it still stands.
+ */
+const RETREAT_RATIO: Record<AIPersonality, number> = {
+  aggressor: 3.0,
+  expander: 1.75,
+  defender: 1.35,
+}
 const MAP_CLAMP = 56 // Keep flee destinations on the playable map.
 
 export type AIDifficulty = 'easy' | 'normal' | 'hard'
@@ -257,6 +277,7 @@ export class OpponentAI implements System {
     this.contestShrine(world, soldiers)
     this.trainSoldiers(world, workers.length, reserveGold)
     if (!this.defend(world, hall, soldiers)) this.attack(world, hall, soldiers)
+    this.microArmy(world, hall, soldiers)
   }
 
   /**
@@ -724,6 +745,62 @@ export class OpponentAI implements System {
     const target = this.findTarget(world, hall, attackers)
     if (target === null) return
     for (const id of attackers) this.emitAttackMove(world, id, target.x, target.z)
+  }
+
+  /**
+   * Battle micro — tactical retreat and wounded withdrawal. Runs every think
+   * tick after attack/defend orders. Only soldiers engaged AWAY from the base
+   * (beyond the defense radius) are eligible; the home garrison always holds.
+   * Retreating units rally on the hall, go idle on arrival, and rejoin the
+   * next wave the macro layer sends.
+   */
+  private microArmy(world: World, hall: number, soldiers: number[]): void {
+    const hx = world.positionX[hall]
+    const hz = world.positionZ[hall]
+    const enemyTeam = (this.team === 0 ? 1 : 0) as 0 | 1
+    // Snapshot the enemy's *visible* soldiers once per think tick. The AI
+    // only reacts to what it can see — same fog rules as the human player.
+    const enemies: number[] = []
+    for (const id of world.entities.keys()) {
+      if (world.team[id] !== enemyTeam || world.health[id] <= 0) continue
+      const kind = world.kind[id]
+      if (kind !== KIND_MELEE && kind !== KIND_RANGED) continue
+      if (!canSee(world, this.team, id)) continue
+      enemies.push(id)
+    }
+    const retreatRatio = RETREAT_RATIO[this.personality]
+    const withdrawWounded = this.personality !== 'aggressor'
+    for (const id of soldiers) {
+      if (world.health[id] <= 0) continue
+      const st = world.state[id]
+      if (st !== STATE_ATTACK && st !== STATE_ATTACKMOVE) continue
+      const ux = world.positionX[id]
+      const uz = world.positionZ[id]
+      // Home defense holds the line regardless of the odds.
+      if (Math.hypot(ux - hx, uz - hz) <= this.tuning.defenseRadius) continue
+      // Wounded withdrawal: a badly hurt soldier pulls back to the hall.
+      if (withdrawWounded && world.health[id] < world.maxHealth[id] * WOUNDED_FRACTION) {
+        this.emitMove(world, id, hx, hz)
+        continue
+      }
+      // Local strength comparison around this unit (health-weighted).
+      let own = 0
+      let foe = 0
+      for (const s of soldiers) {
+        if (world.health[s] <= 0) continue
+        if (Math.hypot(world.positionX[s] - ux, world.positionZ[s] - uz) <= MICRO_RADIUS) {
+          own += world.health[s]
+        }
+      }
+      for (const e of enemies) {
+        if (Math.hypot(world.positionX[e] - ux, world.positionZ[e] - uz) <= MICRO_RADIUS) {
+          foe += world.health[e]
+        }
+      }
+      if (own > 0 && foe > own * retreatRatio) {
+        this.emitMove(world, id, hx, hz)
+      }
+    }
   }
 
   /** Where to send the army: the enemy hall if explored, else the mirror guess, else search. */
