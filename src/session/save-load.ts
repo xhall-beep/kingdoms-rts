@@ -32,6 +32,7 @@ interface WorldSave {
   factionOfTeam: [FactionId, FactionId]
   winner: -1 | 0 | 1
   matchTime: number
+  season: number
   militiaCooldown: number[]
   soulAsh: number[]
   warCharge: number[]
@@ -72,6 +73,7 @@ export function serializeWorld(world: World, step: number, commands: readonly Co
     factionOfTeam: [...world.factionOfTeam] as [FactionId, FactionId],
     winner: world.winner,
     matchTime: world.matchTime,
+    season: world.season,
     militiaCooldown: [...world.militiaCooldown],
     soulAsh: [...world.soulAsh],
     warCharge: [...world.warCharge],
@@ -108,6 +110,8 @@ export function deserializeWorld(world: World, save: WorldSave): void {
   world.factionOfTeam = [...save.factionOfTeam] as [FactionId, FactionId]
   world.winner = save.winner
   world.matchTime = save.matchTime ?? 0
+  // Older saves predate the Season Wheel and stay in the growing season.
+  world.season = save.season ?? 0
   world.militiaCooldown = save.militiaCooldown ? [...save.militiaCooldown] : [0, 0]
   world.soulAsh = save.soulAsh ? [...save.soulAsh] : [0, 0]
   world.warCharge = save.warCharge ? [...save.warCharge] : [0, 0]

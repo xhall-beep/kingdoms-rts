@@ -228,6 +228,7 @@ export class Renderer {
     ctx.fillStyle = '#16241a'
     ctx.fillRect(0, 0, this.cssWidth, this.cssHeight)
     this.drawGrid()
+    this.drawSeasonTint(world)
     for (const id of world.entities.keys()) {
       if (!canSee(world, team, id)) continue
       this.drawEntity(world, id)
@@ -424,6 +425,18 @@ export class Renderer {
       ctx.lineTo(this.cssWidth, y)
     }
     ctx.stroke()
+  }
+
+  /**
+   * Season Wheel: once winter turns (Second Bell), a pale snow wash cools
+   * the field. Drawn over the ground, under entities and fog, so the world
+   * reads colder without hiding anything. Visual-only.
+   */
+  private drawSeasonTint(world: World): void {
+    if (world.season !== 1) return
+    const { ctx } = this
+    ctx.fillStyle = 'rgba(186, 214, 240, 0.15)'
+    ctx.fillRect(0, 0, this.cssWidth, this.cssHeight)
   }
 
   private teamColor(world: World, id: number): string {

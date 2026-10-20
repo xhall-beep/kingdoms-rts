@@ -153,6 +153,8 @@ export function hashWorldState(world: World): bigint {
   h = mixString(h, world.factionOfTeam[0])
   h = mixString(h, world.factionOfTeam[1])
   h = mixWord(h, (world.winner + 1) >>> 0)
+  // Season Wheel state (turns at the Second Bell; drives movement speed).
+  h = mixWord(h, world.season)
 
   return h
 }

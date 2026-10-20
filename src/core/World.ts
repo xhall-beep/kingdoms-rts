@@ -195,6 +195,9 @@ export class World {
   matchTime = 0
   /** Bells rung: index 0 = First (3:00), 1 = Second (6:00), 2 = Third (9:00). */
   readonly bellsRung: Uint8Array = new Uint8Array(3)
+  /** Season Wheel: 0 = growing season, 1 = winter (turns at the Second Bell).
+   *  Sim state — hashed and saved like the other match meta fields. */
+  season = 0
   /** Militia Bell: per-worker expiry timestamp (human racial). While
    *  matchTime < militiaUntil[id], the peasant fights as a Levy Pikeman. */
   readonly militiaUntil: Float32Array

@@ -11,6 +11,7 @@ import './style.css'
 import { CombatSystemImpl } from './systems/combat'
 import { GatherSystemImpl } from './systems/gather'
 import { BellSystemImpl } from './systems/bells'
+import { SeasonSystemImpl } from './systems/season'
 import { WarHornSystemImpl, soundWarHorn } from './systems/warhorn'
 import { ShrineSystemImpl } from './systems/shrines'
 import { MovementSystemImpl } from './systems/movement'
@@ -81,6 +82,7 @@ export function composeGame(canvas: HTMLCanvasElement): GameComposition {
     vision: new VisionSystemImpl(),
     victory: new VictorySystemImpl(),
     bells: new BellSystemImpl(),
+    season: new SeasonSystemImpl(),
     warhorn: new WarHornSystemImpl(),
     shrines: new ShrineSystemImpl(),
     opponent: new OpponentAI(TEAM_ENEMY),
@@ -93,6 +95,7 @@ export function composeGame(canvas: HTMLCanvasElement): GameComposition {
   engine.world.registerSystem(systems.vision)
   engine.world.registerSystem(systems.victory)
   engine.world.registerSystem(systems.bells)
+  engine.world.registerSystem(systems.season)
   engine.world.registerSystem(systems.warhorn)
   engine.world.registerSystem(systems.shrines)
   engine.world.registerSystem(systems.opponent)
