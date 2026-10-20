@@ -8,7 +8,8 @@
  * Rules:
  * - Covers every typed array in World plus entity ids, the id counter,
  *   economy, factions, winner, and both fog grids.
- * - Excludes visual-only state (damageNumbers — explicitly not sim state).
+ * - Excludes visual-only state (damageNumbers, hitFlashes, deathPops —
+ *   explicitly not sim state).
  * - NaN is canonicalized to a fixed constant: two NaNs with different bit
  *   patterns (possible via different float ops) still hash identically.
  *   (In a correct deterministic sim this never triggers, but it removes a

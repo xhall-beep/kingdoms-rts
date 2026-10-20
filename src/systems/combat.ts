@@ -171,6 +171,8 @@ export class CombatSystemImpl implements System {
             team: world.team[target],
             age: 0,
           })
+          // Combat feel: white hit-flash on the struck entity.
+          world.hitFlashes.push({ id: target })
           if (world.health[target] <= 0 && !dead.includes(target)) dead.push(target)
         }
       } else {
@@ -183,6 +185,15 @@ export class CombatSystemImpl implements System {
     }
     for (const id of dead) {
       this.tryReanimate(world, id)
+      // Combat feel: expanding death-pop at the kill position (visual-only).
+      world.deathPops.push({
+        x: world.positionX[id],
+        z: world.positionZ[id],
+        r: world.radius[id],
+        team: world.team[id],
+        kind: world.kind[id],
+        age: 0,
+      })
       // Soul-Ash (undead racial): every fallen unit feeds the Undead supply
       // cap — three corpses render one soul-ash worth of capacity.
       if (world.kind[id] <= KIND_RANGED) {
@@ -290,6 +301,8 @@ export class CombatSystemImpl implements System {
         team: world.team[target],
         age: 0,
       })
+      // Combat feel: white hit-flash on the struck entity.
+      world.hitFlashes.push({ id: target })
       // Mark combatants for momentum tracking
       world.lastCombatTick[id] = world.tick
       world.lastCombatTick[target] = world.tick

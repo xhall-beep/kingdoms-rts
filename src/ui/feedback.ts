@@ -85,4 +85,14 @@ export const sfx = {
     buzz(50)
     beep(160, 150, 'square', 0.05)
   },
+  unitLost(): void {
+    buzz([30, 30, 40])
+    beep(392, 90, 'triangle', 0.06)
+    setTimeout(() => beep(262, 140, 'triangle', 0.06), 90)
+  },
+  buildingLost(): void {
+    buzz([60, 40, 60, 40, 80])
+    beep(196, 150, 'sawtooth', 0.07)
+    setTimeout(() => beep(131, 220, 'sawtooth', 0.07), 140)
+  },
 }

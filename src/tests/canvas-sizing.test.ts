@@ -84,6 +84,8 @@ function emptyWorld(): unknown {
     entities: new Map<number, number>(),
     fog: [new FogGrid(), new FogGrid()],
     damageNumbers: [],
+    hitFlashes: [],
+    deathPops: [],
   }
 }
 

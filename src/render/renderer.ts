@@ -1,5 +1,6 @@
 import { FACTIONS } from '../data/factions.ts'
-import type { World } from '../core/World'
+import type { World, DeathPop } from '../core/World'
+import { sfx } from '../ui/feedback.ts'
 import {
   KIND_ARCHERY,
   KIND_BARRACKS,
@@ -66,6 +67,16 @@ export class Renderer {
   private fogCache: (HTMLCanvasElement | null)[] = [null, null]
   private fogCacheFrame: number[] = [-1e9, -1e9]
   private fogCacheRevision: number[] = [-1, -1]
+  /** Team this renderer is viewing (set each render call). */
+  private viewTeam: 0 | 1 = 0
+  /** Hit flashes: entity id -> age in seconds (visual-only, real-time). */
+  private hitFlashes = new Map<number, number>()
+  /** Death pops being animated (visual-only, real-time). */
+  private deathPops: DeathPop[] = []
+  /** Last loss-sfx time (performance.now), throttled so mass deaths stay quiet. */
+  private lastLossSfx = 0
+  /** Last render dt in seconds; used to age hit flashes inside drawEntity. */
+  private lastDt = 1 / 60
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
@@ -178,6 +189,29 @@ export class Renderer {
 
   render(world: World, team: 0 | 1, dtSeconds = 1 / 60): void {
     this.frame += 1
+    this.viewTeam = team
+    this.lastDt = dtSeconds
+    // Drop flashes for entities that no longer exist (ids can be recycled).
+    if (this.hitFlashes.size > 0) {
+      for (const id of this.hitFlashes.keys()) {
+        if (!world.entities.has(id)) this.hitFlashes.delete(id)
+      }
+    }
+    // Consume visual-only combat events pushed by the sim this frame.
+    for (const flash of world.hitFlashes) this.hitFlashes.set(flash.id, 0)
+    world.hitFlashes.length = 0
+    // Cap: a 100-unit brawl pushes many flashes; oldest fade first.
+    while (this.hitFlashes.size > 96) {
+      const oldest = this.hitFlashes.keys().next().value
+      if (oldest === undefined) break
+      this.hitFlashes.delete(oldest)
+    }
+    for (const pop of world.deathPops) {
+      this.deathPops.push({ ...pop })
+      // Fresh pop for the viewing player's own side: one loss sting, throttled.
+      if (pop.age === 0 && pop.team === team) this.playLossSfx(pop)
+    }
+    world.deathPops.length = 0
     // A corrupted camera transform (NaN/Infinity from a bad event or a
     // desync) would paint nothing and misroute every tap. Recover to the
     // default base view instead of leaving the player in a black void.
@@ -201,9 +235,52 @@ export class Renderer {
     this.drawFog(world, team)
     this.drawSelectionBox()
     this.drawDamageNumbers(world, dtSeconds)
+    this.drawDeathPops(dtSeconds)
     this.drawGhost()
     this.drawRallyPoints(world)
     this.drawMoveIndicators(dtSeconds)
+  }
+
+  /**
+   * Death pops: expanding ring + fading puff at each kill position.
+   * Visual-only (excluded from lockstep hash); ages in real seconds.
+   */
+  private drawDeathPops(dtSeconds: number): void {
+    const { ctx } = this
+    const keep: DeathPop[] = []
+    for (const pop of this.deathPops) {
+      pop.age += dtSeconds
+      if (pop.age > 0.4) continue
+      keep.push(pop)
+      const p = this.toScreen(pop.x, pop.z)
+      const q = pop.age / 0.4
+      const alpha = 1 - q
+      ctx.save()
+      ctx.globalAlpha = alpha
+      // Fading puff.
+      ctx.fillStyle = '#e5e7eb'
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, pop.r * this.zoom * (0.6 + q * 0.9), 0, Math.PI * 2)
+      ctx.fill()
+      // Expanding shockwave ring.
+      ctx.strokeStyle = '#f5c542'
+      ctx.lineWidth = 2.5
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, pop.r * this.zoom * (0.8 + q * 1.6), 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.restore()
+    }
+    this.deathPops = keep
+  }
+
+  /** Throttled loss sting for the player's own deaths (units vs buildings). */
+  private playLossSfx(pop: DeathPop): void {
+    const now = typeof performance !== 'undefined' ? performance.now() : 0
+    if (now - this.lastLossSfx < 400) return
+    this.lastLossSfx = now
+    const isBuilding = (pop.kind >= KIND_HALL && pop.kind <= KIND_FARM) || pop.kind === KIND_TOWER
+    if (isBuilding) sfx.buildingLost()
+    else sfx.unitLost()
   }
 
   private drawMoveIndicators(dtSeconds: number): void {
@@ -436,6 +513,48 @@ export class Renderer {
       this.ctx.fillRect(p.x - bw / 2, p.y - r - 8, bw, 4)
       this.ctx.fillStyle = q > 0.5 ? '#4ade80' : q > 0.25 ? '#f5c542' : '#ef4444'
       this.ctx.fillRect(p.x - bw / 2, p.y - r - 8, bw * q, 4)
+    }
+
+    // Hit flash: white blink on the struck body, fading over ~0.15s.
+    // Visual-only; ages in real seconds so it never affects lockstep.
+    const flashAge = this.hitFlashes.get(id)
+    if (flashAge !== undefined) {
+      const fAlpha = Math.max(0, 1 - flashAge / 0.15)
+      if (fAlpha <= 0) {
+        this.hitFlashes.delete(id)
+      } else {
+        this.hitFlashes.set(id, flashAge + this.lastDt)
+        this.ctx.save()
+        this.ctx.globalAlpha = fAlpha * 0.55
+        this.ctx.fillStyle = '#ffffff'
+        this.ctx.beginPath()
+        this.ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
+        this.ctx.fill()
+        this.ctx.restore()
+      }
+    }
+
+    // Low-HP pulse: the player's own damaged units/buildings get a pulsing
+    // red ring so focus-fire is visible at a glance.
+    const isUnitOrBuilding =
+      kind === KIND_WORKER || kind === KIND_MELEE || kind === KIND_RANGED ||
+      (kind >= KIND_HALL && kind <= KIND_FARM) || kind === KIND_TOWER
+    if (
+      isUnitOrBuilding &&
+      world.team[id] === this.viewTeam &&
+      world.health[id] > 0 &&
+      world.maxHealth[id] > 1 &&
+      world.health[id] < world.maxHealth[id] * 0.3
+    ) {
+      const pulse = 5 + 2.5 * Math.sin(this.frame / 6)
+      this.ctx.save()
+      this.ctx.setLineDash([5, 4])
+      this.ctx.strokeStyle = 'rgba(239,68,68,0.9)'
+      this.ctx.lineWidth = 2
+      this.ctx.beginPath()
+      this.ctx.arc(p.x, p.y, r + pulse, 0, Math.PI * 2)
+      this.ctx.stroke()
+      this.ctx.restore()
     }
 
     // Selection ring.

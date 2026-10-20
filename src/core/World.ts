@@ -92,6 +92,20 @@ export interface DamageNumber {
   age: number
 }
 
+export interface HitFlash {
+  /** Entity id struck this tick (visual-only; renderer ages it in real seconds). */
+  id: number
+}
+
+export interface DeathPop {
+  x: number
+  z: number
+  r: number
+  team: number
+  kind: number
+  age: number
+}
+
 export class World {
   // ---- spatial (struct of arrays) ----
   readonly positionX: Float32Array
@@ -108,6 +122,12 @@ export class World {
 
   /** Visual-only damage numbers; not part of sim state, not serialized. */
   damageNumbers: DamageNumber[] = []
+
+  /** Visual-only hit flashes (entity ids struck this tick); not sim state. */
+  hitFlashes: HitFlash[] = []
+
+  /** Visual-only death pops (expanding ring at kill position); not sim state. */
+  deathPops: DeathPop[] = []
 
   // ---- combat ----
   readonly health: Float32Array
