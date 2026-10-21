@@ -19,7 +19,7 @@ const ARRAY_FIELDS = [
   'harvestKind', 'bellsRung', 'militiaUntil', 'tier', 'upgradeLeft', 'shrineHeld',
 ] as const
 
-interface WorldSave {
+export interface WorldSave {
   version: number
   step: number
   maxId: number

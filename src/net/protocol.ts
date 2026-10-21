@@ -11,6 +11,8 @@
  */
 import type { BuildingType } from '../data/buildings.ts'
 import type { UnitType } from '../data/units.ts'
+import type { FactionId } from '../data/factions.ts'
+import { FACTION_IDS } from '../data/factions.ts'
 import type { Command } from '../session/commands.ts'
 
 export const PROTOCOL_MAGIC = 0x4b // 'K'
@@ -162,6 +164,7 @@ const CmdTag = {
   Militia: 11,
   Upgrade: 12,
   WarHorn: 13,
+  PvpSetup: 14,
 } as const
 type CmdTag = (typeof CmdTag)[keyof typeof CmdTag]
 
@@ -199,7 +202,26 @@ function cmdSize(cmd: Command): number {
       return 1 + varintSize(cmd.buildingId)
     case 'warhorn':
       return 1 + 1 + 1
+    case 'pvp-setup':
+      return 1 + 1 + 1
   }
+}
+
+/**
+ * Faction <-> byte mapping for the pvp-setup command. Byte order follows
+ * FACTION_IDS (insertion order of the faction table); unknown ids/bytes are
+ * rejected loudly — a silently wrong faction would desync the match.
+ */
+export function factionToByte(faction: FactionId): number {
+  const idx = FACTION_IDS.indexOf(faction)
+  if (idx < 0) throw new Error(`unknown faction ${faction}`)
+  return idx
+}
+
+export function byteToFaction(byte: number): FactionId {
+  const faction = FACTION_IDS[byte]
+  if (faction === undefined) throw new Error(`unknown faction byte ${byte}`)
+  return faction
 }
 
 function writeIds(view: DataView, o: number, ids: readonly number[]): number {
@@ -294,6 +316,11 @@ function writeCommand(view: DataView, o: number, cmd: Command): number {
       view.setUint8(o++, cmd.team)
       view.setUint8(o++, cmd.rally)
       return o
+    case 'pvp-setup':
+      view.setUint8(o++, CmdTag.PvpSetup)
+      view.setUint8(o++, cmd.player)
+      view.setUint8(o++, factionToByte(cmd.faction))
+      return o
   }
 }
 
@@ -372,6 +399,11 @@ function readCommand(view: DataView, o: number): { cmd: Command; next: number } 
       const r = view.getUint8(o++)
       const rally = r === 2 ? 2 : r === 3 ? 3 : 1
       return { cmd: { type: 'warhorn', step: 0, team: (t === 1 ? 1 : 0) as 0 | 1, rally: rally as 1 | 2 | 3 }, next: o }
+    }
+    case CmdTag.PvpSetup: {
+      const p = view.getUint8(o++)
+      const f = view.getUint8(o++)
+      return { cmd: { type: 'pvp-setup', step: 0, player: (p === 1 ? 1 : 0) as 0 | 1, faction: byteToFaction(f) }, next: o }
     }
     default:
       throw new Error(`unknown command tag ${tag}`)

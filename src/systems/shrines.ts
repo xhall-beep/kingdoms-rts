@@ -24,6 +24,15 @@ function isMilitary(world: World, id: number): boolean {
 export class ShrineSystemImpl implements System {
   private timer = 0
 
+  /**
+   * Reset the internal check accumulator. It drives when shrine capture and
+   * Victory Point drain tick, so a stale pre-match value would desync peers;
+   * reset alongside the world when a match (re)starts from a clean state.
+   */
+  resetTimer(): void {
+    this.timer = 0
+  }
+
   update(world: World, dt: number): void {
     if (world.winner !== -1) return
     this.timer += dt

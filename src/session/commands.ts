@@ -1,5 +1,6 @@
 import type { BuildingType } from '../data/buildings.ts'
 import type { UnitType } from '../data/units.ts'
+import type { FactionId } from '../data/factions.ts'
 
 /**
  * Player commands as data. The simulation is deterministic (fixed 60Hz step,
@@ -32,6 +33,14 @@ export type Command =
   | { type: 'upgrade'; step: number; buildingId: number }
   | { type: 'warhorn'; step: number; team: 0 | 1; rally: 1 | 2 | 3 }
   | { type: 'surrender'; step: number; player: 0 | 1 }
+  /**
+   * PvP match-opening handshake. Each side declares the faction it will play
+   * (slot 0 -> team 0, slot 1 -> team 1). The lockstep barrier guarantees both
+   * declarations are present before turn 0 executes, so both peers reseed the
+   * world identically. Never recorded to the command log; consumed by the
+   * match handshake before commands are applied.
+   */
+  | { type: 'pvp-setup'; step: number; player: 0 | 1; faction: FactionId }
 
 export class CommandLog {
   private commands: Command[] = []

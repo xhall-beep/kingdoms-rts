@@ -35,6 +35,7 @@ import { HudImpl } from './ui/hud'
 import { PvPGame } from './net/pvp-game.ts'
 import { PvpAiGame } from './net/pvp-ai.ts'
 import type { AiPracticeTier } from './net/pvp-ai.ts'
+import { readFactionSetting } from './net/pvp-setup.ts'
 import { loadSprites } from './render/sprites.ts'
 import type { HudCallbacks } from './ui/hud'
 import { ensureProfile, initProfileUi, recordGameResult } from './ui/profile-panel.ts'
@@ -467,6 +468,10 @@ export function initializeGame(): GameComposition {
         composition,
         client,
         slot,
+        pristineSave: initialSave,
+        // Each side plays the faction its player picked; the turn-0
+        // handshake exchanges the pair so both phones reseed identically.
+        ownFaction: readFactionSetting('krts-player-faction', 'human'),
         onMatchEnd: (won) => {
           pvpActive = false
           composition.hud.setPvpActive(false)
@@ -520,6 +525,7 @@ export function initializeGame(): GameComposition {
       const pvpAiGame = new PvpAiGame({
         composition,
         tier,
+        pristineSave: initialSave,
         onMatchEnd: (won) => {
           pvpActive = false
           composition.hud.setPvpActive(false)

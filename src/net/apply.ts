@@ -120,5 +120,11 @@ export function applyCommand(world: World, cmd: Command): void {
       // racing a natural victory can't flip an already-decided result.
       if (world.winner === -1) world.winner = cmd.player === 0 ? 1 : 0
       break
+    case 'pvp-setup':
+      // Consumed by the PvP match handshake (pvp-game.ts) before commands
+      // are applied: by the time applyCommand runs, both peers have already
+      // reseeded the world identically. Late/duplicate declarations are
+      // ignored deterministically by the handshake itself.
+      break
   }
 }

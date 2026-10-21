@@ -24,6 +24,8 @@ import { hashWorldState } from './hash.ts'
 import { STEPS_PER_TURN, encodeMessage, MsgKind } from './protocol.ts'
 import { setStatsMode } from '../data/stats.ts'
 import type { GameComposition } from '../main.ts'
+import type { WorldSave } from '../session/save-load.ts'
+import { readFactionSetting, resetWorldForMatch } from './pvp-setup.ts'
 
 export type AiPracticeTier = 'passive' | 'normal' | 'aggressive'
 
@@ -56,6 +58,8 @@ class LoopbackTransport implements TurnTransport {
 export interface PvpAiGameConfig {
   composition: GameComposition
   tier: AiPracticeTier
+  /** Pristine boot snapshot: practice reseeds from this, not live state. */
+  pristineSave: WorldSave
   onMatchEnd?: (won: boolean) => void
 }
 
@@ -69,10 +73,12 @@ export class PvpAiGame {
   private turnTimer: number | null = null
   private matchEnded = false
   private onMatchEnd?: (won: boolean) => void
+  private readonly pristineSave: WorldSave
   readonly tierLabel: string
 
   constructor(config: PvpAiGameConfig) {
     this.composition = config.composition
+    this.pristineSave = config.pristineSave
     this.onMatchEnd = config.onMatchEnd
     const tuning = TIER_TUNING[config.tier]
     this.tierLabel = tuning.label
@@ -116,6 +122,13 @@ export class PvpAiGame {
     const systems = world.systems as unknown[]
     const idx = systems.indexOf(this.composition.systems.opponent)
     if (idx !== -1) systems.splice(idx, 1)
+
+    // Fresh deterministic map from the player's own faction settings — not
+    // whatever live single-player state happened to be on screen.
+    resetWorldForMatch(world, this.pristineSave, [
+      readFactionSetting('krts-player-faction', 'human'),
+      readFactionSetting('krts-enemy-faction', 'orc'),
+    ])
 
     // Pause the Engine's own tick loop — lockstep drives world.update() now.
     this.composition.engine.pause()

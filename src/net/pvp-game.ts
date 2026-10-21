@@ -20,11 +20,23 @@ import { STEPS_PER_TURN } from './protocol.ts'
 import { setStatsMode } from '../data/stats.ts'
 import { PvPClient } from './client.ts'
 import type { GameComposition } from '../main.ts'
+import type { WorldSave } from '../session/save-load.ts'
+import type { FactionId } from '../data/factions.ts'
+import {
+  createPvpSetupHandshake,
+  notePvpSetupCommand,
+  resetWorldForMatch,
+  type PvpSetupHandshake,
+} from './pvp-setup.ts'
 
 export interface PvPGameConfig {
   composition: GameComposition
   client: PvPClient
   slot: 0 | 1
+  /** Pristine boot snapshot: the match reseeds from this, not live state. */
+  pristineSave: WorldSave
+  /** The faction OUR side plays (declared to the opponent via handshake). */
+  ownFaction: FactionId
   onDesync?: (turn: number) => void
   onMatchEnd?: (won: boolean) => void
 }
@@ -39,10 +51,15 @@ export class PvPGame {
   private onDesync?: (turn: number) => void
   private onMatchEnd?: (won: boolean) => void
   private matchEnded = false
+  private readonly pristineSave: WorldSave
+  private readonly ownFaction: FactionId
+  private readonly setup: PvpSetupHandshake = createPvpSetupHandshake()
 
   constructor(config: PvPGameConfig) {
     this.composition = config.composition
     this.client = config.client
+    this.pristineSave = config.pristineSave
+    this.ownFaction = config.ownFaction
     this.onDesync = config.onDesync
     this.onMatchEnd = config.onMatchEnd
 
@@ -139,6 +156,18 @@ export class PvPGame {
       this.peer.queueCommand(cmd)
     })
 
+    // Match-opening handshake: declare our faction for our side. The
+    // lockstep barrier holds turn 0 until BOTH sides' declarations arrive,
+    // at which point executeTurn reseeds both worlds identically. Without
+    // this, each phone brought its own divergent single-player state into
+    // lockstep and the first hash check cried desync.
+    this.peer.queueCommand({
+      type: 'pvp-setup',
+      step: 0,
+      player: this.peer.playerIndex === 1 ? 1 : 0,
+      faction: this.ownFaction,
+    })
+
     // Start the turn pump (4 turns/second)
     this.running = true
     this.turnTimer = window.setInterval(() => {
@@ -176,6 +205,20 @@ export class PvPGame {
   /** Execute a lockstep turn: apply all commands, step the world. */
   private executeTurn(_turn: number, commands: Command[]): void {
     const world = this.composition.engine.world
+
+    // Match-opening handshake: once both sides' faction declarations are
+    // in, reseed the world from the pristine snapshot. Deterministic on
+    // both peers (same commands, same order, same snapshot, same seed).
+    if (!this.setup.seeded) {
+      for (const cmd of commands) {
+        if (cmd.type !== 'pvp-setup') continue
+        const pair = notePvpSetupCommand(this.setup, cmd)
+        if (pair !== null) {
+          resetWorldForMatch(world, this.pristineSave, pair)
+          console.log(`PvP world seeded: slot0=${pair[0]} slot1=${pair[1]}`)
+        }
+      }
+    }
 
     // Apply all commands from both players (pre-ordered deterministically)
     for (const cmd of commands) {
