@@ -7,7 +7,9 @@ import { suite, test, assert, assertEqual } from '../tests/harness.ts'
 import { runLockstepMatch, createLockstepSession } from './session.ts'
 import { hashWorldState } from './hash.ts'
 import { applyCommand } from './apply.ts'
-import { makeWorld } from '../tests/setup.ts'
+import { makeWorld, stepWorld } from '../tests/setup.ts'
+import { SEASON_GROWING, SEASON_WINTER } from '../systems/season.ts'
+import { BELL_TIMES } from '../systems/bells.ts'
 import {
   NET_PERFECT,
   NET_LAN,
@@ -118,6 +120,62 @@ test('fault injection: desync detected, snapshot resync recovers', () => {
     'worlds re-converged after resync',
   )
   console.log(`  fault-injection: ${report.desyncs} desync(s), ${report.resyncs} resync(s), recovered`)
+})
+
+suite('net lockstep: season wheel in session worlds')
+
+test('session worlds turn to winter at the Second Bell, in sync', () => {
+  // Second Bell rings at 360 sim-seconds = turn 1440 (4 turns/sim-second).
+  // Run 1500 turns (375 s) so both peers step well past the turn.
+  const TURNS = 1500
+  const session = createLockstepSession({ turns: TURNS, net: NET_PERFECT })
+  let guard = 0
+  const maxGuard = (TURNS / 4) * 1000 / 5 + 100000
+  while (
+    session.peers.some((p) => p.getCurrentTurn() < TURNS) &&
+    guard < maxGuard
+  ) {
+    session.tick()
+    guard += 1
+  }
+  const report = session.getReport()
+  assertEqual(report.turnsExecuted, TURNS, 'all turns executed')
+  assertEqual(report.desyncs, 0, `desyncs: ${report.desyncLog.join('; ')}`)
+  for (let p = 0; p < 2; p += 1) {
+    const w = session.worlds[p]
+    assertEqual(w.bellsRung[1], 1, `peer ${p}: second bell rung`)
+    assertEqual(w.season, SEASON_WINTER, `peer ${p}: season turned to winter`)
+  }
+  assertEqual(
+    hashWorldState(session.worlds[0]),
+    hashWorldState(session.worlds[1]),
+    'peers hash identically after the season turn',
+  )
+})
+
+test('session-factory worlds: no flip before 6:00, flip hashes differently', () => {
+  // Direct stepping of two makeWorld worlds (the session world factory):
+  // identical steps must keep them identical on both sides of the turn,
+  // and the winter state must hash differently from the no-flip state.
+  const a = makeWorld()
+  const b = makeWorld()
+  const stepsTo = (seconds: number): number => Math.floor(seconds / (1 / 60))
+  stepWorld(a, stepsTo(BELL_TIMES[1] - 1))
+  stepWorld(b, stepsTo(BELL_TIMES[1] - 1))
+  assertEqual(a.season, SEASON_GROWING, 'still growing just before 6:00')
+  assertEqual(b.season, SEASON_GROWING, 'peer world also growing')
+  assertEqual(hashWorldState(a), hashWorldState(b), 'identical before the turn')
+  stepWorld(a, 120)
+  stepWorld(b, 120)
+  assertEqual(a.season, SEASON_WINTER, 'winter after the Second Bell')
+  assertEqual(b.season, SEASON_WINTER, 'peer world also winter')
+  const winterHash = hashWorldState(a)
+  assertEqual(hashWorldState(b), winterHash, 'identical after the turn')
+  // No-flip control: the same world state with the season held at growing
+  // must hash differently — the flip is really in the hashed state.
+  a.season = SEASON_GROWING
+  assert(hashWorldState(a) !== winterHash, 'no-flip control hashes differently')
+  a.season = SEASON_WINTER
 })
 
 suite('net surrender')

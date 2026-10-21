@@ -5,7 +5,7 @@ import { World, TEAM_PLAYER } from '../core/World.ts'
 import { serializeWorld, deserializeWorld } from '../session/save-load.ts'
 import { ReplayPlayer } from '../session/replay.ts'
 import { orderMove } from '../systems/movement.ts'
-import { suite, test, assertEqual } from './harness.ts'
+import { suite, test, assert, assertEqual } from './harness.ts'
 import { makeWorld, stepWorld, STEP } from './setup.ts'
 
 /** Fingerprint of world state for determinism comparison. */
@@ -49,6 +49,56 @@ test('save/load preserves commands', () => {
   const cmds = [{ type: 'move', step: 10, unitIds: [1], x: 5, z: 5 }] as const
   const save = serializeWorld(world, 10, cmds as never)
   assertEqual(save.commands.length, 1, 'command preserved in save')
+})
+
+test('round-trip preserves fog visibleNow and stays in sync', () => {
+  const world = makeWorld()
+  stepWorld(world, 120) // vision updates populate the pending-demotion sets
+  const before = world.fog.map((f) => f.snapshotVisibleNow())
+  assert(
+    before.some((v) => v.length > 0),
+    'sanity: some cells are currently visible',
+  )
+  const save = serializeWorld(world, 120, [])
+  const restored = makeWorld()
+  deserializeWorld(restored, save)
+  const after = restored.fog.map((f) => f.snapshotVisibleNow())
+  assertEqual(after.length, before.length, 'one visibleNow set per team')
+  for (let t = 0; t < before.length; t += 1) {
+    assertEqual(
+      after[t].join(','),
+      before[t].join(','),
+      `team ${t}: visibleNow survives the round-trip`,
+    )
+  }
+  // The real bug: without visibleNow the restored world's NEXT vision
+  // update diverges. Step both worlds and require identical fog state.
+  stepWorld(world, 60)
+  stepWorld(restored, 60)
+  for (let t = 0; t < before.length; t += 1) {
+    assertEqual(
+      restored.fog[t].snapshotVisibleNow().join(','),
+      world.fog[t].snapshotVisibleNow().join(','),
+      `team ${t}: fog still in sync after 60 more steps`,
+    )
+    assertEqual(
+      restored.fog[t].snapshotCells().join(','),
+      world.fog[t].snapshotCells().join(','),
+      `team ${t}: fog cells still in sync after 60 more steps`,
+    )
+  }
+})
+
+test('saves predating fogVisibleNow still load (empty pending set)', () => {
+  const world = makeWorld()
+  stepWorld(world, 120)
+  const save = serializeWorld(world, 120, [])
+  delete (save as Partial<typeof save>).fogVisibleNow
+  const restored = makeWorld()
+  deserializeWorld(restored, save) // must not throw
+  for (const fog of restored.fog) {
+    assertEqual(fog.snapshotVisibleNow().length, 0, 'pending set restores empty')
+  }
 })
 
 suite('replay')

@@ -41,6 +41,7 @@ export interface WorldSave {
   rallyUntil: number[]
   victoryPoints: number[]
   fog: number[][]
+  fogVisibleNow: number[][]
   commands: readonly Command[]
 }
 
@@ -82,6 +83,7 @@ export function serializeWorld(world: World, step: number, commands: readonly Co
     rallyUntil: [...world.rallyUntil],
     victoryPoints: [...world.victoryPoints],
     fog: world.fog.map((f) => f.snapshotCells()),
+    fogVisibleNow: world.fog.map((f) => f.snapshotVisibleNow()),
     commands: commands.map((c) => ({ ...c })),
   }
 }
@@ -122,6 +124,12 @@ export function deserializeWorld(world: World, save: WorldSave): void {
   // bellsRung rides in ARRAY_FIELDS; older saves predate it and stay unrung.
   save.fog.forEach((cells, i) => {
     if (world.fog[i]) world.fog[i].restoreCells(cells)
+  })
+  // Fog's pending demotions (visibleNow) are hashed sim state: without
+  // them the restored world's next vision update diverges from an
+  // uninterrupted run. Saves that predate the field restore empty.
+  world.fog.forEach((fog, i) => {
+    fog.restoreVisibleNow(save.fogVisibleNow?.[i] ?? [])
   })
 }
 
