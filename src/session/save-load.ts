@@ -33,6 +33,10 @@ export interface WorldSave {
   winner: -1 | 0 | 1
   matchTime: number
   season: number
+  wildHeat: number[]
+  wildSiteX: number[]
+  wildSiteZ: number[]
+  wildWorker: number[]
   militiaCooldown: number[]
   soulAsh: number[]
   warCharge: number[]
@@ -75,6 +79,10 @@ export function serializeWorld(world: World, step: number, commands: readonly Co
     winner: world.winner,
     matchTime: world.matchTime,
     season: world.season,
+    wildHeat: [...world.wildHeat],
+    wildSiteX: [...world.wildSiteX],
+    wildSiteZ: [...world.wildSiteZ],
+    wildWorker: [...world.wildWorker],
     militiaCooldown: [...world.militiaCooldown],
     soulAsh: [...world.soulAsh],
     warCharge: [...world.warCharge],
@@ -114,6 +122,11 @@ export function deserializeWorld(world: World, save: WorldSave): void {
   world.matchTime = save.matchTime ?? 0
   // Older saves predate the Season Wheel and stay in the growing season.
   world.season = save.season ?? 0
+  // Older saves predate the Living Wild: no pressure, no remembered site.
+  world.wildHeat = save.wildHeat ? [...save.wildHeat] : [0, 0]
+  world.wildSiteX = save.wildSiteX ? [...save.wildSiteX] : [0, 0]
+  world.wildSiteZ = save.wildSiteZ ? [...save.wildSiteZ] : [0, 0]
+  world.wildWorker = save.wildWorker ? [...save.wildWorker] : [-1, -1]
   world.militiaCooldown = save.militiaCooldown ? [...save.militiaCooldown] : [0, 0]
   world.soulAsh = save.soulAsh ? [...save.soulAsh] : [0, 0]
   world.warCharge = save.warCharge ? [...save.warCharge] : [0, 0]

@@ -17,6 +17,9 @@ import { HARVEST_OFF, KIND_WORKER, NO_TARGET, STATE_IDLE, STATE_MOVE , STATE_PAT
  */
 function getEffectiveSpeed(world: World, id: number, hash: SpatialHash): number {
   const base = world.moveSpeed[id]
+  // Neutral creatures (treants) belong to no faction: no rally, no
+  // woodland blessing — only the season's snow slows them.
+  if (world.team[id] > 1) return base * seasonSpeedMult(world)
   const team = world.team[id] as 0 | 1
   // War Horn: Gale March quickens the army's stride.
   const rally = rallySpeedMult(world, team)

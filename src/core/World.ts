@@ -6,6 +6,7 @@ import { RESOURCES } from '../data/resources.ts'
 import type { ResourceKind } from './types.ts'
 import { getUnits } from '../data/stats.ts'
 import type { UnitType } from '../data/units.ts'
+import { TREANT } from '../data/units.ts'
 import { SpatialHash } from './spatial-hash.ts'
 import { TICK_RATE } from './time.ts'
 import { FogGrid } from '../world/fog.ts'
@@ -22,6 +23,7 @@ export const KIND_TOWER = 9
 export const KIND_TREE = 7
 export const KIND_GOLDMINE = 8
 export const KIND_SHRINE = 10
+export const KIND_TREANT = 11
 
 // ---- unit states ----
 export const STATE_IDLE = 0
@@ -36,6 +38,8 @@ export const STATE_HOLD = 8
 
 export const TEAM_PLAYER = 0
 export const TEAM_ENEMY = 1
+/** Wild creatures (Living Wild treants): hostile to both teams, owned by none. */
+export const TEAM_NEUTRAL = 2
 
 export const NO_TARGET = -1
 export const NO_TRAINING = -1
@@ -198,6 +202,17 @@ export class World {
   /** Season Wheel: 0 = growing season, 1 = winter (turns at the Second Bell).
    *  Sim state — hashed and saved like the other match meta fields. */
   season = 0
+  /** Living Wild: harvest pressure per team — wood torn from trees,
+   *  decaying over time. Past the threshold the forest retaliates.
+   *  Sim state — hashed and saved like the other match meta fields. */
+  wildHeat: number[] = [0, 0]
+  /** Living Wild: position of the most recent tree harvested per team.
+   *  This is where a retaliating treant rises. Sim state (hashed/saved). */
+  wildSiteX: number[] = [0, 0]
+  wildSiteZ: number[] = [0, 0]
+  /** Living Wild: worker who most recently harvested a tree per team
+   *  (the treant's first target), or -1. Sim state (hashed/saved). */
+  wildWorker: number[] = [-1, -1]
   /** Militia Bell: per-worker expiry timestamp (human racial). While
    *  matchTime < militiaUntil[id], the peasant fights as a Levy Pikeman. */
   readonly militiaUntil: Float32Array
@@ -398,6 +413,8 @@ export class World {
     // Update Orc momentum: increment for units in combat, reset after gap
     for (let id = 0; id < this.momentumTicks.length; id++) {
       if (!this.entities.has(id)) continue
+      // Neutral creatures (treants) belong to no faction: no momentum.
+      if (this.team[id] > 1) continue
       const team = this.team[id] as 0 | 1
       const sig = FACTIONS[this.factionOfTeam[team]].signature?.momentum
       if (!sig) continue
@@ -445,7 +462,11 @@ export class World {
 
   /** Units and buildings can be attacked; resource nodes cannot. */
   isAttackable(id: number): boolean {
-    return this.kind[id] <= KIND_FARM || this.kind[id] === KIND_TOWER
+    return (
+      this.kind[id] <= KIND_FARM ||
+      this.kind[id] === KIND_TOWER ||
+      this.kind[id] === KIND_TREANT
+    )
   }
 
   snapshotSpatialState(): Float32Array[] {
@@ -559,6 +580,33 @@ export class World {
     this.radius[id] = 3
     this.sight[id] = 0
     this.shrineHeld[id] = -1
+    this.state[id] = STATE_IDLE
+    this.setPosition(entity, x, 0, z)
+    return entity
+  }
+
+  /**
+   * Spawn a Living Wild treant (v2.0 canon): a neutral guardian the forest
+   * raises against an over-harvesting team. Fields are set by hand (like
+   * spawnShrine) because it belongs to no faction: no faction mods, no
+   * supply cost, no rally or signature effects. Its team is TEAM_NEUTRAL,
+   * so both players' units may attack it and it hunts by ordinary combat
+   * acquisition.
+   */
+  spawnTreant(x: number, z: number): Entity {
+    const entity = this.createEntity()
+    const id = entity.id
+    this.kind[id] = KIND_TREANT
+    this.team[id] = TEAM_NEUTRAL
+    this.health[id] = TREANT.hp
+    this.maxHealth[id] = TREANT.hp
+    this.damage[id] = TREANT.damage
+    this.attackRange[id] = TREANT.range
+    this.sight[id] = TREANT.sight
+    this.cooldown[id] = 0
+    this.cooldownTotal[id] = TREANT.cooldownTicks / TICK_RATE
+    this.moveSpeed[id] = TREANT.speed * TICK_RATE
+    this.radius[id] = TREANT.radius
     this.state[id] = STATE_IDLE
     this.setPosition(entity, x, 0, z)
     return entity

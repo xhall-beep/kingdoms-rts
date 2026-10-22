@@ -7,6 +7,7 @@ import { TICK_RATE } from '../core/time.ts'
 import {
   KIND_MELEE,
   KIND_RANGED,
+  KIND_TREANT,
   KIND_WORKER,
   KIND_HALL,
   KIND_TREE,
@@ -55,7 +56,7 @@ export class CombatSystemImpl implements System {
       const kind = world.kind[id]
       // Militia Bell: human peasants serving as Levy Pikemen fight alongside soldiers.
       const isMilitia = kind === KIND_WORKER && world.isMilitia(id)
-      if (kind !== KIND_MELEE && kind !== KIND_RANGED && !isMilitia) continue
+      if (kind !== KIND_MELEE && kind !== KIND_RANGED && kind !== KIND_TREANT && !isMilitia) continue
 
       // Explicit move order finished: back to idle so the AI (and player)
       // can issue fresh orders. (Workers get this from the gather system.)
@@ -153,8 +154,11 @@ export class CombatSystemImpl implements System {
           const rallyBonus = rallyDamageMult(world, world.team[id] as 0 | 1)
           const dmg = world.damage[id] * getCounterMultiplier(world, id, target) * momentumBonus * militiaBonus * rallyBonus
           world.health[target] -= dmg
-          // War Horn: every blow struck charges the horn.
-          chargeWarHorn(world, world.team[id] as 0 | 1, dmg)
+          // War Horn: every blow struck charges the horn. Neutral
+          // creatures (treants) belong to no team and charge nothing.
+          if (world.team[id] <= 1) {
+            chargeWarHorn(world, world.team[id] as 0 | 1, dmg)
+          }
           // Orc Plunder: sacking enemy buildings yields gold (10% of damage dealt).
           const atkTeam = world.team[id] as 0 | 1
           if (world.factionOfTeam[atkTeam] === 'orc') {
@@ -223,6 +227,8 @@ export class CombatSystemImpl implements System {
    * Deterministic: purely tick-based, no RNG.
    */
   private getMomentumBonus(world: World, id: number): number {
+    // Neutral creatures (treants) belong to no faction: no momentum.
+    if (world.team[id] > 1) return 1
     const team = world.team[id] as 0 | 1
     const momentum = FACTIONS[world.factionOfTeam[team]].signature?.momentum
     if (!momentum) return 1
@@ -235,6 +241,8 @@ export class CombatSystemImpl implements System {
    * Deterministic: roll uses hash(entityId, tick) so PvP stays in sync.
    */
   private tryReanimate(world: World, deadId: number): void {
+    // Neutral creatures (treants) belong to no faction: nothing reanimates them.
+    if (world.team[deadId] > 1) return
     const team = world.team[deadId] as 0 | 1
     const faction = FACTIONS[world.factionOfTeam[team]]
     const reanimate = faction.signature?.reanimate

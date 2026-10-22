@@ -11,6 +11,7 @@ import {
   KIND_RANGED,
   KIND_SHRINE,
   KIND_TREE,
+  KIND_TREANT,
   KIND_WORKER,
   KIND_TOWER,
 } from '../core/World'
@@ -440,6 +441,8 @@ export class Renderer {
   }
 
   private teamColor(world: World, id: number): string {
+    // Neutral creatures (treants) wear bark, not a faction's colors.
+    if (world.team[id] > 1) return '#7a5a34'
     const faction = world.factionOfTeam[world.team[id] as 0 | 1]
     return css(FACTIONS[faction].colors[0])
   }
@@ -489,6 +492,11 @@ export class Renderer {
         this.ctx.arc(p.x, p.y, r + 5, -Math.PI / 2, -Math.PI / 2 + q * Math.PI * 2)
         this.ctx.stroke()
       }
+    } else if (kind === KIND_TREANT) {
+      // Living Wild guardian: bark-brown trunk, dark canopy crown.
+      this.circle(p.x, p.y, r, '#4c3620')
+      this.circle(p.x, p.y, r * 0.72, '#2e6b3e')
+      this.circle(p.x, p.y, r * 0.3, '#5a4028')
     } else {
       // Unit: try sprite first, fall back to procedural discs.
       let spriteKey: string | null = null

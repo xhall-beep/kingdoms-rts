@@ -155,6 +155,14 @@ export function hashWorldState(world: World): bigint {
   h = mixWord(h, (world.winner + 1) >>> 0)
   // Season Wheel state (turns at the Second Bell; drives movement speed).
   h = mixWord(h, world.season)
+  // Living Wild state: harvest pressure, last harvest site, and the
+  // offending worker per team — all steer future treant spawns.
+  for (const t of [0, 1] as const) {
+    h = mixFloat(h, world.wildHeat[t])
+    h = mixFloat(h, world.wildSiteX[t])
+    h = mixFloat(h, world.wildSiteZ[t])
+    h = mixWord(h, (world.wildWorker[t] + 1) >>> 0)
+  }
 
   return h
 }

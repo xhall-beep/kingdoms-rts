@@ -1,5 +1,6 @@
 import type { System, World } from '../core/World'
 import { FACTIONS } from '../data/factions.ts'
+import { recordTreeHarvest } from './living-wild.ts'
 import { BUILDINGS } from '../data/buildings.ts'
 import { BUILDING_TYPE_BY_KIND } from '../world/construction.ts'
 import {
@@ -123,6 +124,11 @@ export class GatherSystemImpl implements System {
           // Elf symbiotic harvest: sap-tapping never depletes the tree.
           const sapTap = FACTIONS[world.factionOfTeam[world.team[id]]].worker.sapTap
           if (!sapTap) world.amount[node] -= taken
+          // Living Wild: tearing wood from a tree feeds the team's wild
+          // heat. Sap-tapping is symbiotic and angers nothing.
+          if (world.kind[node] === KIND_TREE && !sapTap) {
+            recordTreeHarvest(world, world.team[id] as 0 | 1, taken, node, id)
+          }
           world.carryAmount[id] += taken
           if (world.amount[node] <= 0) spentNodes.push(node)
           if (world.carryAmount[id] >= carryMax || world.amount[node] <= 0) {

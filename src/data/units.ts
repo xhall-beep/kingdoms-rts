@@ -20,3 +20,19 @@ export const UNITS: Record<UnitType, UnitDef> = {
   melee: { cost: { gold: 100, wood: 30 }, hp: 170, damage: 18, range: 2.1, sight: 24, speed: 4.4 / TICK_RATE, cooldownTicks: ticks(0.8), trainTicks: ticks(8), popCost: 2 },
   ranged: { cost: { gold: 80, wood: 50 }, hp: 85, damage: 12, range: 11, sight: 24, speed: 4.8 / TICK_RATE, cooldownTicks: ticks(1.1), trainTicks: ticks(7), popCost: 1 },
 };
+
+/**
+ * Living Wild guardian (v2.0 canon): spawned by the forest itself when a
+ * team clear-cuts past the wild threshold — never trained, never owned.
+ * Tougher and harder-hitting than a footman, slower on the march: it is
+ * there to maul a wood line, not to invade a base.
+ */
+export const TREANT = {
+  hp: 340,
+  damage: 24,
+  range: 2.4,
+  sight: 20,
+  speed: 3.6 / TICK_RATE,
+  cooldownTicks: ticks(1.1),
+  radius: 0.9,
+};

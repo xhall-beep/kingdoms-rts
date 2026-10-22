@@ -12,6 +12,7 @@ import { CombatSystemImpl } from './systems/combat'
 import { GatherSystemImpl } from './systems/gather'
 import { BellSystemImpl } from './systems/bells'
 import { SeasonSystemImpl } from './systems/season'
+import { LivingWildSystemImpl } from './systems/living-wild.ts'
 import { WarHornSystemImpl, soundWarHorn } from './systems/warhorn'
 import { ShrineSystemImpl } from './systems/shrines'
 import { MovementSystemImpl } from './systems/movement'
@@ -79,6 +80,7 @@ export function composeGame(canvas: HTMLCanvasElement): GameComposition {
   const systems = {
     production: new ProductionSystemImpl(),
     gather: new GatherSystemImpl(),
+    livingWild: new LivingWildSystemImpl(),
     combat: new CombatSystemImpl(),
     vision: new VisionSystemImpl(),
     victory: new VictorySystemImpl(),
@@ -92,6 +94,7 @@ export function composeGame(canvas: HTMLCanvasElement): GameComposition {
   // Decisions first, steering integration last.
   engine.world.registerSystem(systems.production)
   engine.world.registerSystem(systems.gather)
+  engine.world.registerSystem(systems.livingWild)
   engine.world.registerSystem(systems.combat)
   engine.world.registerSystem(systems.vision)
   engine.world.registerSystem(systems.victory)

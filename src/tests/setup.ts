@@ -15,11 +15,13 @@ import { VictorySystemImpl } from '../systems/victory.ts'
 import { ProductionSystemImpl } from '../systems/production.ts'
 import { BellSystemImpl } from '../systems/bells.ts'
 import { SeasonSystemImpl } from '../systems/season.ts'
+import { LivingWildSystemImpl } from '../systems/living-wild.ts'
 
 export function makeWorld(): World {
   const world = new World()
   world.registerSystem(new GatherSystemImpl())
   world.registerSystem(new ProductionSystemImpl())
+  world.registerSystem(new LivingWildSystemImpl())
   world.registerSystem(new CombatSystemImpl())
   world.registerSystem(new VisionSystemImpl())
   world.registerSystem(new VictorySystemImpl())

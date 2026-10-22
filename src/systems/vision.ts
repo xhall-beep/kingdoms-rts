@@ -11,6 +11,8 @@ export class VisionSystemImpl implements System {
     for (const id of world.entities.keys()) {
       const sight = world.sight[id]
       if (sight <= 0) continue
+      // Neutral creatures (treants) reveal fog for no one.
+      if (world.team[id] > 1) continue
       const team = world.team[id] as 0 | 1
       world.fog[team].reveal(world.positionX[id], world.positionZ[id], sight)
     }
