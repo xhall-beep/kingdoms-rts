@@ -36,6 +36,7 @@ import '../net/hash.test.ts'
 import '../net/lockstep.test.ts'
 import '../net/ws-link.test.ts'
 import '../net/pvp-setup.test.ts'
+import '../net/client.test.ts'
 const ok = report()
 const _p = (globalThis as unknown as { process?: { exit(c: number): void } }).process
 if (_p) _p.exit(ok ? 0 : 1)

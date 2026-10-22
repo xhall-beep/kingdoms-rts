@@ -62,6 +62,16 @@ export class PvPClient {
 /** Give up rejoining after this long (worker's grace is 60s + alarm lag). */
 private static readonly RECONNECT_GIVE_UP_MS = 75_000
 
+  /** Inbound turn bundles received before the match loop routed a handler. */
+  private pendingTurnBundles: InputMsg[] = []
+  /** Inbound hashes received before the match loop routed a handler. */
+  private pendingHashes: HashMsg[] = []
+  /** True once the match loop has routed real handlers via the setters below. */
+  private turnBundleRouted = false
+  private hashRouted = false
+/** Safety cap on pre-match buffered frames (WebSocket delivery is ordered). */
+private static readonly MAX_PENDING = 64
+
   constructor(config: PvPClientConfig) {
     this.config = config
   }
@@ -176,14 +186,54 @@ private static readonly RECONNECT_GIVE_UP_MS = 75_000
   /**
    * Re-route incoming turn bundles after construction (used by the PvP
    * game loop, which is created after the lobby builds this client).
+   * Any frames buffered before routing are replayed in arrival order.
    */
   setTurnBundleHandler(cb: (bundle: InputMsg) => void): void {
     this.config.onTurnBundle = cb
+    this.turnBundleRouted = true
+    const queued = this.pendingTurnBundles
+    this.pendingTurnBundles = []
+    for (const bundle of queued) cb(bundle)
   }
 
-  /** Re-route incoming hash messages after construction (see above). */
+  /**
+   * Re-route incoming hash messages after construction (see above).
+   * Any frames buffered before routing are replayed in arrival order.
+   */
   setHashHandler(cb: (msg: HashMsg) => void): void {
     this.config.onHash = cb
+    this.hashRouted = true
+    const queued = this.pendingHashes
+    this.pendingHashes = []
+    for (const msg of queued) cb(msg)
+  }
+
+  /**
+   * Pre-match buffering: turn bundles and hashes can arrive between
+   * match_start and PvPGame.start() routing the real handlers (the lobby's
+   * placeholder handlers are no-ops). Before this, those frames were
+   * silently dropped and the lockstep barrier stalled the match forever —
+   * the remote peer's opening turns never reached it. Buffered frames are
+   * replayed in arrival order the moment the handler is set.
+   */
+  private dispatchTurnBundle(bundle: InputMsg): void {
+    if (this.turnBundleRouted) {
+      this.config.onTurnBundle(bundle)
+      return
+    }
+    if (this.pendingTurnBundles.length < PvPClient.MAX_PENDING) {
+      this.pendingTurnBundles.push(bundle)
+    }
+  }
+
+  private dispatchHash(msg: HashMsg): void {
+    if (this.hashRouted) {
+      this.config.onHash(msg)
+      return
+    }
+    if (this.pendingHashes.length < PvPClient.MAX_PENDING) {
+      this.pendingHashes.push(msg)
+    }
   }
 
   /**
@@ -240,8 +290,8 @@ private static readonly RECONNECT_GIVE_UP_MS = 75_000
       case 'hash': {
         if (!msg.data) return
         const decoded = decodeMessage(fromBase64(msg.data))
-        if (decoded.kind === MsgKind.Input) this.config.onTurnBundle(decoded)
-        else if (decoded.kind === MsgKind.Hash) this.config.onHash(decoded)
+        if (decoded.kind === MsgKind.Input) this.dispatchTurnBundle(decoded)
+        else if (decoded.kind === MsgKind.Hash) this.dispatchHash(decoded)
         break
       }
       case 'opponent_disconnected':
