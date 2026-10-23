@@ -293,5 +293,5 @@ test('centerOnBase jumps the camera to the town hall', () => {
   const [x, z, zoom] = renderer.centers[0]
   assertEqual(x, world.positionX[hallId], 'centered on hall x')
   assertEqual(z, world.positionZ[hallId], 'centered on hall z')
-  assertEqual(zoom, 8, 'default gameplay zoom')
+  assertEqual(zoom, 10, 'default gameplay zoom')
 })

@@ -59,16 +59,23 @@ export interface HudCallbacks {
 /** Which unit each production building trains. */
 
 /**
- * DOM HUD: resource bar, command mode buttons, a contextual action panel
- * (build menu for workers, train buttons for production buildings), and a
- * victory/defeat banner. mount() builds the elements once; update() refreshes
- * values and the action panel every frame from the current selection.
+ * DOM HUD (decluttered layout): ONE translucent top strip (resources + VP
+ * read-only, ❓ Help, ☰ menu; the ⏸ pause button mounts itself into the
+ * strip), a dropdown menu for session controls, and an ALWAYS-ON bottom
+ * dashboard. The dashboard idles at ≤56px (Idle Workers / Base / building
+ * quick-select); when a selection exists it expands IN PLACE into the
+ * unit/building command dashboard (rendered by command-card.ts) — there
+ * is no floating selection card anywhere else. mount() builds the
+ * elements once; update() refreshes values and the dashboard every frame
+ * from the current selection.
  */
 export class HudImpl implements Hud {
   private goldEl: HTMLElement | null = null
   private woodEl: HTMLElement | null = null
   private supplyEl: HTMLElement | null = null
   private infoEl: HTMLElement | null = null
+  private armyEl: HTMLElement | null = null
+  private dashEl: HTMLElement | null = null
   private actionsEl: HTMLElement | null = null
   private buildingsEl: HTMLElement | null = null
   private lastBuildingsKey = ''
@@ -76,18 +83,24 @@ export class HudImpl implements Hud {
   private tutorialEl: HTMLElement | null = null
   private callbacks: HudCallbacks | null = null
   private lastActionsKey = ''
+  private lastSelectionKey = ''
+  private buildOpen = false
   private pvpLobby: PvPLobby | null = null
 
   mount(parent: HTMLElement, callbacks?: HudCallbacks): void {
     this.callbacks = callbacks ?? null
     parent.innerHTML = `
-      <div class="hud-bar">
-        <span class="hud-pill hud-gold">Gold <b id="hud-gold">0</b></span>
-        <span class="hud-pill hud-wood">Wood <b id="hud-wood">0</b></span>
-        <span class="hud-pill">Supply <b id="hud-supply">0/0</b></span>
-        <span class="hud-pill hud-info" id="hud-info"></span><button class="hud-pill hud-menu-btn" id="hud-menu-btn">☰</button>
+      <div class="hud-bar hud-strip" id="hud-strip">
+        <div class="hud-strip-stats">
+          <span class="hud-stat hud-gold">Gold <b id="hud-gold">0</b></span>
+          <span class="hud-stat hud-wood">Wood <b id="hud-wood">0</b></span>
+          <span class="hud-stat">Sup <b id="hud-supply">0/0</b></span>
+          <span class="hud-stat hud-info" id="hud-info"></span>
+        </div>
+        <button class="hud-strip-btn" id="hud-help" title="Show the How to Play help">❓</button>
+        <button class="hud-strip-btn" id="hud-menu-btn" title="Menu">☰</button>
       </div>
-      
+
       <div class="hud-menu" id="hud-menu" hidden>
         <div class="hud-bar">
           <button class="hud-pill hud-mode" id="hud-pause">Pause</button>
@@ -95,6 +108,7 @@ export class HudImpl implements Hud {
           <button class="hud-pill hud-mode" id="hud-load">Load</button>
           <button class="hud-pill hud-mode" id="hud-replay">Replay</button>
           <button class="hud-pill hud-mode" id="hud-newgame">New Game</button>
+          <button class="hud-pill hud-mode" id="hud-help-menu">❓ How to Play</button>
         </div>
         <div class="hud-bar">
           <button class="hud-pill hud-mode" id="hud-pvp">⚔️ PvP</button>
@@ -114,9 +128,15 @@ export class HudImpl implements Hud {
           <label class="hud-pill">Foe: <select id="hud-enemy-faction"></select></label>
         </div>
       </div>
-      <div class="hud-bar hud-buildings" id="hud-buildings"></div>
-      <div class="hud-bar hud-utility" id="hud-utility"><button class="hud-pill hud-action" id="hud-idle">Idle Workers</button><button class="hud-pill hud-action" id="hud-locate" title="Jump camera back to your base">⌂ Base</button><button class="hud-pill hud-action" id="hud-help" title="Show the How to Play help">❓ Help</button></div>
-      <div class="hud-bar hud-actions" id="hud-actions"></div>
+      <div class="hud-dash" id="hud-dash">
+        <div class="hud-dash-idle" id="hud-dash-idle">
+          <button class="hud-pill hud-action" id="hud-idle">Idle Workers</button>
+          <button class="hud-pill hud-action" id="hud-locate" title="Jump camera back to your base">⌂ Base</button>
+          <span class="hud-dash-army" id="hud-info-army"></span>
+          <div class="hud-buildings" id="hud-buildings"></div>
+        </div>
+        <div class="hud-actions" id="hud-actions"></div>
+      </div>
       <div class="hud-banner" id="hud-banner" hidden></div>
       <div class="hud-pvp-status" id="hud-pvp-status" hidden></div>
       <div class="hud-tutorial-backdrop" id="hud-tutorial-backdrop" hidden></div>
@@ -136,6 +156,8 @@ export class HudImpl implements Hud {
     this.woodEl = parent.querySelector('#hud-wood')
     this.supplyEl = parent.querySelector('#hud-supply')
     this.infoEl = parent.querySelector('#hud-info')
+    this.armyEl = parent.querySelector('#hud-info-army')
+    this.dashEl = parent.querySelector('#hud-dash')
     this.actionsEl = parent.querySelector('#hud-actions')
     this.buildingsEl = parent.querySelector('#hud-buildings')
     const idleBtn = parent.querySelector('#hud-idle')
@@ -269,6 +291,13 @@ export class HudImpl implements Hud {
       if (btn) btn.textContent = btn.textContent === 'Pause' ? 'Resume' : 'Pause'
       closeMenu()
     })
+    // Help also lives in the menu (the strip's ❓ button is the primary
+    // hook — the smoke gate taps it by id — this entry is the discoverable
+    // path for players who open the menu first).
+    wire('#hud-help-menu', () => {
+      closeMenu()
+      showTutorial()
+    })
     wire('#hud-save', () => {
       this.callbacks?.onSave()
       closeMenu()
@@ -392,15 +421,19 @@ export class HudImpl implements Hud {
       this.supplyEl.textContent = `${world.supplyUsed[TEAM_PLAYER]}/${world.supplyCap[TEAM_PLAYER]}`
     }
     this.announceBells(world)
+    // Counts are computed once and split across the two readouts: the top
+    // strip carries VP + faction extras; the dashboard idle row carries
+    // Workers/Army (they no longer earn a second strip row).
+    let workers = 0
+    let army = 0
+    for (const id of world.entities.keys()) {
+      if (world.team[id] !== TEAM_PLAYER) continue
+      if (world.kind[id] === KIND_WORKER) workers += 1
+      else if (world.kind[id] <= 2) army += 1
+    }
     if (this.infoEl) {
-      let workers = 0
-      let army = 0
-      for (const id of world.entities.keys()) {
-        if (world.team[id] !== TEAM_PLAYER) continue
-        if (world.kind[id] === KIND_WORKER) workers += 1
-        else if (world.kind[id] <= 2) army += 1
-      }
-      let text = `Workers ${workers} · Army ${army}`
+      // Victory Points.
+      let text = `VP ${Math.ceil(world.victoryPoints[TEAM_PLAYER])}`
       // Undead economy: show harvested Soul-Ash feeding the supply cap.
       if (world.factionOfTeam[TEAM_PLAYER] === 'undead') {
         text += ` · ☠ ${world.soulAsh[TEAM_PLAYER]}`
@@ -410,9 +443,10 @@ export class HudImpl implements Hud {
       if (charge > 0 || (world.rallyKind[TEAM_PLAYER] !== 0 && world.rallyUntil[TEAM_PLAYER] > world.matchTime)) {
         text += ` · 📯 ${charge}`
       }
-      // Victory Points.
-      text += ` · VP ${Math.ceil(world.victoryPoints[TEAM_PLAYER])}`
       this.infoEl.textContent = text
+    }
+    if (this.armyEl) {
+      this.armyEl.textContent = `Workers ${workers} · Army ${army}`
     }
     this.updateActions(world, selected)
     this.updateBuildings(world)
@@ -450,16 +484,22 @@ export class HudImpl implements Hud {
   }
 
   /** Rebuild the contextual info + action panel when the selection changes. */
-  /** Render the RTS command card for the current selection. */
+  /** Render the RTS command card into the bottom dashboard tray. */
   private updateActions(world: World, selected: number[]): void {
     const el = this.actionsEl
     if (!el) return
+    // A selection change closes the worker Build sub-menu.
+    const selKey = selected.join(',')
+    if (selKey !== this.lastSelectionKey) {
+      this.lastSelectionKey = selKey
+      this.buildOpen = false
+    }
     // Key includes HP so the card refreshes as damage is taken.
     const hpKey = selected.length > 0 ? Math.floor(world.health[selected[0]]) : 0
-    const key = `${selected.join(',')}|${Math.floor(world.gold[TEAM_PLAYER])}|${Math.floor(world.wood[TEAM_PLAYER])}|${hpKey}`
+    const key = `${selKey}|${Math.floor(world.gold[TEAM_PLAYER])}|${Math.floor(world.wood[TEAM_PLAYER])}|${hpKey}|${this.buildOpen ? 1 : 0}`
     if (key === this.lastActionsKey) return
     this.lastActionsKey = key
-    renderCommandCard(el, world, selected, {
+    const shown = renderCommandCard(el, world, selected, {
       onMode: (mode) => this.callbacks?.onMode(mode as never),
       onStop: () => this.callbacks?.onStop(),
       onHold: () => this.callbacks?.onHold(),
@@ -469,7 +509,15 @@ export class HudImpl implements Hud {
       onMilitia: () => this.callbacks?.onMilitia(),
       onUpgrade: () => this.callbacks?.onUpgrade(),
       onWarHorn: (r) => this.callbacks?.onWarHorn(r),
-    })
+      onToggleBuild: () => {
+        this.buildOpen = !this.buildOpen
+        this.lastActionsKey = ''
+      },
+    }, { buildOpen: this.buildOpen })
+    // The dashboard expands in place: while the tray is shown, the idle
+    // row is hidden by CSS (.hud-dash-expanded), so the tray REPLACES the
+    // idle bar's space instead of stacking on top of it.
+    if (this.dashEl) this.dashEl.classList.toggle('hud-dash-expanded', shown)
   }
 
   private updateBanner(world: World): void {

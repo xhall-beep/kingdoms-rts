@@ -319,12 +319,11 @@ code {
 
 #hud-root {
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  inset: 0;
   z-index: 10;
   pointer-events: none;
-  padding: 10px;
+  display: flex;
+  flex-direction: column;
 }
 
 .hud-bar {
@@ -352,7 +351,137 @@ code {
 
 .hud-gold b { color: #f5c542; }
 .hud-wood b { color: #7fd08a; }
-.hud-info { margin-left: auto; opacity: 0.85; font-size: 12px; }
+.hud-info { opacity: 0.85; font-size: 12px; }
+
+/* --- Decluttered HUD: one top strip + always-on bottom dashboard ---
+ * Persistent budget (412x915): strip 44px + idle dashboard 56px = 100px
+ * ≈ 10.9% of viewport height. The strip is translucent and touch
+ * pass-through except its buttons; the map renders full-bleed beneath. */
+.hud-strip {
+  height: 44px;
+  min-height: 44px;
+  padding: 0 4px 0 8px;
+  gap: 6px;
+  flex-wrap: nowrap;
+  background: rgba(10, 26, 26, 0.55);
+  border-bottom: 1px solid rgba(255, 243, 212, 0.12);
+}
+
+/* Stats live in a shrinkable wrapper: if readouts ever run wide, the
+ * info segment ellipsizes — the corner buttons are flex-pinned and can
+ * NEVER be pushed off-screen by stat text. */
+.hud-strip-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.hud-stat {
+  color: #fff3d4;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.hud-stat b {
+  color: #fff;
+  margin-left: 3px;
+}
+
+.hud-strip .hud-info {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hud-strip-btn {
+  pointer-events: auto;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  color: #fff3d4;
+  font-size: 18px;
+  line-height: 1;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+#hud-help {
+  order: 3;
+  font-size: 15px;
+}
+
+#hud-menu-btn {
+  order: 5;
+}
+
+/* The pause overlay's self-mounted ⏸ button lands in the strip; restyle
+ * it as a strip corner button (this two-class rule outranks the module's
+ * own injected single-class style). */
+.hud-strip .hud-pause-btn {
+  order: 4;
+  flex: 0 0 auto;
+  min-width: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: #f0d878;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The kingdom profile button now mounts inside the ☰ menu (tier-three
+ * info behind a tap): full-width menu row. */
+#hud-menu .hud-profile-btn {
+  display: block;
+  width: 100%;
+  margin: 8px 0 0;
+  min-height: 44px;
+  font-size: 14px;
+  border-radius: 8px;
+}
+
+/* Bottom dashboard: idle row is persistent; the selection tray replaces
+ * it in place while a selection exists (never stacks above it). */
+.hud-dash {
+  margin-top: auto;
+}
+
+.hud-dash-idle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  padding: 0 10px;
+  background: rgba(10, 26, 26, 0.62);
+  border-top: 1px solid rgba(255, 243, 212, 0.12);
+}
+
+.hud-dash-expanded .hud-dash-idle {
+  display: none;
+}
+
+.hud-dash-army {
+  font-size: 12px;
+  color: #fff3d4;
+  opacity: 0.85;
+  white-space: nowrap;
+}
 
 .hud-modes {
   margin-top: 8px;
@@ -373,7 +502,6 @@ code {
 }
 
 .hud-actions {
-  margin-top: 8px;
   min-height: 0;
 }
 
@@ -395,16 +523,20 @@ code {
   cursor: default;
 }
 
+/* Announcements (bells, victory/defeat) are toasts in the lane directly
+ * under the top strip — never a centre-screen block over the map. */
 .hud-banner {
   position: absolute;
-  top: 40%;
+  top: 52px;
   left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 48px;
+  transform: translateX(-50%);
+  font-size: 22px;
   font-weight: 800;
-  padding: 24px 48px;
-  border-radius: 16px;
+  padding: 10px 22px;
+  border-radius: 12px;
   pointer-events: none;
+  white-space: nowrap;
+  z-index: 25;
 }
 
 .hud-banner[hidden] {
@@ -415,7 +547,7 @@ code {
  * victory banner and pinned to the top so it never fights it. */
 .hud-pvp-status {
   position: absolute;
-  top: 12px;
+  top: 104px;
   left: 50%;
   transform: translateX(-50%);
   font-size: 14px;
@@ -456,27 +588,11 @@ code {
   display: none !important;
 }
 
-/* Compact top bar with menu button. */
-.hud-top {
-  margin-bottom: 0;
-}
-
-.hud-menu-btn {
-  cursor: pointer;
-  font: inherit;
-  pointer-events: auto;
-  margin-left: auto;
-  min-width: 44px;
-  min-height: 44px;
-  font-size: 18px;
-  line-height: 1;
-}
-
 /* Dropdown menu panel for session controls. */
 .hud-menu {
   position: absolute;
-  top: 100%;
-  right: 10px;
+  top: 52px;
+  right: 8px;
   background: rgba(10, 28, 28, 0.97);
   border: 2px solid rgba(255, 243, 212, 0.25);
   border-radius: 12px;
@@ -509,12 +625,24 @@ code {
 }
 
 .hud-buildings {
+  display: flex;
   gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  align-items: center;
+  scrollbar-width: none;
+}
+.hud-buildings::-webkit-scrollbar {
+  display: none;
 }
 .hud-building {
   background: rgba(43, 32, 16, 0.7);
   border-color: rgba(255, 200, 100, 0.25);
   font-size: 12px;
+  pointer-events: auto;
+  cursor: pointer;
+  flex: 0 0 auto;
 }
 .hud-building:active {
   background: rgba(80, 60, 30, 0.8);
@@ -524,31 +652,30 @@ code {
 .hud-tutorial[hidden]{display:none}
 .hud-tutorial-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:99;pointer-events:auto}
 .hud-tutorial-backdrop[hidden]{display:none}
-.hud-build-stamp{position:fixed;right:6px;bottom:4px;z-index:5;pointer-events:none;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10px;line-height:1.2;color:rgba(255,243,212,0.38);letter-spacing:0.02em}
+.hud-build-stamp{position:fixed;right:6px;bottom:62px;z-index:5;pointer-events:none;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10px;line-height:1.2;color:rgba(255,243,212,0.38);letter-spacing:0.02em}
 .hud-tutorial h2{margin:0 0 12px;color:#f5c542}
 .hud-tutorial p{margin:8px 0;font-size:14px;line-height:1.4}
 .hud-tutorial button{margin-top:12px;min-height:44px;padding:8px 24px;font:inherit;font-weight:700;background:#f5c542;color:#102b2b;border:none;border-radius:8px;cursor:pointer}
 .hud-tutorial .hud-tutorial-x{position:absolute;top:6px;right:6px;margin:0;min-height:44px;min-width:44px;padding:4px 10px;background:transparent;color:#f5c542;font-size:20px;line-height:1}
 
-/* --- RTS Command Card --- */
-.cmd-card{pointer-events:auto;background:#0f2b2bf2;border:2px solid #f5c54233;border-radius:16px;padding:12px;margin-top:8px;max-width:100%}
-.cmd-header{display:flex;gap:12px;align-items:center;margin-bottom:10px}
-.cmd-portrait{width:56px;height:56px;min-width:56px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;color:#fff;border:2px solid #ffffff33}
+/* --- RTS Command Dashboard (bottom tray form of the command card) ---
+ * Identity row (40px) + stat line + ONE row of command buttons (48px):
+ * ~131px expanded, inside the 150px dashboard cap. */
+.cmd-card{pointer-events:auto;background:rgba(10,26,26,0.85);border-top:2px solid rgba(245,197,66,0.35);padding:6px 10px;display:flex;flex-direction:column;gap:4px}
+.cmd-header{display:flex;gap:10px;align-items:center}
+.cmd-portrait{width:40px;height:40px;min-width:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:#fff;border:2px solid #ffffff33}
 .cmd-title-wrap{flex:1;min-width:0}
-.cmd-title{font-size:17px;font-weight:800;color:#fff3d4;margin-bottom:4px}
-.cmd-hpbar{height:8px;background:#1a1a1a;border-radius:4px;overflow:hidden;margin-bottom:2px}
-.cmd-hpfill{height:100%;border-radius:4px;transition:width 0.2s}
-.cmd-hptext{font-size:11px;color:#fff3d488}
-.cmd-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px}
-.cmd-stat{background:#1a3a34;border-radius:8px;padding:6px 8px;text-align:center}
-.cmd-stat-label{font-size:10px;color:#fff3d466;text-transform:uppercase;letter-spacing:0.5px}
-.cmd-stat-value{font-size:14px;font-weight:700;color:#fff3d4}
-.cmd-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-.cmd-btn{min-height:52px;border-radius:10px;border:2px solid #f5c54244;background:#143c32;color:#fff3d4;font:inherit;font-weight:700;font-size:13px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:8px 4px}
+.cmd-title{font-size:15px;line-height:1.15;font-weight:800;color:#fff3d4;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmd-hpbar{height:6px;background:#1a1a1a;border-radius:3px;overflow:hidden;margin-bottom:1px}
+.cmd-hpfill{height:100%;border-radius:3px;transition:width 0.2s}
+.cmd-hptext{font-size:11px;line-height:1.15;color:#fff3d488}
+.cmd-statline{font-size:12px;line-height:1.15;color:rgba(255,243,212,0.75);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmd-grid{display:flex;gap:12px}
+.cmd-btn{flex:1 1 0;min-width:0;min-height:48px;border-radius:10px;border:2px solid #f5c54244;background:#143c32;color:#fff3d4;font:inherit;font-weight:700;font-size:12px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:4px 2px}
 .cmd-btn:active{background:#1f5a4c}
 .cmd-btn:disabled{opacity:0.35;cursor:default}
-.cmd-btn-label{line-height:1.2}
-.cmd-btn-hotkey{font-size:10px;color:#f5c54288;font-weight:400}
+.cmd-btn-label{line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.cmd-btn-sub{font-size:10px;color:rgba(245,197,66,0.8);font-weight:400;line-height:1.1;white-space:nowrap}
 
 /* PvP Lobby */
 .pvp-lobby {

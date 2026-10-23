@@ -92,23 +92,25 @@ export function renameKingdom(name: string): void {
 }
 
 /**
- * Mount the profile button into the HUD bar. Retries until the HUD exists,
- * so callers can invoke this once at boot without ordering concerns.
+ * Mount the profile button into the HUD menu (decluttered HUD: profile is
+ * tier-three info, so it lives behind the ☰ tap instead of as a persistent
+ * strip button). Retries until the HUD exists, so callers can invoke this
+ * once at boot without ordering concerns.
  */
 export function initProfileUi(): void {
   ensureProfile()
   injectStyles()
   const tryMount = (): boolean => {
     if (buttonEl) return true
-    const bar = document.querySelector('.hud-bar')
-    if (!bar) return false
+    const menu = document.querySelector('#hud-menu')
+    if (!menu) return false
     buttonEl = document.createElement('button')
     buttonEl.type = 'button'
     buttonEl.className = 'hud-profile-btn'
     buttonEl.title = 'Kingdom profile'
     buttonEl.addEventListener('click', togglePanel)
     refreshButton()
-    bar.appendChild(buttonEl)
+    menu.appendChild(buttonEl)
     return true
   }
   if (!tryMount() && mountTimer === null) {

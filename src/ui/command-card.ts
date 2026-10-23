@@ -31,6 +31,8 @@ export interface CommandCardCallbacks {
   onUpgrade(): void
   onWarHorn(rally: 1 | 2 | 3): void
   onSetRally?(): void
+  /** Toggle the worker Build sub-menu inside the dashboard. */
+  onToggleBuild?: () => void
 }
 
 /** Faction color for portrait background. */
@@ -76,12 +78,19 @@ function buildingLabel(kind: number): string {
 /**
  * Render a command card into `el` for the given selection.
  * Returns true if a card was rendered, false for empty selection.
+ *
+ * Layout: this renders into the bottom dashboard — one identity row
+ * (portrait chip, name, HP bar), one compact stat LINE (no grid), and a
+ * single row of unit-specific command buttons. For workers, Build is an
+ * expander: `opts.buildOpen` swaps the command row for the build options
+ * (plus Back) in the same dashboard space.
  */
 export function renderCommandCard(
   el: HTMLElement,
   world: World,
   selected: number[],
   cb: CommandCardCallbacks,
+  opts?: { buildOpen?: boolean },
 ): boolean {
   el.innerHTML = ''
   if (selected.length === 0) return false
@@ -150,57 +159,48 @@ export function renderCommandCard(
   header.appendChild(titleWrap)
   card.appendChild(header)
 
-  // --- Stats grid ---
-  const stats = document.createElement('div')
-  stats.className = 'cmd-stats'
-
-  const stat = (label: string, value: string): void => {
-    const s = document.createElement('div')
-    s.className = 'cmd-stat'
-    const l = document.createElement('div')
-    l.className = 'cmd-stat-label'
-    l.textContent = label
-    const v = document.createElement('div')
-    v.className = 'cmd-stat-value'
-    v.textContent = value
-    s.appendChild(l)
-    s.appendChild(v)
-    stats.appendChild(s)
-  }
-
+  // --- Compact stat line: one small-text row. The old 3-column grid of
+  // stat boxes was half the reason the card rendered as a big block. ---
+  const parts: string[] = []
   if (isUnit) {
     const utype: UnitType =
       kind === KIND_WORKER ? 'worker' : kind === KIND_MELEE ? 'melee' : 'ranged'
     const def = getUnits()[utype]
-    stat('Damage', String(def.damage))
-    stat('Range', String(def.range))
-    stat('Sight', String(def.sight))
-    stat('Speed', String(def.speed ?? '—'))
-    stat('Armor', String((def as { armor?: number }).armor ?? 0))
-    stat('Cost', `${def.cost.gold}g ${def.cost.wood}w`)
+    parts.push(
+      `Dmg ${def.damage}`,
+      `Rng ${def.range}`,
+      `Sight ${def.sight}`,
+      `Spd ${def.speed ?? '—'}`,
+      `Arm ${(def as { armor?: number }).armor ?? 0}`,
+      `${def.cost.gold}g ${def.cost.wood}w`,
+    )
   } else if (isBuilding) {
     const btype = kind === KIND_HALL ? 'hall' : kind === KIND_BARRACKS ? 'barracks' : kind === KIND_ARCHERY ? 'archery' : 'farm'
     const bdef = BUILDINGS[btype as keyof typeof BUILDINGS]
     if (bdef) {
-      stat('HP', `${Math.floor(world.health[id])}/${Math.floor(world.maxHealth[id])}`)
-      if (kind === KIND_FARM) stat('Supply', '+8')
+      parts.push(`HP ${Math.floor(world.health[id])}/${Math.floor(world.maxHealth[id])}`)
+      if (kind === KIND_FARM) parts.push('Supply +8')
       // Trainable units
       const trainable = kind === KIND_HALL ? ['worker'] : kind === KIND_BARRACKS ? ['melee'] : kind === KIND_ARCHERY ? ['ranged'] : []
-      if (trainable.length > 0) stat('Trains', trainable.map((t) => factionUnitName(world, TEAM_PLAYER, t as UnitType)).join(', '))
+      if (trainable.length > 0) parts.push(`Trains ${trainable.map((t) => factionUnitName(world, TEAM_PLAYER, t as UnitType)).join(', ')}`)
     }
   } else if (isResource) {
     const res = kind === KIND_TREE ? 'Wood' : 'Gold'
-    stat('Type', res)
-    stat('Remaining', String(Math.floor(world.amount[id])))
+    parts.push(res, `${Math.floor(world.amount[id])} left`)
   }
-  if (stats.children.length > 0) card.appendChild(stats)
+  if (parts.length > 0) {
+    const line = document.createElement('div')
+    line.className = 'cmd-statline'
+    line.textContent = parts.join(' · ')
+    card.appendChild(line)
+  }
 
   // --- Command grid (own units/buildings only) ---
   if (isOwn && (isUnit || isBuilding)) {
     const grid = document.createElement('div')
     grid.className = 'cmd-grid'
 
-    const cmd = (label: string, fn: () => void, disabled = false, hotkey?: string): void => {
+    const cmd = (label: string, fn: () => void, disabled = false, sub?: string): void => {
       const btn = document.createElement('button')
       btn.className = 'cmd-btn'
       btn.disabled = disabled
@@ -208,37 +208,49 @@ export function renderCommandCard(
       lbl.className = 'cmd-btn-label'
       lbl.textContent = label
       btn.appendChild(lbl)
-      if (hotkey) {
-        const hk = document.createElement('span')
-        hk.className = 'cmd-btn-hotkey'
-        hk.textContent = hotkey
-        btn.appendChild(hk)
+      if (sub) {
+        const s = document.createElement('span')
+        s.className = 'cmd-btn-sub'
+        s.textContent = sub
+        btn.appendChild(s)
       }
       btn.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); fn() })
       grid.appendChild(btn)
     }
 
     if (isUnit) {
-      cmd('Move', () => cb.onMode('move'), false, 'M')
-      cmd('Attack', () => cb.onMode('attack'), false, 'A')
-      cmd('Stop', () => cb.onStop(), false, 'S')
-      if (kind === KIND_WORKER) {
-        cmd('Gather', () => cb.onMode('gather'), false, 'G')
-        // Build options as separate buttons
+      if (kind === KIND_WORKER && opts?.buildOpen && cb.onToggleBuild) {
+        // Build sub-menu: the build options replace the command row inside
+        // the same dashboard space (never a second stacked panel).
         for (const btype of PLAYER_BUILDABLE) {
           // Undead raise no farms — Soul-Ash feeds their supply cap.
           if (btype === 'farm' && world.factionOfTeam[TEAM_PLAYER] === 'undead') continue
           const bdef = BUILDINGS[btype]
           const afford = canAfford(world, TEAM_PLAYER, btype)
-          cmd(
-            `${bdef.name} ${bdef.cost.gold}g ${bdef.cost.wood}w`,
-            () => cb.onBuildType(btype),
-            !afford,
-          )
+          cmd(bdef.name, () => cb.onBuildType(btype), !afford, `${bdef.cost.gold}g ${bdef.cost.wood}w`)
         }
+        cmd('◀ Back', () => cb.onToggleBuild?.())
       } else {
-        cmd('Patrol', () => cb.onMode('patrol'), false, 'P')
-        cmd('Hold', () => cb.onHold(), false, 'H')
+        cmd('Move', () => cb.onMode('move'))
+        cmd('Attack', () => cb.onMode('attack'))
+        cmd('Stop', () => cb.onStop())
+        if (kind === KIND_WORKER) {
+          cmd('Gather', () => cb.onMode('gather'))
+          if (cb.onToggleBuild) {
+            cmd('Build ▸', () => cb.onToggleBuild?.())
+          } else {
+            // No expander wired: list build options inline (legacy shape).
+            for (const btype of PLAYER_BUILDABLE) {
+              if (btype === 'farm' && world.factionOfTeam[TEAM_PLAYER] === 'undead') continue
+              const bdef = BUILDINGS[btype]
+              const afford = canAfford(world, TEAM_PLAYER, btype)
+              cmd(bdef.name, () => cb.onBuildType(btype), !afford, `${bdef.cost.gold}g ${bdef.cost.wood}w`)
+            }
+          }
+        } else {
+          cmd('Patrol', () => cb.onMode('patrol'))
+          cmd('Hold', () => cb.onHold())
+        }
       }
     } else if (isBuilding) {
       // Train buttons
@@ -249,7 +261,7 @@ export function renderCommandCard(
         const afford =
           world.gold[TEAM_PLAYER] >= udef.cost.gold &&
           world.wood[TEAM_PLAYER] >= udef.cost.wood
-        cmd(`${factionUnitName(world, TEAM_PLAYER, utype)} ${udef.cost.gold}g`, () => cb.onTrain(utype), !afford)
+        cmd(factionUnitName(world, TEAM_PLAYER, utype), () => cb.onTrain(utype), !afford, `${udef.cost.gold}g ${udef.cost.wood}w`)
       }
       // Upgrade buttons
       if (kind === KIND_BARRACKS) {
@@ -257,25 +269,25 @@ export function renderCommandCard(
         const hpLvl = world.meleeHpLvl[TEAM_PLAYER]
         if (dmgLvl < 3) {
           const afford = world.gold[TEAM_PLAYER] >= 100 && world.wood[TEAM_PLAYER] >= 50
-          cmd(`Weapon +${dmgLvl + 1} 100g`, () => cb.onResearch('meleeDmg'), !afford)
+          cmd(`Weapon +${dmgLvl + 1}`, () => cb.onResearch('meleeDmg'), !afford, '100g 50w')
         }
         if (hpLvl < 3) {
           const afford = world.gold[TEAM_PLAYER] >= 100 && world.wood[TEAM_PLAYER] >= 50
-          cmd(`Armor +${hpLvl + 1} 100g`, () => cb.onResearch('meleeHp'), !afford)
+          cmd(`Armor +${hpLvl + 1}`, () => cb.onResearch('meleeHp'), !afford, '100g 50w')
         }
       }
       if (kind === KIND_ARCHERY) {
         const dmgLvl = world.rangedDmgLvl[TEAM_PLAYER]
         if (dmgLvl < 3) {
           const afford = world.gold[TEAM_PLAYER] >= 100 && world.wood[TEAM_PLAYER] >= 50
-          cmd(`Ranged +${dmgLvl + 1} 100g`, () => cb.onResearch('rangedDmg'), !afford)
+          cmd(`Ranged +${dmgLvl + 1}`, () => cb.onResearch('rangedDmg'), !afford, '100g 50w')
         }
       }
       // Militia Bell (human racial): muster nearby peasants as Levy Pikemen.
       if (kind === KIND_HALL && world.factionOfTeam[TEAM_PLAYER] === 'human') {
         const onCooldown = world.matchTime < world.militiaCooldown[TEAM_PLAYER]
         cmd(
-          onCooldown ? 'Militia Bell (cooldown)' : '🔔 Militia Bell',
+          onCooldown ? '🔔 Bell (cd)' : '🔔 Militia Bell',
           () => cb.onMilitia(),
           onCooldown,
         )
@@ -290,8 +302,8 @@ export function renderCommandCard(
           const upgrading = world.upgradeLeft[id] > 0
           const label = upgrading
             ? `Upgrading…`
-            : `⬆ ${ORC_TIER_NAMES[tier]} ${cost.gold}g ${cost.wood}w`
-          cmd(label, () => cb.onUpgrade(), !afford || upgrading)
+            : `⬆ ${ORC_TIER_NAMES[tier]}`
+          cmd(label, () => cb.onUpgrade(), !afford || upgrading, upgrading ? undefined : `${cost.gold}g ${cost.wood}w`)
         }
       }
       // War Horn: sound a rally when the horn is charged (all races).
@@ -302,13 +314,14 @@ export function renderCommandCard(
         for (const r of [1, 2, 3] as const) {
           const ready = charge >= 50 && !rallying
           cmd(
-            `${labels[r]}${ready ? ` (${charge})` : ''}`,
+            labels[r],
             () => cb.onWarHorn(r),
             !ready,
+            ready ? `${charge}` : undefined,
           )
         }
       }
-      if (cb.onSetRally) cmd('Rally', () => cb.onSetRally!(), false, 'R')
+      if (cb.onSetRally) cmd('Rally', () => cb.onSetRally!())
     }
 
     if (grid.children.length > 0) card.appendChild(grid)
