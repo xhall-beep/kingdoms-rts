@@ -110,6 +110,21 @@ const MAP_CLAMP = 56 // Keep flee destinations on the playable map.
  */
 const UNDEAD_ARMY_SUPPLY_RESERVE = 4
 
+/**
+ * Undead attack discipline: the shared attack thresholds (5–9 soldiers
+ * beyond the garrison) are calibrated for farm economies, which grow by
+ * building and can simply wait until the army is ready. Undead grows only
+ * through corpses, so a threshold it cannot reach before first combat is
+ * a death sentence: the farm-grown rival always dictates the first fight,
+ * at undead's base, on the rival's schedule (army-ceiling audit
+ * 2026-10-22 — 0 offensive waves measured). Undead therefore marches on
+ * a materially smaller force: its soldiers are cheap, fast-trained, and
+ * a quarter of its dead rise again. And until the first corpse lands
+ * (Soul-Ash still zero) it waives the home garrison entirely — see
+ * attack(). Every other faction's attack behavior is unchanged.
+ */
+const UNDEAD_ATTACK_ARMY = 3
+
 export type AIDifficulty = 'easy' | 'normal' | 'hard'
 
 /** Resolved decision parameters: difficulty base values plus personality mods. */
@@ -308,7 +323,7 @@ export class OpponentAI implements System {
     const idle = soldiers.filter(
       (id) => world.state[id] === STATE_IDLE && !this.fleeing.has(id),
     )
-    const surplus = idle.length - this.tuning.attackArmy
+    const surplus = idle.length - this.attackThreshold(world)
     if (surplus < 3) return
     const party = idle.slice(0, 3)
     for (const id of party) {
@@ -741,15 +756,30 @@ export class OpponentAI implements System {
     return base
   }
 
+  /** Soldiers (beyond the garrison) this AI needs before it attacks.
+   * Undead use their own lower threshold — see UNDEAD_ATTACK_ARMY. */
+  private attackThreshold(world: World): number {
+    return world.factionOfTeam[this.team] === 'undead'
+      ? UNDEAD_ATTACK_ARMY
+      : this.tuning.attackArmy
+  }
+
   /** Once strong enough, idle soldiers march on the enemy hall (or search for it). */
   private attack(world: World, hall: number, soldiers: number[]): void {
     // The quiet opening: no AI attacks before the First Bell (3:00).
     // The Warlord personality still hits *at* the bell — see tuning.
     if (world.bellsRung[0] !== 1) return
-    const garrisonSize = this.getGarrisonSize()
+    const isUndead = world.factionOfTeam[this.team] === 'undead'
+    // Cold-start desperation: until the first corpse feeds Soul-Ash, an
+    // undead garrison guards a cap that cannot grow — every soldier stays
+    // home, no combat starts, no ash ever lands. Waive it so the horde
+    // seeks the contact its economy runs on. Once ash flows, the normal
+    // garrison discipline resumes.
+    const garrisonSize =
+      isUndead && world.soulAsh[this.team] === 0 ? 0 : this.getGarrisonSize()
     const available = soldiers.length - garrisonSize
     const forced = this.gameTime > 240 && available >= 3 // 4 min: attack with what you have
-    if (!forced && available < this.tuning.attackArmy) return
+    if (!forced && available < this.attackThreshold(world)) return
     const idle = soldiers.filter((id) => world.state[id] === STATE_IDLE)
     // Reserve garrison: keep the closest soldiers to hall at home
     const hx = world.positionX[hall]

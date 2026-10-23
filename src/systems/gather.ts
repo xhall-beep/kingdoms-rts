@@ -1,7 +1,7 @@
 import type { System, World } from '../core/World'
 import { FACTIONS } from '../data/factions.ts'
 import { recordTreeHarvest } from './living-wild.ts'
-import { BUILDINGS } from '../data/buildings.ts'
+import { buildingSupply } from '../data/buildings.ts'
 import { BUILDING_TYPE_BY_KIND } from '../world/construction.ts'
 import {
   CARRY_GOLD,
@@ -39,7 +39,7 @@ function finishConstruction(world: World, site: number): void {
   const bkind = world.kind[site]
   if (bkind >= KIND_HALL && bkind <= KIND_FARM) {
     const btype = BUILDING_TYPE_BY_KIND[bkind]
-    world.supplyCap[world.team[site]] += BUILDINGS[btype].supply
+    world.supplyCap[world.team[site]] += buildingSupply(btype, world.factionOfTeam[world.team[site]])
   }
 }
 

@@ -1,4 +1,4 @@
-import { BUILDINGS } from '../data/buildings.ts'
+import { BUILDINGS, buildingSupply } from '../data/buildings.ts'
 import type { BuildingType } from '../data/buildings.ts'
 import { FACTIONS } from '../data/factions.ts'
 import type { FactionId } from '../data/factions.ts'
@@ -374,7 +374,7 @@ export class World {
     } else if ((kind >= KIND_HALL && kind <= KIND_FARM) || kind === KIND_TOWER) {
       // Only completed buildings granted supply.
       if (this.buildProgress[id] >= this.buildTotal[id]) {
-        this.supplyCap[team] -= BUILDINGS[BUILDING_BY_KIND[kind]].supply
+        this.supplyCap[team] -= buildingSupply(BUILDING_BY_KIND[kind], this.factionOfTeam[team])
       }
     }
     // Clear cross-entity references BEFORE the id is recycled: a stale
@@ -542,7 +542,7 @@ export class World {
     this.tier[id] = 1
     this.upgradeLeft[id] = 0
     this.setPosition(entity, x, 0, z)
-    if (built) this.supplyCap[team] += def.supply
+    if (built) this.supplyCap[team] += buildingSupply(type, this.factionOfTeam[team])
     // Towers get combat stats for auto-attack
     if (type === 'tower') {
       this.damage[id] = 25

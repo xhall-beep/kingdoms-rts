@@ -22,3 +22,32 @@ export const BUILDINGS: Record<BuildingType, BuildingDef> = {
   farm: { name: 'Farm', cost: { gold: 50, wood: 80 }, hp: 380, radius: 3, buildTicks: ticks(6), trains: [], supply: 6, sight: 18 },
   tower: { name: 'Guard Tower', cost: { gold: 100, wood: 50 }, hp: 600, radius: 2.5, buildTicks: ticks(8), trains: [], supply: 0, sight: 34 },
 };
+
+/**
+ * Supply granted by an undead hall — higher than the shared hall grant (10)
+ * because it is undead's ONLY pre-combat supply: undead raise no farms, and
+ * Soul-Ash grows the cap only through corpses. At the shared 10 the early
+ * pop math cannot close (army-ceiling audit 2026-10-22): the AI's 4-supply
+ * army reserve clamps workers to 6, and the 4 reserve pop fields exactly
+ * 3 soldiers (1 melee + 2 ranged) — below every attack gate, so undead
+ * could never start the combat its economy runs on.
+ *
+ * At 18 the cold-start math closes for every personality, with no corpses:
+ * a full worker line (aggressor 9 / normal·defender 10 / expander 12)
+ * plus 6–9 pop of soldiers — 4–5 soldiers, enough to satisfy undead's
+ * lowered attack threshold (3 available) even keeping a garrison. A
+ * farm faction passes 18 only with a hall plus two farms (10+6+6=22);
+ * undead's static 18 still waits on corpses for any further growth.
+ */
+export const UNDEAD_HALL_SUPPLY = 18;
+
+/**
+ * Supply a completed building of this type grants its owner. Faction-aware
+ * (the undead hall above); every other grant is the shared table value.
+ * All supply accounting — spawn, construction completion, destruction —
+ * must go through here so grants and removals always agree.
+ */
+export function buildingSupply(type: BuildingType, faction: string): number {
+  if (type === 'hall' && faction === 'undead') return UNDEAD_HALL_SUPPLY;
+  return BUILDINGS[type].supply;
+}

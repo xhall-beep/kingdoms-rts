@@ -12,7 +12,9 @@
  *  - The undead AI reserves supply for an army instead of worker-filling
  *    the whole cap — while farm factions keep filling theirs.
  *  - Creeping Blight's out-of-combat delay is the designed 5 seconds
- *    (was `5 * 60` ticks against TICK_RATE 20 → 15 s in practice).
+ *    (pinned in simulated seconds below; world.tick advances at
+ *    WORLD_TICKS_PER_SECOND = 60/s, not at TICK_RATE 20 — the earlier
+ *    pin in TICK_RATE units measured only 1.67 s of sim time).
  */
 import {
   World,
@@ -22,7 +24,7 @@ import {
   KIND_MELEE,
   KIND_RANGED,
 } from '../core/World.ts'
-import { TICK_RATE } from '../core/time.ts'
+import { WORLD_TICKS_PER_SECOND } from '../core/time.ts'
 import { seedScenario } from '../scenario.ts'
 import { CombatSystemImpl } from '../systems/combat.ts'
 import { GatherSystemImpl } from '../systems/gather.ts'
@@ -138,9 +140,15 @@ test('creeping blight: regen starts at the designed 5 seconds out of combat', ()
   const half = world.maxHealth[ghoul] / 2
   world.health[ghoul] = half
   world.lastCombatTick[ghoul] = world.tick
-  const delayTicks = 5 * TICK_RATE
-  for (let i = 0; i < delayTicks - 10; i += 1) world.update(STEP)
+  // Expressed in simulated seconds: at the 1/60 step, one sim second is
+  // WORLD_TICKS_PER_SECOND world updates. (The previous pin counted
+  // 5 * TICK_RATE = 100 updates = 1.67 sim-seconds and called it 5 s.)
+  const advanceSeconds = (sec: number): void => {
+    const n = Math.round(sec * WORLD_TICKS_PER_SECOND)
+    for (let i = 0; i < n; i += 1) world.update(STEP)
+  }
+  advanceSeconds(4.9)
   assertEqual(world.health[ghoul], half, 'no blight regen before 5s out of combat')
-  for (let i = 0; i < 30; i += 1) world.update(STEP)
-  assert(world.health[ghoul] > half, 'blight regen underway shortly after 5s (was 15s)')
+  advanceSeconds(0.3)
+  assert(world.health[ghoul] > half, 'blight regen underway just after 5s')
 })

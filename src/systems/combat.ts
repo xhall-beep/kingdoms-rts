@@ -3,7 +3,7 @@ import { KIND_TOWER } from '../core/World'
 import { chargeWarHorn, rallyDamageMult, rallySpeedMult } from './warhorn.ts'
 import { SpatialHash } from '../core/spatial-hash.ts'
 import { FACTIONS } from '../data/factions.ts'
-import { TICK_RATE } from '../core/time.ts'
+import { WORLD_TICKS_PER_SECOND } from '../core/time.ts'
 import {
   KIND_MELEE,
   KIND_RANGED,
@@ -218,11 +218,15 @@ export class CombatSystemImpl implements System {
     }
     // Creeping Blight (undead racial): the dead knit themselves back together.
     // Undead units regenerate 2% max HP/sec after 5 seconds out of combat.
+    // The delay is a world.tick gap, and world.tick advances at
+    // WORLD_TICKS_PER_SECOND (60/s) under every driver — denominating it in
+    // TICK_RATE (20, the data-table storage convention) made the delay
+    // 100 ticks = 1.67 s in practice (audit 2026-10-22).
     for (const id of world.entities.keys()) {
       const kind = world.kind[id]
       if (kind !== KIND_MELEE && kind !== KIND_RANGED && kind !== KIND_WORKER) continue
       if (world.factionOfTeam[world.team[id] as 0 | 1] !== 'undead') continue
-      if (world.tick - world.lastCombatTick[id] < 5 * TICK_RATE) continue
+      if (world.tick - world.lastCombatTick[id] < 5 * WORLD_TICKS_PER_SECOND) continue
       if (world.health[id] >= world.maxHealth[id]) continue
       world.health[id] = Math.min(world.maxHealth[id], world.health[id] + world.maxHealth[id] * 0.02 * dt)
     }
@@ -268,12 +272,15 @@ export class CombatSystemImpl implements System {
     const entity = world.spawnUnit('melee', team, x, z)
     const newId = entity.id
 
-    // Apply reanimation: reduced HP, limited lifetime
+    // Apply reanimation: reduced HP, limited lifetime. reanimateTicks is a
+    // per-update countdown in World.update, and updates run at
+    // WORLD_TICKS_PER_SECOND (60/s) — denominating the designed seconds in
+    // TICK_RATE (20) made skeletons live 5 s instead of 15 (audit 2026-10-22).
     const maxHp = world.maxHealth[newId]
     const reHp = Math.max(1, Math.round(maxHp * reanimate.hpFactor))
     world.health[newId] = reHp
     world.maxHealth[newId] = reHp
-    world.reanimateTicks[newId] = Math.round(reanimate.durationSec * TICK_RATE)
+    world.reanimateTicks[newId] = Math.round(reanimate.durationSec * WORLD_TICKS_PER_SECOND)
   }
 
   /**
