@@ -20,7 +20,7 @@ import type { BuildingType } from '../data/buildings.ts'
 import type { Command } from '../session/commands.ts'
 import type { Renderer } from '../render/renderer'
 import { sfx } from '../ui/feedback.ts'
-import { placeStructure } from '../world/construction.ts'
+import { canPlaceStructure, placeStructure } from '../world/construction.ts'
 import { orderAttack, orderAttackMove } from '../systems/combat'
 import { orderBuild, orderGather } from '../systems/gather'
 import { setRally } from '../systems/production.ts'
@@ -34,6 +34,8 @@ export interface InputController {
   handlePointer(position: readonly [number, number]): void
   /** Jump the camera to the local team's town hall (phone "I'm lost" recovery). */
   centerOnBase(): void
+  /** Would the pending building actually place at the current ghost spot? */
+  isGhostValid(world: World): boolean
 }
 
 const PICK_RADIUS_PX = 40 // minimum tap target in screen pixels (finger-friendly)
@@ -85,6 +87,7 @@ export class InputControllerImpl implements InputController {
     canvas.addEventListener('pointerdown', (e) => this.onDown(e))
     canvas.addEventListener('pointermove', (e) => this.onMove(e))
     canvas.addEventListener('pointerup', (e) => this.onUp(e))
+    canvas.addEventListener('pointercancel', (e) => this.onCancel(e))
     canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false })
     canvas.addEventListener('contextmenu', (e) => e.preventDefault())
   }
@@ -384,6 +387,22 @@ export class InputControllerImpl implements InputController {
     }
   }
 
+  /**
+   * The OS can interrupt a touch mid-gesture (notification shade, system
+   * gesture) and fire pointercancel instead of pointerup. Without cleanup
+   * the stale pointer stays in the map forever: every later tap looks like
+   * a second finger, so taps silently die until reload. A cancel never
+   * issues orders — it just resets the gesture state.
+   */
+  private onCancel(e: PointerEvent): void {
+    this.pointers.delete(e.pointerId)
+    if (this.pointers.size > 0) return
+    this.dragStart = null
+    this.panning = false
+    this.boxSelecting = false
+    this.renderer?.setSelectionBox(null)
+  }
+
   private onWheel(e: WheelEvent): void {
     e.preventDefault()
     this.renderer?.zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.offsetX, e.offsetY)
@@ -477,7 +496,12 @@ export class InputControllerImpl implements InputController {
     const renderer = this.renderer
     if (!world || !renderer || this.selected.length === 0) return
     const p = renderer.screenToWorld(sx, sy)
-    const target = this.entityAt(p.x, p.z)
+    // anyTeam MUST be true here: with the own-team filter, attack mode could
+    // never see an enemy (every tap degraded to attack-move) and gather mode
+    // could never see a resource node for the slot-1 player (nodes carry
+    // team 0) — both buttons silently did the wrong thing or nothing.
+    const target = this.entityAt(p.x, p.z, true)
+    let keepMode = false
     if (this.mode === 'move') {
       if (this.selected.length === 1 && this.isProductionBuilding(world, this.selected[0])) {
         if (!this.deferred) setRally(world, this.selected[0], p.x, p.z)
@@ -488,7 +512,7 @@ export class InputControllerImpl implements InputController {
         this.emit({ type: 'move', step: 0, unitIds: [...this.selected], x: p.x, z: p.z })
       }
     } else if (this.mode === 'attack') {
-      if (target !== -1 && world.team[target] !== this.localTeam) {
+      if (target !== -1 && world.team[target] !== this.localTeam && world.isAttackable(target)) {
         if (!this.deferred) for (const id of this.selected) orderAttack(world, id, target)
         this.renderer?.pingAttack(world.positionX[target], world.positionZ[target])
         this.emit({ type: 'attack', step: 0, unitIds: [...this.selected], targetId: target })
@@ -502,15 +526,22 @@ export class InputControllerImpl implements InputController {
           this.emit({ type: 'attackmove', step: 0, unitIds: fighters, x: p.x, z: p.z })
         }
       }
-    } else if (this.mode === 'gather' && target !== -1) {
-      this.assignGather(world, target)
+    } else if (this.mode === 'gather') {
+      if (target !== -1 && (world.kind[target] === KIND_TREE || world.kind[target] === KIND_GOLDMINE)) {
+        this.assignGather(world, target)
+      } else {
+        // Not a resource node: acknowledge the tap instead of silently
+        // swallowing it, and stay in gather mode for the next tap.
+        sfx.error()
+        keepMode = true
+      }
     } else if (this.mode === 'build' && this.pendingBuilding !== null) {
       this.placeBuilding(p.x, p.z)
     } else if (this.mode === 'patrol') {
       if (!this.deferred) for (const id of this.selected) orderPatrol(world, id, p.x, p.z)
       this.emit({ type: 'patrol', step: 0, unitIds: [...this.selected], x: p.x, z: p.z })
     }
-    if (this.mode !== 'build') { this.setMode('selection'); this.ghostPos = null }
+    if (this.mode !== 'build' && !keepMode) { this.setMode('selection'); this.ghostPos = null }
   }
 
   /** Place the pending building at a world point and send a selected worker. */
@@ -519,7 +550,11 @@ export class InputControllerImpl implements InputController {
     const type = this.pendingBuilding
     if (!world || type === null) return
     const worker = this.selected.find((id) => world.kind[id] === KIND_WORKER)
-    if (worker === undefined) return
+    if (worker === undefined) {
+      // No builder selected: acknowledge the tap instead of swallowing it.
+      sfx.error()
+      return
+    }
     if (this.deferred) {
       // Lockstep PvP: the turn executor places the structure deterministically.
       this.emit({ type: 'build', step: 0, workerId: worker, building: type, x, z, siteId: -1 })
@@ -530,7 +565,17 @@ export class InputControllerImpl implements InputController {
       orderBuild(world, worker, placed.id)
       this.emit({ type: 'build', step: 0, workerId: worker, building: type, x, z, siteId: placed.id })
       // Stay in build mode for placing more; the HUD can cancel.
+    } else {
+      // Blocked footprint / can't afford / faction rule: say so audibly —
+      // a silent no-op here reads as "the game ignored my tap".
+      sfx.error()
     }
+  }
+
+  /** Would the pending building place at the current ghost position? */
+  isGhostValid(world: World): boolean {
+    if (this.pendingBuilding === null || this.ghostPos === null) return true
+    return canPlaceStructure(world, this.localTeam, this.pendingBuilding, this.ghostPos.x, this.ghostPos.z)
   }
 
   /** Right-click: attack enemies, gather from nodes, move otherwise. */
@@ -542,6 +587,7 @@ export class InputControllerImpl implements InputController {
     const target = this.entityAt(p.x, p.z, true)
     if (target !== -1 && world.team[target] !== this.localTeam && world.isAttackable(target)) {
       for (const id of this.selected) orderAttack(world, id, target)
+      this.renderer?.pingAttack(world.positionX[target], world.positionZ[target])
       this.emit({ type: 'attack', step: 0, unitIds: [...this.selected], targetId: target })
       sfx.attack()
       return
@@ -571,6 +617,9 @@ export class InputControllerImpl implements InputController {
     }
     if (workers.length > 0) {
       this.emit({ type: 'gather', step: 0, unitIds: workers, nodeId: node })
+      // Visible acknowledgment at the node — a gather order used to be the
+      // one order with no on-map feedback at all.
+      this.renderer?.pingMove(world.positionX[node], world.positionZ[node])
       sfx.gather()
     }
   }

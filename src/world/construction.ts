@@ -19,6 +19,25 @@ export const PLAYER_BUILDABLE: BuildingType[] = ['farm', 'barracks', 'archery', 
  * Deducts costs, validates the footprint, and spawns the unfinished structure.
  * The caller is responsible for sending a worker via orderBuild.
  */
+/**
+ * Pure placement check — the exact validation placeStructure applies,
+ * without deducting or spawning. Used by the input layer to tint the
+ * placement ghost honestly (green = will place, red = will not).
+ */
+export function canPlaceStructure(
+  world: World,
+  team: 0 | 1,
+  type: BuildingType,
+  x: number,
+  z: number,
+): boolean {
+  const def = BUILDINGS[type]
+  // Undead raise no farms: Soul-Ash from the fallen feeds their supply cap.
+  if (type === 'farm' && world.factionOfTeam[team] === 'undead') return false
+  if (world.gold[team] < def.cost.gold || world.wood[team] < def.cost.wood) return false
+  return isAreaFree(world, x, z, def.radius)
+}
+
 export function placeStructure(
   world: World,
   team: 0 | 1,
@@ -27,14 +46,7 @@ export function placeStructure(
   z: number,
 ): { ok: boolean; id: number } {
   const def = BUILDINGS[type]
-  // Undead raise no farms: Soul-Ash from the fallen feeds their supply cap.
-  if (type === 'farm' && world.factionOfTeam[team] === 'undead') {
-    return { ok: false, id: NO_TARGET }
-  }
-  if (world.gold[team] < def.cost.gold || world.wood[team] < def.cost.wood) {
-    return { ok: false, id: NO_TARGET }
-  }
-  if (!isAreaFree(world, x, z, def.radius)) return { ok: false, id: NO_TARGET }
+  if (!canPlaceStructure(world, team, type, x, z)) return { ok: false, id: NO_TARGET }
   world.gold[team] -= def.cost.gold
   world.wood[team] -= def.cost.wood
   const entity = world.spawnBuilding(type, team, x, z, false)

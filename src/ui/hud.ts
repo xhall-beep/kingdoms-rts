@@ -72,6 +72,7 @@ export class HudImpl implements Hud {
   private buildingsEl: HTMLElement | null = null
   private lastBuildingsKey = ''
   private bannerEl: HTMLElement | null = null
+  private tutorialEl: HTMLElement | null = null
   private callbacks: HudCallbacks | null = null
   private lastActionsKey = ''
   private pvpLobby: PvPLobby | null = null
@@ -113,11 +114,12 @@ export class HudImpl implements Hud {
         </div>
       </div>
       <div class="hud-bar hud-buildings" id="hud-buildings"></div>
-      <div class="hud-bar hud-utility" id="hud-utility"><button class="hud-pill hud-action" id="hud-idle">Idle Workers</button><button class="hud-pill hud-action" id="hud-locate" title="Jump camera back to your base">⌂ Base</button></div>
+      <div class="hud-bar hud-utility" id="hud-utility"><button class="hud-pill hud-action" id="hud-idle">Idle Workers</button><button class="hud-pill hud-action" id="hud-locate" title="Jump camera back to your base">⌂ Base</button><button class="hud-pill hud-action" id="hud-help" title="Show the How to Play help">❓ Help</button></div>
       <div class="hud-bar hud-actions" id="hud-actions"></div>
       <div class="hud-banner" id="hud-banner" hidden></div>
       <div class="hud-pvp-status" id="hud-pvp-status" hidden></div>
       <div class="hud-tutorial" id="hud-tutorial" hidden>
+        <button class="hud-tutorial-x" id="hud-tutorial-x" aria-label="Close help">✕</button>
         <h2>How to Play</h2>
         <p><b>Tap</b> your unit or building to select it.</p>
         <p><b>Tap</b> again to deselect.</p>
@@ -137,14 +139,34 @@ export class HudImpl implements Hud {
     const locateBtn = parent.querySelector('#hud-locate')
     if (locateBtn) locateBtn.addEventListener('click', () => this.callbacks?.onLocateBase())
     this.bannerEl = parent.querySelector('#hud-banner')
-    // First-launch tutorial.
-    const tutorialEl = parent.querySelector<HTMLElement>('#hud-tutorial')
-    const tutorialClose = parent.querySelector('#hud-tutorial-close')
-    if (tutorialEl && tutorialClose && !localStorage.getItem('krts-tutorial-seen')) {
-      tutorialEl.hidden = false
-      tutorialClose.addEventListener('click', () => {
-        tutorialEl.hidden = true
+    // How to Play overlay: shown on first launch only. Dismissal persists
+    // (localStorage) so it never becomes a wall, and the ❓ Help button
+    // reopens it on demand. Root cause of the old "can't remove it" bug:
+    // #hud-root is pointer-events:none and .hud-tutorial never opted back
+    // in, so the Got it! button could not be tapped at all — the seen flag
+    // was never set and the panel returned on every load, undismissable.
+    this.tutorialEl = parent.querySelector<HTMLElement>('#hud-tutorial')
+    const dismissTutorial = (): void => {
+      if (this.tutorialEl) this.tutorialEl.hidden = true
+      try {
         localStorage.setItem('krts-tutorial-seen', '1')
+      } catch {
+        /* storage blocked (private mode): hiding still works this session */
+      }
+    }
+    parent.querySelector('#hud-tutorial-close')?.addEventListener('click', dismissTutorial)
+    parent.querySelector('#hud-tutorial-x')?.addEventListener('click', dismissTutorial)
+    let tutorialSeen = false
+    try {
+      tutorialSeen = localStorage.getItem('krts-tutorial-seen') === '1'
+    } catch {
+      /* storage unreadable: treat as unseen, dismiss still hides it */
+    }
+    if (this.tutorialEl && !tutorialSeen) this.tutorialEl.hidden = false
+    const helpBtn = parent.querySelector('#hud-help')
+    if (helpBtn) {
+      helpBtn.addEventListener('click', () => {
+        if (this.tutorialEl) this.tutorialEl.hidden = false
       })
     }
     // Faction pickers.
@@ -175,6 +197,12 @@ export class HudImpl implements Hud {
     // Menu toggle.
     const menuBtn = parent.querySelector('#hud-menu-btn')
     const menuEl = parent.querySelector<HTMLElement>('#hud-menu')
+    // Session actions close the dropdown after firing so the menu never
+    // lingers over the game as a stuck layer. Pickers (difficulty,
+    // personality, factions) intentionally leave it open.
+    const closeMenu = (): void => {
+      if (menuEl) menuEl.hidden = true
+    }
     // PvP lobby
     this.pvpLobby = new PvPLobby()
     const bannerEl = parent.querySelector<HTMLElement>('#hud-banner')
@@ -205,6 +233,7 @@ export class HudImpl implements Hud {
     })
     const pvpBtn = parent.querySelector('#hud-pvp')
     pvpBtn?.addEventListener('click', () => {
+      closeMenu()
       if (this.pvpLobby?.isVisible) this.pvpLobby.hide()
       else this.pvpLobby?.show()
     })
@@ -236,18 +265,30 @@ export class HudImpl implements Hud {
       this.callbacks?.onPause()
       const btn = parent.querySelector('#hud-pause')
       if (btn) btn.textContent = btn.textContent === 'Pause' ? 'Resume' : 'Pause'
+      closeMenu()
     })
-    wire('#hud-save', () => this.callbacks?.onSave())
-    wire('#hud-load', () => this.callbacks?.onLoad())
+    wire('#hud-save', () => {
+      this.callbacks?.onSave()
+      closeMenu()
+    })
+    wire('#hud-load', () => {
+      this.callbacks?.onLoad()
+      closeMenu()
+    })
     wire('#hud-surrender', () => {
+      closeMenu()
       showConfirmModal('Surrender this match? It will count as a loss.', () => {
         this.callbacks?.onSurrender?.()
       })
     })
     const speedRow = parent.querySelector<HTMLElement>('#hud-speed')
-    wire('#hud-newgame', () => this.callbacks?.onNewGame())
+    wire('#hud-newgame', () => {
+      this.callbacks?.onNewGame()
+      closeMenu()
+    })
     wire('#hud-replay', () => {
       this.callbacks?.onReplay()
+      closeMenu()
       const btn = parent.querySelector('#hud-replay')
       const inReplay = btn && btn.textContent === 'Replay'
       if (btn) btn.textContent = inReplay ? 'Exit' : 'Replay'

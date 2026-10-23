@@ -520,11 +520,12 @@ code {
   background: rgba(80, 60, 30, 0.8);
 }
 
-.hud-tutorial{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#102b2bf2;border:3px solid #f5c542;border-radius:16px;padding:24px;max-width:320px;color:#fff3d4;z-index:100}
+.hud-tutorial{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#102b2bf2;border:3px solid #f5c542;border-radius:16px;padding:24px;max-width:320px;color:#fff3d4;z-index:100;pointer-events:auto}
 .hud-tutorial[hidden]{display:none}
 .hud-tutorial h2{margin:0 0 12px;color:#f5c542}
 .hud-tutorial p{margin:8px 0;font-size:14px;line-height:1.4}
 .hud-tutorial button{margin-top:12px;min-height:44px;padding:8px 24px;font:inherit;font-weight:700;background:#f5c542;color:#102b2b;border:none;border-radius:8px;cursor:pointer}
+.hud-tutorial .hud-tutorial-x{position:absolute;top:6px;right:6px;margin:0;min-height:44px;min-width:44px;padding:4px 10px;background:transparent;color:#f5c542;font-size:20px;line-height:1}
 
 /* --- RTS Command Card --- */
 .cmd-card{pointer-events:auto;background:#0f2b2bf2;border:2px solid #f5c54233;border-radius:16px;padding:12px;margin-top:8px;max-width:100%}

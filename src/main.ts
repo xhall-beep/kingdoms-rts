@@ -624,11 +624,13 @@ export function initializeGame(): GameComposition {
       skirmishResultRecorded = true
       try { recordGameResult('skirmish', w.winner === TEAM_PLAYER) } catch { /* profile unavailable */ }
     }
-    // Update building placement ghost.
+    // Update building placement ghost. Validity is REAL (footprint free +
+    // affordable + faction rules) — the ghost used to be hardcoded green,
+    // so a doomed placement looked identical to a good one.
     const ghost = composition.inputController.getGhostPosition()
     const pending = composition.inputController.getPendingBuilding()
     if (ghost && pending) {
-      composition.renderer.setGhost(pending, ghost.x, ghost.z, true)
+      composition.renderer.setGhost(pending, ghost.x, ghost.z, composition.inputController.isGhostValid(w))
     } else {
       composition.renderer.setGhost(null, 0, 0, true)
     }

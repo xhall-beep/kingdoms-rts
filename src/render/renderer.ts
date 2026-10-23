@@ -2,7 +2,6 @@ import { FACTIONS } from '../data/factions.ts'
 import type { World, DeathPop } from '../core/World'
 import { sfx } from '../ui/feedback.ts'
 import {
-  KIND_ARCHERY,
   KIND_BARRACKS,
   KIND_FARM,
   KIND_GOLDMINE,
@@ -22,7 +21,6 @@ import { canSee } from '../world/visibility.ts'
 
 const css = (hex: number): string => `#${hex.toString(16).padStart(6, '0')}`
 
-/** Short glyph per entity kind, drawn inside buildings. */
 /** Sprite key per entity kind (Human faction). Null = procedural. */
 const SPRITE_FOR_KIND: Record<number, string | null> = {
   [KIND_HALL]: 'town_hall_l1',
@@ -32,11 +30,47 @@ const SPRITE_FOR_KIND: Record<number, string | null> = {
   // KIND_WORKER handled separately (unit rendering below)
 }
 
-const GLYPH: Record<number, string> = {
-  [KIND_HALL]: 'H',
-  [KIND_BARRACKS]: 'B',
-  [KIND_ARCHERY]: 'A',
-  [KIND_FARM]: 'F',
+/**
+ * Ground + fog palette (visual-only; never enters the sim or the hash).
+ *
+ * The old ground was a flat #16241a fill — on a phone it read as a black
+ * void, trees (green) vanished into it, and explored fog (45% near-black
+ * over near-black) was indistinguishable from unexplored. The vision is a
+ * golden-autumn woodland: muted gold-olive grass with per-cell variation,
+ * autumn canopies, and explored fog that dims the terrain instead of
+ * erasing it.
+ */
+export const GROUND_BASE = '#4c5a2a'
+const GROUND_TINTS = ['#55622f', '#434e24', '#5a6533', '#6b5c2b'] as const
+export const FOG_UNEXPLORED_FILL = '#070a07'
+export const FOG_EXPLORED_FILL = 'rgba(10,14,18,0.38)'
+
+/** Stable 0..1 hash of two integers (visual variation that never flickers). */
+function hash2(a: number, b: number): number {
+  let h = Math.imul(a | 0, 374761393) + Math.imul(b | 0, 668265263)
+  h = Math.imul(h ^ (h >>> 13), 1274126177)
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296
+}
+
+/** Ground tint for a 10-unit world cell: mostly the base, patches of variation. */
+export function groundTintAt(cellX: number, cellZ: number): string {
+  const r = hash2(cellX, cellZ)
+  if (r < 0.45) return GROUND_BASE
+  const idx = Math.min(GROUND_TINTS.length - 1, Math.floor(((r - 0.45) / 0.55) * GROUND_TINTS.length))
+  return GROUND_TINTS[idx]
+}
+
+const TREE_CANOPY: ReadonlyArray<{ outer: string; inner: string }> = [
+  { outer: '#b45f1d', inner: '#d98e3a' }, // amber
+  { outer: '#c97a24', inner: '#e0a34a' }, // gold
+  { outer: '#a34d1a', inner: '#c47a2e' }, // rust
+  { outer: '#8f6b1f', inner: '#b8912f' }, // ochre
+]
+
+/** Autumn canopy colors for a tree at a world position (stable per tree). */
+export function treeColorsAt(x: number, z: number): { outer: string; inner: string } {
+  const idx = Math.floor(hash2(Math.round(x * 3), Math.round(z * 3)) * TREE_CANOPY.length)
+  return TREE_CANOPY[Math.min(TREE_CANOPY.length - 1, idx)]
 }
 
 /**
@@ -225,10 +259,7 @@ export class Renderer {
       this.camZ = -40
       this.zoom = 8
     }
-    const { ctx } = this
-    ctx.fillStyle = '#16241a'
-    ctx.fillRect(0, 0, this.cssWidth, this.cssHeight)
-    this.drawGrid()
+    this.drawGround()
     this.drawSeasonTint(world)
     for (const id of world.entities.keys()) {
       if (!canSee(world, team, id)) continue
@@ -409,11 +440,36 @@ export class Renderer {
     }
   }
 
-  private drawGrid(): void {
+  /**
+   * Ground: golden-autumn grass base with deterministic per-cell tint
+   * variation across the visible world rect, plus a faint grid for scale.
+   * Purely visual — tints are a stable hash of cell coordinates.
+   */
+  private drawGround(): void {
     const { ctx } = this
-    ctx.strokeStyle = 'rgba(255,255,255,0.04)'
+    ctx.fillStyle = GROUND_BASE
+    ctx.fillRect(0, 0, this.cssWidth, this.cssHeight)
+    const cell = 10
+    const tl = this.screenToWorld(0, 0)
+    const br = this.screenToWorld(this.cssWidth, this.cssHeight)
+    const x0 = Math.floor(Math.min(tl.x, br.x) / cell)
+    const x1 = Math.floor(Math.max(tl.x, br.x) / cell)
+    const z0 = Math.floor(Math.min(tl.z, br.z) / cell)
+    const z1 = Math.floor(Math.max(tl.z, br.z) / cell)
+    for (let cx = x0; cx <= x1; cx += 1) {
+      for (let cz = z0; cz <= z1; cz += 1) {
+        const tint = groundTintAt(cx, cz)
+        if (tint === GROUND_BASE) continue
+        const p = this.toScreen(cx * cell, cz * cell)
+        const s = cell * this.zoom + 1 // +1 hides hairline seams between cells
+        ctx.fillStyle = tint
+        ctx.fillRect(p.x, p.y, s, s)
+      }
+    }
+    // Faint grid for scale reference.
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)'
     ctx.lineWidth = 1
-    const step = 10 * this.zoom
+    const step = cell * this.zoom
     const ox = this.cssWidth / 2 - this.camX * this.zoom
     const oy = this.cssHeight / 2 - this.camZ * this.zoom
     ctx.beginPath()
@@ -454,8 +510,9 @@ export class Renderer {
     const color = this.teamColor(world, id)
 
     if (kind === KIND_TREE) {
-      this.circle(p.x, p.y, r, '#2e9e57')
-      this.circle(p.x, p.y, r * 0.55, '#3fbf6f')
+      const canopy = treeColorsAt(world.positionX[id], world.positionZ[id])
+      this.circle(p.x, p.y, r, canopy.outer)
+      this.circle(p.x, p.y, r * 0.55, canopy.inner)
     } else if (kind === KIND_GOLDMINE) {
       this.circle(p.x, p.y, r, '#b8912f')
       this.circle(p.x, p.y, r * 0.55, '#f5c542')
@@ -469,19 +526,30 @@ export class Renderer {
       this.circle(p.x, p.y, r * 0.35, rune)
     } else if (kind >= KIND_HALL && kind <= KIND_FARM) {
       // Building: try sprite first, fall back to procedural.
-      const spriteKey = SPRITE_FOR_KIND[kind]
+      let spriteKey = SPRITE_FOR_KIND[kind]
+      // Farms wear their faction's face: elves grow a grove farm, not a
+      // human homestead with fleur-de-lis banners.
+      if (kind === KIND_FARM && world.factionOfTeam[world.team[id] as 0 | 1] === 'elf') {
+        spriteKey = 'grove_farm'
+      }
       const sprite = spriteKey ? getSprite(spriteKey) : null
+      this.groundShadow(p.x, p.y, r)
       if (sprite) {
         const size = r * 2.4
         this.ctx.drawImage(sprite, p.x - size / 2, p.y - size / 2, size, size)
       } else {
-        // Procedural fallback: dark base, team-colored roof, glyph.
-        this.rect(p.x - r, p.y - r, r * 2, r * 2, '#3a3f4a')
-        this.rect(p.x - r, p.y - r, r * 2, r * 0.7, color)
-        const glyph = GLYPH[kind]
-        if (glyph && r > 8) {
-          this.text(glyph, p.x, p.y + r * 0.55, Math.min(16, r), '#ffffff')
-        }
+        // Procedural fallback (sprite not decoded yet): thatched-roof
+        // silhouette in the sprite set's visual language — timber base,
+        // pitched team-colored roof, door notch — not a flat labeled box.
+        this.rect(p.x - r, p.y - r * 0.1, r * 2, r * 1.1, '#4a3a28')
+        this.ctx.fillStyle = color
+        this.ctx.beginPath()
+        this.ctx.moveTo(p.x - r * 1.15, p.y - r * 0.1)
+        this.ctx.lineTo(p.x, p.y - r * 1.15)
+        this.ctx.lineTo(p.x + r * 1.15, p.y - r * 0.1)
+        this.ctx.closePath()
+        this.ctx.fill()
+        this.rect(p.x - r * 0.18, p.y + r * 0.35, r * 0.36, r * 0.65, '#2a2016')
       }
       // Construction progress ring.
       if (world.buildProgress[id] < world.buildTotal[id]) {
@@ -494,6 +562,7 @@ export class Renderer {
       }
     } else if (kind === KIND_TREANT) {
       // Living Wild guardian: bark-brown trunk, dark canopy crown.
+      this.groundShadow(p.x, p.y, r)
       this.circle(p.x, p.y, r, '#4c3620')
       this.circle(p.x, p.y, r * 0.72, '#2e6b3e')
       this.circle(p.x, p.y, r * 0.3, '#5a4028')
@@ -504,6 +573,7 @@ export class Renderer {
       else if (kind === KIND_MELEE) spriteKey = 'footman'
       else if (kind === KIND_RANGED) spriteKey = 'archer'
       const unitSprite = spriteKey ? getSprite(spriteKey) : null
+      this.groundShadow(p.x, p.y, r)
       if (unitSprite) {
         const size = r * 2.2
         this.ctx.drawImage(unitSprite, p.x - size / 2, p.y - size / 2, size, size)
@@ -617,11 +687,22 @@ export class Renderer {
       for (let col = 0; col < fog.cols; col += 1) {
         const s = fog.cellState(col, r)
         if (s === FOG_VISIBLE) continue // transparent: fully revealed
-        ctx.fillStyle = s === FOG_UNEXPLORED ? '#040806' : 'rgba(4,8,6,0.45)'
+        ctx.fillStyle = s === FOG_UNEXPLORED ? FOG_UNEXPLORED_FILL : FOG_EXPLORED_FILL
         ctx.fillRect(col, r, 1, 1)
       }
     }
     return c
+  }
+
+  /** Soft contact shadow so sprites sit ON the ground, not float as stickers. */
+  private groundShadow(x: number, y: number, r: number): void {
+    const { ctx } = this
+    ctx.save()
+    ctx.fillStyle = 'rgba(0,0,0,0.28)'
+    ctx.beginPath()
+    ctx.ellipse(x, y + r * 0.72, r * 1.05, r * 0.42, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
   }
 
   private circle(x: number, y: number, r: number, fill: string): void {
@@ -636,10 +717,4 @@ export class Renderer {
     this.ctx.fillRect(x, y, w, h)
   }
 
-  private text(s: string, x: number, y: number, size: number, fill: string): void {
-    this.ctx.fillStyle = fill
-    this.ctx.font = `700 ${size}px system-ui, sans-serif`
-    this.ctx.textAlign = 'center'
-    this.ctx.fillText(s, x, y)
-  }
 }
