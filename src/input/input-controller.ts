@@ -40,9 +40,49 @@ export interface InputController {
 
 const PICK_RADIUS_PX = 40 // minimum tap target in screen pixels (finger-friendly)
 
+export interface PinchStep {
+  /** Zoom multiplier: ratio of the new inter-pointer distance to the old. */
+  factor: number
+  /** Gesture midpoint after the move — the zoom anchor point. */
+  midX: number
+  midY: number
+  /** Midpoint movement since the previous event — the pan component. */
+  panDx: number
+  panDy: number
+}
+
+/**
+ * Pure two-pointer gesture math. Given both pointers' positions before and
+ * after a move, returns how the camera should respond: spreading the
+ * fingers (distance grows) zooms in about the midpoint; a constant-
+ * distance two-finger drag yields factor 1 and pans by the midpoint delta.
+ * Kept pure and exported so the gesture math is unit-testable without a DOM.
+ */
+export function pinchStep(
+  prevA: { x: number; y: number },
+  prevB: { x: number; y: number },
+  nextA: { x: number; y: number },
+  nextB: { x: number; y: number },
+): PinchStep {
+  const prevDist = Math.hypot(prevB.x - prevA.x, prevB.y - prevA.y)
+  const nextDist = Math.hypot(nextB.x - nextA.x, nextB.y - nextA.y)
+  const prevMidX = (prevA.x + prevB.x) / 2
+  const prevMidY = (prevA.y + prevB.y) / 2
+  const nextMidX = (nextA.x + nextB.x) / 2
+  const nextMidY = (nextA.y + nextB.y) / 2
+  return {
+    factor: prevDist > 0 && nextDist > 0 ? nextDist / prevDist : 1,
+    midX: nextMidX,
+    midY: nextMidY,
+    panDx: nextMidX - prevMidX,
+    panDy: nextMidY - prevMidY,
+  }
+}
+
 /**
  * Pointer input: left-click selects, left-drag pans, wheel zooms,
- * right-click issues smart orders (move / attack / gather) to the selection.
+ * two-finger drag pans and pinch zooms (touch), right-click issues smart
+ * orders (move / attack / gather) to the selection.
  * Modes also allow left-click move/attack/gather for touch users.
  */
 export class InputControllerImpl implements InputController {
@@ -54,6 +94,11 @@ export class InputControllerImpl implements InputController {
   private panning = false
   private boxSelecting = false
   private pointers = new Map<number, { x: number; y: number }>()
+  /**
+   * Latched while a two-pointer gesture (pan/pinch) is in progress, so the
+   * final finger release that ends it is never misread as a tap.
+   */
+  private multiTouch = false
   private pendingBuilding: BuildingType | null = null
   private ghostPos: { x: number; z: number } | null = null
   private commandListener: ((cmd: Command) => void) | null = null
@@ -287,7 +332,10 @@ export class InputControllerImpl implements InputController {
       this.panning = false
       this.boxSelecting = false
     } else {
-      // Second finger: switch to two-finger pan, cancel box select.
+      // Second finger: switch to a two-finger gesture (pan + pinch zoom),
+      // cancel any box select, and latch it so the releases that end the
+      // gesture don't fire a phantom tap.
+      this.multiTouch = true
       this.boxSelecting = false
       this.panning = true
       this.renderer?.setSelectionBox(null)
@@ -299,9 +347,11 @@ export class InputControllerImpl implements InputController {
     if (!prev) return
     // movementX/Y are 0 (or unreliable) for touch pointers — derive the
     // per-event delta from the last tracked position so drag-pan and
-    // two-finger pan actually work on phones.
+    // two-finger gestures actually work on phones.
     const mdx = e.offsetX - prev.x
     const mdy = e.offsetY - prev.y
+    // Snapshot both pointers BEFORE applying this event, for pinch math.
+    const before = this.pointers.size >= 2 ? [...this.pointers.values()] : null
     this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY })
     if (!this.renderer) return
     // Update build ghost preview.
@@ -313,8 +363,25 @@ export class InputControllerImpl implements InputController {
     }
 
     if (this.pointers.size >= 2) {
-      // Two-finger pan.
-      this.renderer.pan(mdx, mdy)
+      // Two-finger gesture: pinch (inter-pointer distance change) zooms
+      // about the gesture midpoint; a constant-distance drag pans by the
+      // midpoint's movement. Before this, two fingers could only pan and
+      // touch had NO zoom at all — zoomBy was reachable only via wheel.
+      const after = [...this.pointers.values()]
+      if (before && after.length >= 2) {
+        const movedIdx = [...this.pointers.keys()].indexOf(e.pointerId)
+        const otherIdx = movedIdx === 0 ? 1 : 0
+        const step = pinchStep(
+          before[movedIdx],
+          before[otherIdx],
+          after[movedIdx],
+          after[otherIdx],
+        )
+        if (step.panDx !== 0 || step.panDy !== 0) this.renderer.pan(step.panDx, step.panDy)
+        if (Math.abs(step.factor - 1) > 0.001) {
+          this.renderer.zoomBy(step.factor, step.midX, step.midY)
+        }
+      }
       this.dragStart = null
       return
     }
@@ -371,6 +438,14 @@ export class InputControllerImpl implements InputController {
     // Another finger still down: ignore this release.
     if (this.pointers.size > 0) return
 
+    // The last release of a two-finger gesture (pan/pinch) is not a tap —
+    // without this latch, lifting the second finger after a pinch would
+    // also select/order at the lift point.
+    if (this.multiTouch) {
+      this.multiTouch = false
+      return
+    }
+
     if (wasBox && start) {
       this.boxSelect(start.x, start.y, e.offsetX, e.offsetY)
       return
@@ -400,6 +475,7 @@ export class InputControllerImpl implements InputController {
     this.dragStart = null
     this.panning = false
     this.boxSelecting = false
+    this.multiTouch = false
     this.renderer?.setSelectionBox(null)
   }
 

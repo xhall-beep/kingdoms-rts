@@ -18,6 +18,7 @@ import {
 } from '../core/World'
 import { BUILDING_TYPE_BY_KIND } from '../world/construction.ts'
 import { renderCommandCard } from './command-card.ts'
+import { BUILD_STAMP_LABEL } from '../build-stamp.ts'
 
 export interface Hud {
   render(world: World): void
@@ -118,16 +119,19 @@ export class HudImpl implements Hud {
       <div class="hud-bar hud-actions" id="hud-actions"></div>
       <div class="hud-banner" id="hud-banner" hidden></div>
       <div class="hud-pvp-status" id="hud-pvp-status" hidden></div>
+      <div class="hud-tutorial-backdrop" id="hud-tutorial-backdrop" hidden></div>
       <div class="hud-tutorial" id="hud-tutorial" hidden>
         <button class="hud-tutorial-x" id="hud-tutorial-x" aria-label="Close help">✕</button>
         <h2>How to Play</h2>
         <p><b>Tap</b> your unit or building to select it.</p>
         <p><b>Tap</b> again to deselect.</p>
         <p>With units selected: <b>tap ground</b> to move, <b>tap enemy</b> to attack, <b>tap trees/gold</b> to gather.</p>
-        <p><b>Drag</b> to box-select. <b>Two fingers</b> to pan.</p>
+        <p><b>Drag</b> to box-select. <b>Two-finger drag</b> to pan.</p>
+        <p><b>Pinch</b> with two fingers to zoom in and out.</p>
         <p>Use the <b>menu</b> to build, train, save, and pick factions.</p>
         <button id="hud-tutorial-close">Got it!</button>
-      </div>`
+      </div>
+      <div class="hud-build-stamp" id="hud-build-stamp"></div>`
     this.goldEl = parent.querySelector('#hud-gold')
     this.woodEl = parent.querySelector('#hud-wood')
     this.supplyEl = parent.querySelector('#hud-supply')
@@ -139,36 +143,34 @@ export class HudImpl implements Hud {
     const locateBtn = parent.querySelector('#hud-locate')
     if (locateBtn) locateBtn.addEventListener('click', () => this.callbacks?.onLocateBase())
     this.bannerEl = parent.querySelector('#hud-banner')
-    // How to Play overlay: shown on first launch only. Dismissal persists
-    // (localStorage) so it never becomes a wall, and the ❓ Help button
-    // reopens it on demand. Root cause of the old "can't remove it" bug:
-    // #hud-root is pointer-events:none and .hud-tutorial never opted back
-    // in, so the Got it! button could not be tapped at all — the seen flag
-    // was never set and the panel returned on every load, undismissable.
+    // How to Play overlay: ON DEMAND ONLY — it never appears on load, flag
+    // or no flag; the ❓ Help button is the only way in. Auto-showing it on
+    // every launch turned it into a wall in front of the game, and for two
+    // shipped builds the wall was undismissable: the deploy pipeline
+    // silently dropped the freshly built stylesheet, so the page ran a
+    // stale .hud-tutorial rule with no pointer-events opt-in and the card
+    // (inside pointer-events:none #hud-root) could not be tapped at all.
+    // The pipeline now inlines the built CSS — see kingdoms-deploy-all.py.
+    // Dismissal paths, all wired here: the ✕, the "Got it!" button, and a
+    // tap on the dimmed backdrop anywhere outside the card.
     this.tutorialEl = parent.querySelector<HTMLElement>('#hud-tutorial')
+    const backdropEl = parent.querySelector<HTMLElement>('#hud-tutorial-backdrop')
     const dismissTutorial = (): void => {
       if (this.tutorialEl) this.tutorialEl.hidden = true
-      try {
-        localStorage.setItem('krts-tutorial-seen', '1')
-      } catch {
-        /* storage blocked (private mode): hiding still works this session */
-      }
+      if (backdropEl) backdropEl.hidden = true
+    }
+    const showTutorial = (): void => {
+      if (backdropEl) backdropEl.hidden = false
+      if (this.tutorialEl) this.tutorialEl.hidden = false
     }
     parent.querySelector('#hud-tutorial-close')?.addEventListener('click', dismissTutorial)
     parent.querySelector('#hud-tutorial-x')?.addEventListener('click', dismissTutorial)
-    let tutorialSeen = false
-    try {
-      tutorialSeen = localStorage.getItem('krts-tutorial-seen') === '1'
-    } catch {
-      /* storage unreadable: treat as unseen, dismiss still hides it */
-    }
-    if (this.tutorialEl && !tutorialSeen) this.tutorialEl.hidden = false
+    backdropEl?.addEventListener('click', dismissTutorial)
     const helpBtn = parent.querySelector('#hud-help')
-    if (helpBtn) {
-      helpBtn.addEventListener('click', () => {
-        if (this.tutorialEl) this.tutorialEl.hidden = false
-      })
-    }
+    if (helpBtn) helpBtn.addEventListener('click', showTutorial)
+    // Build stamp: tiny corner tag so screenshots identify their build.
+    const stampEl = parent.querySelector('#hud-build-stamp')
+    if (stampEl) stampEl.textContent = BUILD_STAMP_LABEL
     // Faction pickers.
     const playerSel = parent.querySelector<HTMLSelectElement>('#hud-player-faction')
     const enemySel = parent.querySelector<HTMLSelectElement>('#hud-enemy-faction')

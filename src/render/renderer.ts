@@ -171,11 +171,26 @@ export class Renderer {
     this.camX = x
     this.camZ = z
     if (zoom !== undefined) this.zoom = Math.min(40, Math.max(2, zoom))
+    this.clampCamera()
   }
 
   pan(dxPixels: number, dyPixels: number): void {
     this.camX -= dxPixels / this.zoom
     this.camZ -= dyPixels / this.zoom
+    this.clampCamera()
+  }
+
+  /**
+   * Keep the camera near the world (the fog/world square is [-90, 90]²;
+   * the margin lets the view centre sit past an edge so the edge itself
+   * can be inspected). Without a clamp a player can pan into empty dark
+   * indefinitely and lose the map entirely. Visual-only: the camera never
+   * enters sim state or the lockstep hash.
+   */
+  private clampCamera(): void {
+    const M = 170
+    this.camX = Math.min(M, Math.max(-M, this.camX))
+    this.camZ = Math.min(M, Math.max(-M, this.camZ))
   }
 
   zoomBy(factor: number, cx?: number, cy?: number): void {
@@ -186,6 +201,7 @@ export class Renderer {
     const after = this.screenToWorld(px, py)
     this.camX += before.x - after.x
     this.camZ += before.z - after.z
+    this.clampCamera()
   }
 
   screenToWorld(sx: number, sy: number): { x: number; z: number } {
@@ -675,6 +691,26 @@ export class Renderer {
     const p = this.toScreen(-90, -90)
     const size = 180 * this.zoom
     this.ctx.drawImage(cache, p.x, p.y, size, size)
+    // Beyond the world square there are no fog cells, but the ground pass
+    // paints its checkerboard to infinity — so once the camera pans or
+    // zooms out past an edge, the screen split into a bright naked-
+    // checkerboard zone (outside) versus the fogged world (inside): the
+    // "two mismatched maps" players reported. Fill everything outside the
+    // square with the same unexplored black the fog uses inside it, so
+    // the world edge reads as one uniform darkness at the same single
+    // camera transform as everything else.
+    const { ctx } = this
+    ctx.fillStyle = FOG_UNEXPLORED_FILL
+    const w = this.cssWidth
+    const h = this.cssHeight
+    const x0 = Math.max(0, Math.min(w, p.x))
+    const y0 = Math.max(0, Math.min(h, p.y))
+    const x1 = Math.max(0, Math.min(w, p.x + size))
+    const y1 = Math.max(0, Math.min(h, p.y + size))
+    if (y0 > 0) ctx.fillRect(0, 0, w, y0) // above the square
+    if (y1 < h) ctx.fillRect(0, y1, w, h - y1) // below the square
+    if (x0 > 0 && y1 > y0) ctx.fillRect(0, y0, x0, y1 - y0) // left strip
+    if (x1 < w && y1 > y0) ctx.fillRect(x1, y0, w - x1, y1 - y0) // right strip
   }
 
   private buildFogCache(fog: FogGrid): HTMLCanvasElement {

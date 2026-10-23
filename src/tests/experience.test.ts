@@ -251,7 +251,8 @@ test('tutorial overlay can actually receive taps (pointer-events regression)', (
   const hud = readRepoFile('src/ui/hud.ts')
   assert(hud.includes('id="hud-help"'), 'a Help button can reopen the overlay on demand')
   assert(hud.includes('id="hud-tutorial-x"'), 'the overlay has a ✕ dismiss affordance')
-  assert(hud.includes('krts-tutorial-seen'), 'dismissal persists via localStorage')
+  assert(hud.includes('id="hud-tutorial-backdrop"'), 'a backdrop gives tap-outside dismissal')
+  assert(!hud.includes('krts-tutorial-seen'), 'no seen-flag auto-show gate remains (on-demand only)')
 })
 
 test('goldmine kind is part of the world (sanity for gather tests)', () => {

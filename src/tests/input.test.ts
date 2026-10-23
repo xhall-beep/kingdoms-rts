@@ -190,10 +190,11 @@ test('entityAt finds tapped unit via spatial hash', () => {
 
 suite('touch pan (movementX/Y unreliable on touch)')
 
-/** Renderer mock that records pan/centerOn calls. */
+/** Renderer mock that records pan/centerOn/zoomBy calls. */
 function recordingRenderer() {
   return {
     pans: [] as [number, number][],
+    zooms: [] as [number, number | undefined, number | undefined][],
     centers: [] as [number, number, number | undefined][],
     setSelection(_sel: number[]) {},
     setSelectionBox(_box: unknown) {},
@@ -205,6 +206,9 @@ function recordingRenderer() {
     },
     pan(dx: number, dy: number) {
       this.pans.push([dx, dy])
+    },
+    zoomBy(factor: number, x?: number, y?: number) {
+      this.zooms.push([factor, x, y])
     },
     centerOn(x: number, z: number, zoom?: number) {
       this.centers.push([x, z, zoom])
@@ -252,15 +256,26 @@ test('single-finger drag pans from tracked positions, not movementX/Y', () => {
   assertEqual(dy, 10, 'pan dy from position delta')
 })
 
-test('two-finger pan uses tracked deltas', () => {
+test('two-finger gesture pans by midpoint delta and pinches by distance ratio', () => {
+  // Pinch-era semantics (2026-10-22): a two-finger gesture is one gesture —
+  // the camera pans by the MIDPOINT's movement (half of one finger's delta
+  // when only that finger moves) and zooms by the inter-pointer distance
+  // ratio. Before pinch support, this test asserted the moved finger's full
+  // delta as the pan; that double-counted when both fingers moved.
   const { renderer, ctl } = touchSetup()
   touchDown(ctl, 1, 100, 100)
   touchDown(ctl, 2, 200, 200)
   touchMove(ctl, 2, 210, 190)
   assert(renderer.pans.length > 0, 'two-finger pan called')
   const [dx, dy] = renderer.pans[renderer.pans.length - 1]
-  assertEqual(dx, 10, 'two-finger pan dx')
-  assertEqual(dy, -10, 'two-finger pan dy')
+  assertEqual(dx, 5, 'two-finger pan dx is the midpoint delta')
+  assertEqual(dy, -5, 'two-finger pan dy is the midpoint delta')
+  assertEqual(renderer.zooms.length, 1, 'distance change also pinches')
+  const [factor, ax, ay] = renderer.zooms[0]
+  const expected = Math.hypot(110, 90) / Math.hypot(100, 100)
+  assert(Math.abs(factor - expected) < 1e-9, 'zoom factor is the distance ratio')
+  assertEqual(ax, 155, 'zoom anchored at the gesture midpoint x')
+  assertEqual(ay, 145, 'zoom anchored at the gesture midpoint y')
 })
 
 test('centerOnBase jumps the camera to the town hall', () => {
