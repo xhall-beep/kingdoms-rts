@@ -2,7 +2,10 @@
  * Soul-Ash economy tests (v2.0 spec, section 2: undead racial).
  *
  * The Undead raise no farms. Instead, every unit that dies on the map feeds
- * their supply cap: three corpses render one soul-ash worth of capacity.
+ * their supply cap: each corpse renders one soul-ash, and each soul-ash is
+ * one point of capacity. (Was 3 corpses per point until the 2026-10-22 audit
+ * proved that rate made the cap unreachable before undead had an army — and
+ * undead could not field an army without cap.)
  */
 import { World, TEAM_PLAYER, TEAM_ENEMY } from '../core/World.ts'
 import { CombatSystemImpl } from '../systems/combat.ts'
@@ -38,14 +41,14 @@ test('corpses feed the undead supply cap', () => {
   const world = makeWorld()
   const capBefore = world.supplyCap[TEAM_PLAYER]
   // Three duels. Note: undead reanimate (25%) can make a husk die twice,
-  // which rightfully harvests twice — so assert the 3:1 conversion ratio.
+  // which rightfully harvests twice — so assert the 1:1 conversion ratio.
   for (let i = 0; i < 3; i += 1) fightToDeath(world)
   const harvested = world.soulAsh[TEAM_PLAYER]
   assert(harvested >= 3, `at least three corpses harvested, got ${harvested}`)
   assertEqual(
     world.supplyCap[TEAM_PLAYER] - capBefore,
-    Math.floor(harvested / 3),
-    'three corpses per point of supply cap',
+    harvested,
+    'one corpse per point of supply cap',
   )
 })
 
@@ -59,9 +62,11 @@ test('enemy deaths feed undead too', () => {
   world.targetId[killer] = enemy
   world.moving[killer] = 0
   world.cooldown[killer] = 0
+  const capBefore = world.supplyCap[TEAM_PLAYER]
   world.update(STEP)
   assert(!world.entities.has(enemy), 'enemy died')
   assertEqual(world.soulAsh[TEAM_PLAYER], 1, 'enemy corpse harvested')
+  assertEqual(world.supplyCap[TEAM_PLAYER], capBefore + 1, 'one corpse is one point of cap')
 })
 
 test('non-undead teams harvest nothing', () => {

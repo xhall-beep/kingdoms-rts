@@ -199,12 +199,18 @@ export class CombatSystemImpl implements System {
         age: 0,
       })
       // Soul-Ash (undead racial): every fallen unit feeds the Undead supply
-      // cap — three corpses render one soul-ash worth of capacity.
+      // cap — each corpse renders one soul-ash, and each soul-ash is one
+      // point of capacity. A rival buys a farm's +6 cap for 130 resources,
+      // on demand; undead pays six deaths for the same +6, and only through
+      // combat it must survive — corpses at 1:1 is still the steepest
+      // supply price any faction pays. (At the old 3:1 the cap could never
+      // grow before undead had an army, and it could not field an army
+      // without cap: the supply trap, audit 2026-10-22.)
       if (world.kind[id] <= KIND_RANGED) {
         for (const t of [0, 1] as const) {
           if (world.factionOfTeam[t] === 'undead') {
             world.soulAsh[t] += 1
-            if (world.soulAsh[t] % 3 === 0) world.supplyCap[t] += 1
+            world.supplyCap[t] += 1
           }
         }
       }
@@ -216,7 +222,7 @@ export class CombatSystemImpl implements System {
       const kind = world.kind[id]
       if (kind !== KIND_MELEE && kind !== KIND_RANGED && kind !== KIND_WORKER) continue
       if (world.factionOfTeam[world.team[id] as 0 | 1] !== 'undead') continue
-      if (world.tick - world.lastCombatTick[id] < 5 * 60) continue
+      if (world.tick - world.lastCombatTick[id] < 5 * TICK_RATE) continue
       if (world.health[id] >= world.maxHealth[id]) continue
       world.health[id] = Math.min(world.maxHealth[id], world.health[id] + world.maxHealth[id] * 0.02 * dt)
     }

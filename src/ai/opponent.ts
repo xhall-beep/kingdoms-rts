@@ -100,6 +100,16 @@ const RETREAT_RATIO: Record<AIPersonality, number> = {
 }
 const MAP_CLAMP = 56 // Keep flee destinations on the playable map.
 
+/**
+ * Undead supply discipline: undead raise no farms — their supply cap grows
+ * only through Soul-Ash from the fallen. Filling the whole cap with workers
+ * leaves no room for a single soldier, and soldiers are what make corpses:
+ * the documented supply trap (audit 2026-10-22). An undead AI therefore
+ * holds this much supply in reserve for an army; as ash raises the cap,
+ * the effective worker target rises with it.
+ */
+const UNDEAD_ARMY_SUPPLY_RESERVE = 4
+
 export type AIDifficulty = 'easy' | 'normal' | 'hard'
 
 /** Resolved decision parameters: difficulty base values plus personality mods. */
@@ -324,7 +334,16 @@ export class OpponentAI implements System {
 
   private trainWorkers(world: World, hall: number, workerCount: number): void {
     const queued = world.trainKind[hall] !== NO_TRAINING ? 1 : 0 // Single training slot.
-    if (workerCount + queued < this.tuning.workerTarget) this.emitTrain(world, hall, 'worker')
+    let target = this.tuning.workerTarget
+    if (world.factionOfTeam[this.team] === 'undead') {
+      // No farms: never let workers consume the entire supply cap (see
+      // UNDEAD_ARMY_SUPPLY_RESERVE). Other factions are unaffected.
+      target = Math.min(
+        target,
+        Math.max(0, world.supplyCap[this.team] - UNDEAD_ARMY_SUPPLY_RESERVE),
+      )
+    }
+    if (workerCount + queued < target) this.emitTrain(world, hall, 'worker')
   }
 
   /**
