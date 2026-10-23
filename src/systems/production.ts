@@ -173,6 +173,26 @@ export function setRally(world: World, buildingId: number, x: number, z: number)
   world.rallyZ[buildingId] = z
 }
 
+/**
+ * The price of a ladder's next level for a team, faction factor applied
+ * (human's Adaptable signature: 0.8x, so 80g/40w against the base
+ * 100g/50w). Single source of truth: researchUpgrade charges exactly
+ * this, and the AI's research gate floors on it.
+ */
+export function researchCost(
+  world: World,
+  team: 0 | 1,
+  type: UpgradeType,
+): { gold: number; wood: number } {
+  const def = UPGRADES[type]
+  // Human signature: adaptable upgrades cost less
+  const costFactor = FACTIONS[world.factionOfTeam[team]].signature?.adaptable?.upgradeCostFactor ?? 1
+  return {
+    gold: Math.ceil(def.cost.gold * costFactor),
+    wood: Math.ceil(def.cost.wood * costFactor),
+  }
+}
+
 /** Research an upgrade at a building. Returns true if successful. */
 export function researchUpgrade(world: World, buildingId: number, type: UpgradeType): boolean {
   const team = world.team[buildingId] as 0 | 1
@@ -181,13 +201,10 @@ export function researchUpgrade(world: World, buildingId: number, type: UpgradeT
     : type === 'meleeHp' ? world.meleeHpLvl[team]
     : world.rangedDmgLvl[team]
   if (currentLvl >= def.maxLevel) return false
-  // Human signature: adaptable upgrades cost less
-  const costFactor = FACTIONS[world.factionOfTeam[team]].signature?.adaptable?.upgradeCostFactor ?? 1
-  const goldCost = Math.ceil(def.cost.gold * costFactor)
-  const woodCost = Math.ceil(def.cost.wood * costFactor)
-  if (world.gold[team] < goldCost || world.wood[team] < woodCost) return false
-  world.gold[team] -= goldCost
-  world.wood[team] -= woodCost
+  const cost = researchCost(world, team, type)
+  if (world.gold[team] < cost.gold || world.wood[team] < cost.wood) return false
+  world.gold[team] -= cost.gold
+  world.wood[team] -= cost.wood
   if (type === 'meleeDmg') world.meleeDmgLvl[team]++
   else if (type === 'meleeHp') world.meleeHpLvl[team]++
   else world.rangedDmgLvl[team]++

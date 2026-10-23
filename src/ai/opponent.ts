@@ -25,7 +25,7 @@ import { orderBuild, orderGather } from '../systems/gather.ts'
 import { orderAttackMove } from '../systems/combat.ts'
 import { orderMove } from '../systems/movement.ts'
 import { CAPTURE_RADIUS } from '../systems/shrines.ts'
-import { enqueueTrain, researchUpgrade, upgradeBuilding } from '../systems/production.ts'
+import { enqueueTrain, researchCost, researchUpgrade, upgradeBuilding } from '../systems/production.ts'
 import { UPGRADES, type UpgradeType } from '../data/upgrades.ts'
 import {
   BUILDING_TYPE_BY_KIND,
@@ -134,18 +134,42 @@ const MILITIA_MUSTER_RADIUS = 25
  * AI research discipline: the upgrade ladder was only ever driven from
  * the player UI, so in AI-vs-AI every faction's research sat dark —
  * including human's Adaptable discount, its signature (orc-human audit
- * 2026-10-22). The AI buys the next level only from a genuine surplus:
- * the army it would upgrade already stands (soldiers >= its attack
- * threshold) and the bank clears this floor. The floor is the orc
- * foundry-tier line itself: researchUpgrades runs AFTER
- * upgradeOrcBuildings in the think order, so tiers keep first claim on
- * any bank at their >=400 gate, and since researching only ever spends
- * gold, it can delay a tier — never trigger one. An earlier draft of
- * this step (floor 250, no army precondition) taxed every faction's
- * opening and halved undead's 5:00 peak army in the cold-start pins —
- * the surplus gates are what keep research a mid-game lever.
+ * 2026-10-22). The first gate (bank >= 400, army >= attack threshold)
+ * fixed the wiring but not the firing: the bank-dynamics audit
+ * (2026-10-22) measured the AI economy as a pure flow — human/elf think
+ * banks median 42/44g, max the 200g starting stake, 0 of 14,762 think
+ * ticks ever >= 400 — so the floor sampled a stock that does not exist
+ * and research fired 5 times in 72 team-games, 0 for human/elf. The
+ * gate now floors on the picked ladder's own next-level cost for the
+ * faction (100g/50w; 80g/40w for human via Adaptable, see researchCost)
+ * — a price the flow actually reaches — and asks only for a small
+ * standing army (RESEARCH_MIN_ARMY) so the opening ramp, where gold
+ * converts straight into soldiers every think, stays untaxed (an
+ * earlier draft with floor 250 and no army precondition halved
+ * undead's 5:00 peak army in the cold-start pins). Counterfactual
+ * replay on recorded think traces predicts ~1.00 fires/team-game for
+ * human/elf/orc and ~2.61 for undead (its supply gate pools gold), first
+ * level ~2:40–2:55. Think order is unchanged — upgradeOrcBuildings
+ * still runs first, so tiers keep first claim on any bank, and since
+ * the floor is cost-denominated the gate taxes flow and never creates
+ * a bank: no foundry coupling (measured). The reserve/tithe alternative
+ * was measured as a trap — it wakes orc's tiers (1.33 spends/game)
+ * while human research stays 0.00 — and is deliberately not used.
+ *
+ * One calibration the audit's replay could not see (it held recorded
+ * army traces fixed, so a virtual fire's 100g never cost a real
+ * soldier): in vivo, a pooled bank buys the ladder back-to-back, one
+ * level per think — undead fired 6 levels by 3:12 in its cold-start
+ * matchup (predicted: 2.61 per game), spent its corpse-loop spin-up,
+ * and its 5:00 army peak fell 6 -> 4, breaking the cold-start pins.
+ * RESEARCH_PACE restores the audit's predicted envelope (~1 fire per
+ * team-game for the bank-limited factions, ~2.61 for undead, first
+ * level ~2:40–2:55) by pacing purchases: the floor decides WHETHER
+ * the AI can research, the pace decides how fast it climbs.
  */
-const RESEARCH_GOLD_FLOOR = 400
+const RESEARCH_MIN_ARMY = 3
+/** Minimum seconds between one AI's research purchases (see above). */
+const RESEARCH_PACE = 120
 /** Melee first: winners' armies run ~58% melee, so its ladder pays most. */
 const RESEARCH_ORDER: readonly UpgradeType[] = ['meleeDmg', 'meleeHp', 'rangedDmg']
 
@@ -220,6 +244,8 @@ export class OpponentAI implements System {
   /** Workers currently evacuated from a raid. They are not reassigned to
    * gather or construction duty until the threat is gone. */
   private readonly fleeing = new Set<number>()
+  /** gameTime of this AI's last research purchase (RESEARCH_PACE gate). */
+  private lastResearchAt = -Infinity
   /** When set, AI decisions are emitted as Commands (PvP-vs-AI lockstep mode). */
   private sink: CommandSink | null = null
 
@@ -424,14 +450,16 @@ export class OpponentAI implements System {
   }
 
   /**
-   * AI research step (all factions). Buys at most one level per think
-   * tick: the first ladder below max whose own building (barracks for
-   * melee, archery for ranged — per UPGRADES) stands finished, whose
-   * cost the bank covers, and only once the standing army meets the
-   * attack threshold (see RESEARCH_GOLD_FLOOR). researchUpgrade applies
-   * the faction factor
-   * itself, so human's Adaptable discount (0.8x) differentiates human
-   * exactly the way orc's foundry tiers differentiate orc.
+   * AI research step (all factions). Buys at most one level per
+   * purchase, paced by RESEARCH_PACE: the first ladder below max whose
+   * own building (barracks for melee, archery for ranged — per
+   * UPGRADES) stands finished and whose next-level cost — priced for
+   * this faction, so human's Adaptable discount (0.8x) is the floor
+   * human is gated on — the bank covers, and only once a small
+   * standing army exists (RESEARCH_MIN_ARMY; see the gate's design
+   * note at the constant). researchUpgrade charges exactly the price
+   * the gate floors on (researchCost), so a passed gate always lands
+   * the level.
    *
    * Lockstep: applied directly, exactly like the AI's orc tier upgrades
    * (upgradeBuilding in upgradeOrcBuildings). There is no 'research'
@@ -441,14 +469,16 @@ export class OpponentAI implements System {
    * PvP fields no AI). The levels are hashed world state (net/hash.ts).
    */
   private researchUpgrades(world: World): void {
-    if (world.gold[this.team] < RESEARCH_GOLD_FLOOR) return
+    // Pace: a pooled bank must not sprint the whole ladder in a handful
+    // of thinks (see RESEARCH_PACE) — purchases are mid-game beats.
+    if (this.gameTime - this.lastResearchAt < RESEARCH_PACE) return
     // Upgrade the army you have: no standing army, no research. This
     // keeps the opening ramp (where gold converts straight into
     // soldiers every think) untaxed.
     const soldiers =
       unitsOf(world, this.team, KIND_MELEE).length +
       unitsOf(world, this.team, KIND_RANGED).length
-    if (soldiers < this.attackThreshold(world)) return
+    if (soldiers < RESEARCH_MIN_ARMY) return
     for (const type of RESEARCH_ORDER) {
       const def = UPGRADES[type]
       const level =
@@ -461,8 +491,15 @@ export class OpponentAI implements System {
       const kind = def.building === 'barracks' ? KIND_BARRACKS : KIND_ARCHERY
       const building = structuresOf(world, this.team, kind, true)[0]
       if (building === undefined) continue
+      // Floor = this ladder's own cost for this faction. If the picked
+      // ladder is unaffordable the step stands down (no cascade to a
+      // later ladder), exactly as the pre-redesign step did when
+      // researchUpgrade declined.
+      const cost = researchCost(world, this.team, type)
+      if (world.gold[this.team] < cost.gold || world.wood[this.team] < cost.wood) return
       researchUpgrade(world, building, type)
-      return // One level per think tick, bought or not — no cascade.
+      this.lastResearchAt = this.gameTime
+      return // One level per purchase, paced by RESEARCH_PACE — no cascade.
     }
   }
 
@@ -491,6 +528,7 @@ export class OpponentAI implements System {
    * threat evacuate behind the hall instead of harvesting through the raid.
    * Evacuated workers stay out of the gather rotation (and off construction
    * duty) until the threat is gone, then the normal rotation re-arms them.
+   * Mustered militia are exempt: they hold their stand instead of fleeing.
    * Deterministic: same visible state always yields the same orders.
    */
   private evacuateWorkers(world: World, hall: number, workers: number[]): void {
@@ -506,6 +544,18 @@ export class OpponentAI implements System {
     const dest = this.fleeDestination(world, hall, threat)
     for (const id of workers) {
       if (id === this.scoutId) continue // The scout keeps its mission.
+      // Militia Bell: a mustered pikeman chose to fight. Re-ordering it
+      // behind the hall every think walks the muster off its stand —
+      // the bank-dynamics audit's ring census found ~half the pikemen
+      // stuck in STATE_MOVE at +5s, arriving late to their own fight.
+      // The gather system already exempts militia from harvesting
+      // (gather.ts); this is the matching evacuation exemption. Drop
+      // any stale evacuee mark: if the militia lapses mid-raid, the
+      // next think re-orders and re-marks it through the normal path.
+      if (world.isMilitia(id)) {
+        this.fleeing.delete(id)
+        continue
+      }
       // A worker mid-construction stays on the site: yanking it abandons the
       // structure, and a raid scare is not worth a permanently stalled
       // barracks (the supervisor below re-arms genuine losses, but avoiding
