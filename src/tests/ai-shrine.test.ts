@@ -7,7 +7,7 @@
  * never produces — so the AI bled out with soldiers standing at home.
  * The emergency answer: any idle soldier beyond the garrison marches.
  */
-import { TEAM_PLAYER, TEAM_ENEMY, KIND_SHRINE, KIND_MELEE, KIND_RANGED } from '../core/World.ts'
+import { TEAM_PLAYER, TEAM_ENEMY, KIND_SHRINE, KIND_MELEE, KIND_RANGED, STATE_ATTACKMOVE, STATE_IDLE } from '../core/World.ts'
 import { OpponentAI } from '../ai/opponent.ts'
 import { CAPTURE_RADIUS } from '../systems/shrines.ts'
 import { makeWorld, stepWorld } from './setup.ts'
@@ -50,6 +50,87 @@ test('AI contests an enemy-held shrine before the drain kills it', () => {
 
   assert(drainStarted, 'the enemy drain actually started (test is not vacuous)')
   assert(soldierReached, 'an AI soldier marched to the shrine')
+  assert(
+    world.victoryPoints[TEAM_ENEMY] > 700,
+    `AI answered before losing 300 VP (VP left: ${world.victoryPoints[TEAM_ENEMY]})`,
+  )
+  assertEqual(world.shrineHeld[shrine], TEAM_ENEMY, 'AI retook the shrine')
+})
+
+/** The scenario's shrine entity id and position. */
+function shrineOf(world: ReturnType<typeof makeWorld>): { shrine: number; sx: number; sz: number } {
+  let shrine = -1
+  for (const id of world.entities.keys()) {
+    if (world.kind[id] === KIND_SHRINE) shrine = id
+  }
+  assert(shrine !== -1, 'scenario shrine exists')
+  return { shrine, sx: world.positionX[shrine], sz: world.positionZ[shrine] }
+}
+
+test('emergency answer draws on the garrison when no surplus exists', () => {
+  const world = makeWorld()
+  const { shrine, sx, sz } = shrineOf(world)
+  // The enemy holds the point with a single unit: VP is draining now.
+  world.spawnUnit('melee', TEAM_PLAYER, sx + 2, sz)
+  // A defender AI whose whole army IS its garrison: two idle soldiers,
+  // garrison 2 in the opening (defender personality) — zero idle surplus
+  // beyond it. The old emergency path required a surplus beyond the
+  // garrison, so this drain ran unopposed (human-v-undead audit
+  // 2026-10-23, cause 2: presence ≤8.5s in 7 of 9 cells while VP burned).
+  const s1 = world.spawnUnit('melee', TEAM_ENEMY, 34, 34).id
+  const s2 = world.spawnUnit('melee', TEAM_ENEMY, 36, 34).id
+  stepWorld(world, 5)
+  world.shrineHeld[shrine] = TEAM_PLAYER // The camper's claim (5 steps run no capture check).
+  new OpponentAI(TEAM_ENEMY, 'normal', 'defender').update(world, 2)
+  for (const s of [s1, s2]) {
+    assertEqual(world.state[s], STATE_ATTACKMOVE, 'a garrison soldier answers the drain')
+    assert(
+      Math.hypot(world.targetX[s] - sx, world.targetZ[s] - sz) < 1,
+      'the answer marches on the shrine',
+    )
+  }
+})
+
+test('no emergency dip below the garrison while the claim sits empty', () => {
+  const world = makeWorld()
+  const { shrine } = shrineOf(world)
+  // Enemy claim, but nobody on the point: presence-sustained drain
+  // means nothing is bleeding, so the garrison stays home — the
+  // below-garrison answer is for a live drain only, and the normal
+  // contest path still waits for its surplus.
+  const s1 = world.spawnUnit('melee', TEAM_ENEMY, 34, 34).id
+  const s2 = world.spawnUnit('melee', TEAM_ENEMY, 36, 34).id
+  stepWorld(world, 5)
+  world.shrineHeld[shrine] = TEAM_PLAYER
+  new OpponentAI(TEAM_ENEMY, 'normal', 'defender').update(world, 2)
+  assertEqual(world.state[s1], STATE_IDLE, 'garrison soldier 1 stays home')
+  assertEqual(world.state[s2], STATE_IDLE, 'garrison soldier 2 stays home')
+})
+
+test('a garrison-only AI still answers a live drain (integration)', () => {
+  const world = makeWorld()
+  world.registerSystem(new OpponentAI(TEAM_ENEMY, 'normal', 'defender'))
+  const { shrine, sx, sz } = shrineOf(world)
+  world.spawnUnit('melee', TEAM_PLAYER, sx + 2, sz)
+  world.spawnUnit('melee', TEAM_ENEMY, 34, 34)
+  world.spawnUnit('melee', TEAM_ENEMY, 36, 34)
+
+  let drainStarted = false
+  let soldierReached = false
+  for (let sec = 0; sec < 45; sec += 1) {
+    stepWorld(world, 60)
+    if (world.victoryPoints[TEAM_ENEMY] < 1000) drainStarted = true
+    for (const id of world.entities.keys()) {
+      if (world.team[id] !== TEAM_ENEMY) continue
+      const k = world.kind[id]
+      if (k !== KIND_MELEE && k !== KIND_RANGED) continue
+      const d = Math.hypot(world.positionX[id] - sx, world.positionZ[id] - sz)
+      if (d <= CAPTURE_RADIUS + 4) soldierReached = true
+    }
+  }
+
+  assert(drainStarted, 'the enemy drain actually started (test is not vacuous)')
+  assert(soldierReached, 'a garrison soldier marched to the shrine')
   assert(
     world.victoryPoints[TEAM_ENEMY] > 700,
     `AI answered before losing 300 VP (VP left: ${world.victoryPoints[TEAM_ENEMY]})`,

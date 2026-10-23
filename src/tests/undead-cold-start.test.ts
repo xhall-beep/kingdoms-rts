@@ -183,7 +183,7 @@ test('undead launches an offensive wave before it is attacked', () => {
   const hz = world.positionZ[hall]
   let waveStep = -1
   let threatStep = -1
-  for (let step = 0; step < 5 * 3600 && world.winner === -1; step += 1) {
+  for (let step = 0; step < 7 * 3600 && world.winner === -1; step += 1) {
     world.update(STEP)
     if (step % 30 !== 0) continue
     if (waveStep === -1) {
@@ -220,6 +220,22 @@ test('undead launches an offensive wave before it is attacked', () => {
   // required when the rival survives long enough to make one; winning
   // outright before ever being threatened satisfies the discipline
   // claim in its strongest form.
+  // Rally-extension recalibration (2026-10-23, human-v-undead audit
+  // fix): the window extends 5:00 -> 7:00 on ensemble evidence, not a
+  // single trajectory. The extended flee rally lets a besieged rival's
+  // worker line cycle back to work instead of parking inside the
+  // threat radius, so the annihilation this assertion witnesses
+  // completes later: the pinned cell now resolves at 301.2 s — 1.2 s
+  // past the old window, with neither terminal condition (rival
+  // arrival, undead win) registered inside it. Across the 9-cell
+  // personality grid for this matchup the wave reads 186.5-187.0 s in
+  // every cell, the rival never reaches the undead base in any cell,
+  // and undead wins all nine, ending 274.9-400.4 s (inside the new
+  // window with margin). The undead-vs-human grid agrees on the
+  // ordering the test guards: waves at 175.0-184.5 s, rival arrivals —
+  // when they happen at all — at 213.5-278.5 s, always after the wave.
+  // The guarded claim (undead starts the combat; it is never attacked
+  // first) is unchanged and holds in every cell.
   assert(
     threatStep !== -1 || world.winner === undead,
     'the rival eventually reached the undead base (or the undead won first)',

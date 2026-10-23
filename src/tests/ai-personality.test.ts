@@ -318,3 +318,115 @@ test('release is per-worker: a parked enemy holds only the workers near it', () 
     `the held worker keeps being flushed by its parked neighbor (${heldOffSamples}/30 samples off)`,
   )
 })
+
+interface PinSetup {
+  world: World
+  ai: OpponentAI
+  workers: number[]
+  raider: number
+  rx: number
+  rz: number
+}
+
+/**
+ * Siege geometry that pinned the hall-anchored rally: a raider 12.7 from
+ * the hall. The rally (16 behind the hall, away from the threat) lands
+ * 28.7 from the raider — inside FLEE_TRIGGER — so an evacuee that
+ * reached it was still within trigger range of the threat and was
+ * re-ordered every think for as long as the siege lasted: the fleeing
+ * set was an absorbing state (human-v-undead audit 2026-10-23, cause 1:
+ * 11 of 12 workers pinned by two besiegers, working seconds down
+ * 23-35%).
+ */
+function pinSetup(): PinSetup {
+  const world = makeWorld()
+  world.fog[TEAM_ENEMY].reveal(-40, -40, 40) // Player hall scouted: no scout is sent.
+  const workers = placedWorkers(world)
+  place(world, workers[0], 36, 30)
+  place(world, workers[1], 30, 38)
+  place(world, workers[2], 44, 34)
+  place(world, workers[3], 34, 44)
+  const rx = 31
+  const rz = 31 // 12.7 from the enemy hall at (40,40)
+  const raider = world.spawnUnit('melee', TEAM_PLAYER, rx, rz).id
+  stepWorld(world, 5)
+  const ai = new OpponentAI(TEAM_ENEMY, 'normal', 'expander')
+  return { world, ai, workers, raider, rx, rz }
+}
+
+test('a rally inside the threat radius is extended until it clears the radius', () => {
+  const { world, ai, workers, rx, rz } = pinSetup()
+  ai.update(world, 2)
+  for (const w of workers) {
+    assert(
+      world.state[w] === STATE_MOVE && world.harvestKind[w] === HARVEST_OFF,
+      'every worker inside the radius still evacuates',
+    )
+    const d = Math.hypot(world.targetX[w] - rx, world.targetZ[w] - rz)
+    assert(
+      d > 32,
+      `flee destination must clear the threat's trigger radius (d=${d.toFixed(1)})`,
+    )
+  }
+})
+
+test('a permanent siege cannot hold the worker line forever', () => {
+  // The threat never leaves: an unarmed enemy worker parked at the pin
+  // point (the audit's freeze agent — it flushes the line but cannot
+  // kill it). Bound asserted: evacuees cycle out and back instead of
+  // accumulating at the rally — over the settled window (samples 5-40)
+  // the staged crew is harvest-off in at most 80% of worker-samples
+  // (the absorbing pin reads ~100%), and the crew is still cycling in
+  // the late window, never parked for good.
+  const world = makeWorld()
+  world.fog[TEAM_ENEMY].reveal(-40, -40, 40)
+  const workers = placedWorkers(world)
+  place(world, workers[0], 36, 30)
+  place(world, workers[1], 30, 38)
+  place(world, workers[2], 44, 34)
+  place(world, workers[3], 34, 44)
+  const parked = world.spawnUnit('worker', TEAM_PLAYER, 31, 31).id
+  world.harvestKind[parked] = HARVEST_OFF // Parked for real: never auto-assigned.
+  stepWorld(world, 5)
+  const ai = new OpponentAI(TEAM_ENEMY, 'normal', 'expander')
+  let offSamples = 0
+  let totalSamples = 0
+  let cyclingLateSamples = 0
+  for (let i = 0; i < 60; i += 1) {
+    ai.update(world, 1)
+    stepWorld(world, 60)
+    let anyArmed = false
+    for (const w of workers) {
+      if (world.harvestKind[w] === HARVEST_OFF) {
+        if (i >= 5 && i < 40) offSamples += 1
+      } else {
+        anyArmed = true
+      }
+    }
+    if (i >= 5 && i < 40) totalSamples += workers.length
+    if (i >= 40 && anyArmed) cyclingLateSamples += 1
+  }
+  assert(
+    offSamples <= totalSamples * 0.8,
+    `siege flee burden must stay bounded (${offSamples}/${totalSamples} worker-samples off, pin reads ~100%)`,
+  )
+  assert(
+    cyclingLateSamples >= 8,
+    `the crew keeps cycling back to work late in the siege (${cyclingLateSamples}/20 samples with an armed worker)`,
+  )
+})
+
+test('workers recover once a pinning siege lifts', () => {
+  const { world, ai, workers, raider } = pinSetup()
+  ai.update(world, 2)
+  world.removeEntityById(raider) // Siege over.
+  for (let i = 0; i < 30; i += 1) {
+    ai.update(world, 1)
+    stepWorld(world, 60)
+  }
+  let rearmed = 0
+  for (const w of workers) {
+    if (world.harvestKind[w] !== HARVEST_OFF) rearmed += 1
+  }
+  assert(rearmed >= 3, `at least 3 workers should be back on resources, ${rearmed} rearmed`)
+})

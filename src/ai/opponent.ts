@@ -82,6 +82,7 @@ function nearestResourceNode(world: World, workerId: number, wantWood: boolean):
 
 const FLEE_TRIGGER = 32 // A worker evacuates when a visible enemy is this close.
 const FLEE_STANDOFF = 16 // Rally distance behind the hall, away from the threat.
+const FLEE_CLEARANCE = 2 // An extended rally sits this far beyond the threat's trigger radius.
 /**
  * Battle micro: each engaged soldier compares local strength (its own side's
  * health within MICRO_RADIUS vs the visible enemy's) and pulls back to the
@@ -364,7 +365,9 @@ export class OpponentAI implements System {
    *
    * Exception — the emergency answer: while an enemy holder keeps a unit
    * on the point, our VP drains every second, so any idle soldier beyond
-   * the garrison marches to contest it, attack threshold be damned.
+   * the garrison marches to contest it, attack threshold be damned. If
+   * no idle soldier stands beyond the garrison (a besieged army has no
+   * surplus), up to two of the garrison itself answer instead.
    */
   private contestShrine(world: World, soldiers: number[]): void {
     let shrine = -1
@@ -392,8 +395,24 @@ export class OpponentAI implements System {
     const holder = world.shrineHeld[shrine]
     if (holder !== -1 && this.shrinePresence(world, shrine, holder) > 0) {
       const available = idle.length - this.garrisonFor(world)
-      if (available < 1) return
-      const party = idle.slice(0, Math.min(3, available))
+      if (available >= 1) {
+        const party = idle.slice(0, Math.min(3, available))
+        for (const id of party) {
+          this.emitAttackMove(world, id, world.positionX[shrine], world.positionZ[shrine])
+        }
+        return
+      }
+      // Besieged case (human-v-undead audit 2026-10-23, cause 2): no
+      // idle soldier stands beyond the garrison — the whole army is
+      // consumed by home defense, so the surplus answer above never
+      // exists and the drain runs unopposed (presence ≤8.5s in 7 of 9
+      // cells while VP burned). The drain stops only when the holder's
+      // presence dies, and that presence is usually a single unit:
+      // stake up to two of the garrison itself on killing it rather
+      // than bleed 5 VP/s for the rest of the siege. This widens only
+      // the emergency path, and only while a drain is actually
+      // running — the normal contest below is untouched.
+      const party = idle.slice(0, Math.min(2, idle.length))
       for (const id of party) {
         this.emitAttackMove(world, id, world.positionX[shrine], world.positionZ[shrine])
       }
@@ -535,6 +554,8 @@ export class OpponentAI implements System {
    * audit found. Per-worker release closes that class: a parked enemy
    * can only hold the workers it is actually near (post-ring defense
    * audit 2026-10-23, Finding 3).
+   * The rally an evacuee is sent to is itself never inside the
+   * triggering threat's radius — see fleeDestination.
    * Mustered militia are exempt: they hold their stand instead of fleeing.
    * Deterministic: same visible state always yields the same orders.
    */
@@ -581,12 +602,31 @@ export class OpponentAI implements System {
     }
   }
 
-  /** Rally point: behind the hall on the far side of the threat. */
+  /**
+   * Rally point: behind the hall on the far side of the threat — but
+   * never inside the triggering threat's own trigger radius. The plain
+   * rally (FLEE_STANDOFF behind the hall) lands within FLEE_TRIGGER of
+   * a besieger standing at the resource line, because a base's whole
+   * worker footprint fits inside one trigger radius: evacuees parked
+   * there were still "near a visible enemy" on every later think, so
+   * the fleeing set became an absorbing state for the whole siege
+   * (human-v-undead audit 2026-10-23, cause 1: 11 of 12 workers pinned
+   * by two besiegers, working worker-seconds down 23-35%). When the
+   * plain rally is inside the radius, extend the standoff along the
+   * threat→rally ray until the destination clears the radius, so an
+   * evacuee that reaches it is released by the ordinary per-worker
+   * check and cycles back to work instead of re-pinning at its own
+   * rally point. FLEE_TRIGGER itself is unchanged — only the
+   * destination moves, and the destination is a closed-form point, so
+   * no hold can outlive the threat's actual proximity.
+   */
   private fleeDestination(world: World, hall: number, threat: number): { x: number; z: number } {
     const hx = world.positionX[hall]
     const hz = world.positionZ[hall]
-    let dx = hx - world.positionX[threat]
-    let dz = hz - world.positionZ[threat]
+    const tx = world.positionX[threat]
+    const tz = world.positionZ[threat]
+    let dx = hx - tx
+    let dz = hz - tz
     const d = Math.hypot(dx, dz)
     if (d < 1e-6) {
       dx = 1
@@ -595,8 +635,29 @@ export class OpponentAI implements System {
       dx /= d
       dz /= d
     }
+    let x = hx + dx * FLEE_STANDOFF
+    let z = hz + dz * FLEE_STANDOFF
+    // Still inside the triggering threat's radius? Push the rally out
+    // along the ray from the threat through the rally until it clears
+    // the radius (plus FLEE_CLEARANCE, so the release check — which
+    // counts a worker at exactly the radius as threatened — actually
+    // lets go on arrival). The rally stays on the far side of the hall
+    // from the threat; only its distance grows.
+    const rx = x - tx
+    const rz = z - tz
+    const rd = Math.hypot(rx, rz)
+    if (rd <= FLEE_TRIGGER) {
+      if (rd < 1e-6) {
+        x = tx + dx * (FLEE_TRIGGER + FLEE_CLEARANCE)
+        z = tz + dz * (FLEE_TRIGGER + FLEE_CLEARANCE)
+      } else {
+        const scale = (FLEE_TRIGGER + FLEE_CLEARANCE) / rd
+        x = tx + rx * scale
+        z = tz + rz * scale
+      }
+    }
     const clamp = (v: number): number => Math.max(-MAP_CLAMP, Math.min(MAP_CLAMP, v))
-    return { x: clamp(hx + dx * FLEE_STANDOFF), z: clamp(hz + dz * FLEE_STANDOFF) }
+    return { x: clamp(x), z: clamp(z) }
   }
 
   /**
