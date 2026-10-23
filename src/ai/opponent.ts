@@ -22,6 +22,7 @@ import {
   KIND_SHRINE,
   KIND_TREE} from '../core/World'
 import { orderBuild, orderGather } from '../systems/gather.ts'
+import { BUILD_RING_OFFSETS } from '../core/Math.ts'
 import { orderAttackMove } from '../systems/combat.ts'
 import { orderMove } from '../systems/movement.ts'
 import { CAPTURE_RADIUS } from '../systems/shrines.ts'
@@ -839,10 +840,12 @@ export class OpponentAI implements System {
     const ringBase = BUILDINGS.hall.radius + def.radius + 3
     for (let k = 0; k < 30; k += 1) {
       const ring = Math.floor(k / 10)
-      const angle = (k % 10) * 0.628 + ring * 0.3
       const r = ringBase + ring * 4
-      const bx = hx + Math.cos(angle) * r
-      const bz = hz + Math.sin(angle) * r
+      // Deterministic ring offsets from a literal table — no runtime trig
+      // (Math.cos/sin are not cross-platform exact; see BUILD_RING_OFFSETS).
+      const [cos, sin] = BUILD_RING_OFFSETS[k]
+      const bx = hx + cos * r
+      const bz = hz + sin * r
       const builder =
         workers.find((id) => world.state[id] === STATE_IDLE && !this.fleeing.has(id)) ??
         workers.find((id) => world.carryAmount[id] === 0 && !this.fleeing.has(id))

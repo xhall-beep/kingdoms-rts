@@ -314,7 +314,9 @@ export function initializeGame(): GameComposition {
     if (oppIdx !== -1) world.systems.splice(oppIdx, 1)
     const vicIdx = world.systems.indexOf(composition.systems.victory)
     if (vicIdx !== -1) world.systems.splice(vicIdx, 1)
-    tdState = setupTowerDefense(world, Date.now() % 100000)
+    // Fixed seed: TD wave spawns must be reproducible run-to-run (the seed
+    // feeds only SeededRandom in spawnWave; it was Date.now() % 100000).
+    tdState = setupTowerDefense(world, 20261023)
     const td = tdState
     composition.tdTick.fn = (w) => {
       updateTowerDefense(w, td)

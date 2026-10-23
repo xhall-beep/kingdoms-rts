@@ -5,7 +5,7 @@
  * survive waves. Uses the standard Kingdoms engine/systems.
  */
 import { World, TEAM_PLAYER, TEAM_ENEMY, KIND_HALL } from '../core/World.ts'
-import { SeededRandom } from '../core/Math.ts'
+import { CARDINAL_OFFSETS, SeededRandom } from '../core/Math.ts'
 import { orderAttackMove } from '../systems/combat.ts'
 
 export const TD_MAX_WAVES = 10
@@ -46,8 +46,10 @@ export function setupTowerDefense(world: World, seed: number): TDState {
 
   // Starting workers
   for (let i = 0; i < 4; i++) {
-    const angle = (i / 4) * Math.PI * 2
-    world.spawnUnit('worker', TEAM_PLAYER, Math.cos(angle) * 8, Math.sin(angle) * 8)
+    // Deterministic cardinal offsets from a literal table — no runtime trig
+    // (Math.cos/sin are not cross-platform exact; see CARDINAL_OFFSETS).
+    const [cos, sin] = CARDINAL_OFFSETS[i]
+    world.spawnUnit('worker', TEAM_PLAYER, cos * 8, sin * 8)
   }
 
   // Starting resources
