@@ -96,3 +96,80 @@ test('scenario seeds the central shrine', async () => {
   }
   assertEqual(count, 1, 'one central shrine per match')
 })
+
+test('an empty claim drains nothing: presence is the upkeep', () => {
+  const world = makeWorld()
+  const shrine = shrineOf(world)
+  const holderUnit = world.spawnUnit('melee', TEAM_PLAYER, 2, 0).id
+  stepWorld(world, 70) // capture + first drain tick
+  assertEqual(world.shrineHeld[shrine], TEAM_PLAYER, 'player holds the shrine')
+  assertEqual(world.victoryPoints[TEAM_ENEMY], 995, 'presence drains 5 VP')
+
+  // The holding unit leaves: the claim persists (sticky) but the drain
+  // must stop — an unoccupied shrine is harmless.
+  world.positionX[holderUnit] = 30
+  world.positionZ[holderUnit] = 30
+  stepWorld(world, 180) // three checks pass over the empty shrine
+  assertEqual(world.shrineHeld[shrine], TEAM_PLAYER, 'claim survives absence')
+  assertEqual(world.victoryPoints[TEAM_ENEMY], 995, 'no presence, no drain')
+
+  // The unit returns: the drain resumes.
+  world.positionX[holderUnit] = 2
+  world.positionZ[holderUnit] = 0
+  stepWorld(world, 70)
+  assertEqual(world.victoryPoints[TEAM_ENEMY], 990, 'drain resumes on return')
+})
+
+test('killing the holding unit stops the bleeding', () => {
+  const world = makeWorld()
+  const shrine = shrineOf(world)
+  const holderUnit = world.spawnUnit('melee', TEAM_PLAYER, 2, 0).id
+  stepWorld(world, 70)
+  assertEqual(world.victoryPoints[TEAM_ENEMY], 995, 'draining while held')
+
+  world.health[holderUnit] = 0 // the upkeep unit dies on the point
+  stepWorld(world, 180)
+  assertEqual(world.shrineHeld[shrine], TEAM_PLAYER, 'claim is sticky even in death')
+  assertEqual(world.victoryPoints[TEAM_ENEMY], 995, 'dead holder drains nothing')
+})
+
+test('sustained holding still wins on VP', () => {
+  const world = makeWorld()
+  world.victoryPoints[TEAM_ENEMY] = 12
+  world.spawnUnit('melee', TEAM_PLAYER, 2, 0) // camps the point
+  stepWorld(world, 60 * 4) // 4s of held presence: 12 -> 7 -> 2 -> 0
+  assertEqual(world.victoryPoints[TEAM_ENEMY], 0, 'sustained hold drains to zero')
+  assertEqual(world.winner, TEAM_PLAYER, 'VP victory by sustained holding')
+})
+
+test('presence-gated drain survives save/load', async () => {
+  const { serializeWorld, deserializeWorld } = await import('../session/save-load.ts')
+  const world = makeWorld()
+  const shrine = shrineOf(world)
+  const holderUnit = world.spawnUnit('melee', TEAM_PLAYER, 2, 0).id
+  stepWorld(world, 70)
+  assertEqual(world.victoryPoints[TEAM_ENEMY], 995, 'draining before save')
+
+  // Save with the holder ON the point: after load the drain must continue.
+  const saveHeld = serializeWorld(world, 0, [])
+  const restoredHeld = new World()
+  restoredHeld.registerSystem(new ShrineSystemImpl())
+  restoredHeld.registerSystem(new VictorySystemImpl())
+  deserializeWorld(restoredHeld, saveHeld)
+  assertEqual(restoredHeld.shrineHeld[shrine], TEAM_PLAYER, 'holder restored')
+  stepWorld(restoredHeld, 70)
+  assertEqual(restoredHeld.victoryPoints[TEAM_ENEMY], 990, 'drain continues after load')
+
+  // Save with the holder OFF the point: after load the empty claim must
+  // stay harmless.
+  world.positionX[holderUnit] = 30
+  world.positionZ[holderUnit] = 30
+  const saveEmpty = serializeWorld(world, 0, [])
+  const restoredEmpty = new World()
+  restoredEmpty.registerSystem(new ShrineSystemImpl())
+  restoredEmpty.registerSystem(new VictorySystemImpl())
+  deserializeWorld(restoredEmpty, saveEmpty)
+  assertEqual(restoredEmpty.shrineHeld[shrine], TEAM_PLAYER, 'empty claim restored')
+  stepWorld(restoredEmpty, 180)
+  assertEqual(restoredEmpty.victoryPoints[TEAM_ENEMY], 995, 'no drain after load without presence')
+})

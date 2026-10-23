@@ -24,6 +24,7 @@ import {
 import { orderBuild, orderGather } from '../systems/gather.ts'
 import { orderAttackMove } from '../systems/combat.ts'
 import { orderMove } from '../systems/movement.ts'
+import { CAPTURE_RADIUS } from '../systems/shrines.ts'
 import { enqueueTrain, upgradeBuilding } from '../systems/production.ts'
 import {
   BUILDING_TYPE_BY_KIND,
@@ -310,6 +311,10 @@ export class OpponentAI implements System {
    * spare beyond the army the personality wants to attack with, send a small
    * party to take it. Never splits the main army — Victory Points punish
    * turtling, not disciplined force concentration.
+   *
+   * Exception — the emergency answer: while an enemy holder keeps a unit
+   * on the point, our VP drains every second, so any idle soldier beyond
+   * the garrison marches to contest it, attack threshold be damned.
    */
   private contestShrine(world: World, soldiers: number[]): void {
     let shrine = -1
@@ -323,12 +328,59 @@ export class OpponentAI implements System {
     const idle = soldiers.filter(
       (id) => world.state[id] === STATE_IDLE && !this.fleeing.has(id),
     )
+    if (idle.length === 0) return
+
+    // Emergency answer: the enemy holds the shrine AND keeps a living
+    // unit inside the radius, so our Victory Points are bleeding 5/s
+    // right now. The normal contest below waits for an idle surplus the
+    // early game never produces — while the drain ran presence-free that
+    // meant certain death before any answer could exist (shrine audit
+    // 2026-10-22: the VP kill landed ~37s before the loser's first wave
+    // even arrived). Under presence-sustained drain the bleeding can be
+    // stopped by force: march whatever stands beyond the garrison to
+    // the point and make the holder fight for its upkeep.
+    const holder = world.shrineHeld[shrine]
+    if (holder !== -1 && this.shrinePresence(world, shrine, holder) > 0) {
+      const available = idle.length - this.garrisonFor(world)
+      if (available < 1) return
+      const party = idle.slice(0, Math.min(3, available))
+      for (const id of party) {
+        this.emitAttackMove(world, id, world.positionX[shrine], world.positionZ[shrine])
+      }
+      return
+    }
+
     const surplus = idle.length - this.attackThreshold(world)
     if (surplus < 3) return
     const party = idle.slice(0, 3)
     for (const id of party) {
       this.emitAttackMove(world, id, world.positionX[shrine], world.positionZ[shrine])
     }
+  }
+
+  /** Living military units of `team` inside the shrine's capture radius
+   * (the same presence definition the shrine system drains on). */
+  private shrinePresence(world: World, shrine: number, team: number): number {
+    const sx = world.positionX[shrine]
+    const sz = world.positionZ[shrine]
+    let count = 0
+    for (const id of world.entities.keys()) {
+      if (world.team[id] !== team || world.health[id] <= 0) continue
+      const k = world.kind[id]
+      if (k !== KIND_MELEE && k !== KIND_RANGED && k !== KIND_WORKER) continue
+      const dx = world.positionX[id] - sx
+      const dz = world.positionZ[id] - sz
+      if (dx * dx + dz * dz <= CAPTURE_RADIUS * CAPTURE_RADIUS) count += 1
+    }
+    return count
+  }
+
+  /** Home garrison this AI keeps back right now. Undead waive it entirely
+   * until the first corpse feeds Soul-Ash — a garrison guarding a cap that
+   * cannot grow only delays the combat its economy runs on (see attack()). */
+  private garrisonFor(world: World): number {
+    const isUndead = world.factionOfTeam[this.team] === 'undead'
+    return isUndead && world.soulAsh[this.team] === 0 ? 0 : this.getGarrisonSize()
   }
 
   /**
@@ -769,14 +821,12 @@ export class OpponentAI implements System {
     // The quiet opening: no AI attacks before the First Bell (3:00).
     // The Warlord personality still hits *at* the bell — see tuning.
     if (world.bellsRung[0] !== 1) return
-    const isUndead = world.factionOfTeam[this.team] === 'undead'
     // Cold-start desperation: until the first corpse feeds Soul-Ash, an
     // undead garrison guards a cap that cannot grow — every soldier stays
-    // home, no combat starts, no ash ever lands. Waive it so the horde
-    // seeks the contact its economy runs on. Once ash flows, the normal
-    // garrison discipline resumes.
-    const garrisonSize =
-      isUndead && world.soulAsh[this.team] === 0 ? 0 : this.getGarrisonSize()
+    // home, no combat starts, no ash ever lands. garrisonFor waives it so
+    // the horde seeks the contact its economy runs on. Once ash flows,
+    // the normal garrison discipline resumes.
+    const garrisonSize = this.garrisonFor(world)
     const available = soldiers.length - garrisonSize
     const forced = this.gameTime > 240 && available >= 3 // 4 min: attack with what you have
     if (!forced && available < this.attackThreshold(world)) return

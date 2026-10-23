@@ -6,13 +6,19 @@ import { KIND_SHRINE, KIND_MELEE, KIND_RANGED, KIND_WORKER } from '../core/World
  *
  * A shrine is a neutral capturable objective. When exactly one team holds
  * military presence within the capture radius, that team holds the shrine.
- * Every second, each held shrine drains 5 Victory Points from the enemy.
- * A team reduced to 0 VP loses — turtling forever is not an option.
+ * The claim is sticky — contested or empty keeps the holder — but the
+ * Victory Point drain is NOT: every second, a held shrine drains 5 VP
+ * from the enemy only while the holder keeps at least one living unit
+ * inside the capture radius. Abandon the point and the bleeding stops
+ * until you return; kill the holding unit and the claim sits empty and
+ * harmless until someone reoccupies it. A team reduced to 0 VP loses —
+ * turtling forever is not an option, and neither is winning by a
+ * momentary touch in the opening seconds.
  *
  * Capture checks run once per second (not per tick): presence barely moves
  * at 60Hz, and the sweep is O(shrines x units).
  */
-const CAPTURE_RADIUS = 8
+export const CAPTURE_RADIUS = 8
 const VP_DRAIN_PER_SHRINE = 5
 const CHECK_INTERVAL = 1
 
@@ -58,11 +64,18 @@ export class ShrineSystemImpl implements System {
       else if (p1 > 0 && p0 === 0) world.shrineHeld[sid] = 1
       // Contested or empty: the holder keeps it (no flip-flopping).
 
-      // Drain the enemy's Victory Points.
+      // Drain the enemy's Victory Points — but only while the holder
+      // keeps a living unit inside the radius. Presence is the upkeep:
+      // an empty claim bleeds nothing, so the shrine stays a genuinely
+      // contested point for the whole match instead of a first-touch
+      // time bomb.
       const holder = world.shrineHeld[sid]
       if (holder === 0 || holder === 1) {
-        const enemy = (1 - holder) as 0 | 1
-        world.victoryPoints[enemy] = Math.max(0, world.victoryPoints[enemy] - VP_DRAIN_PER_SHRINE)
+        const holderPresence = holder === 0 ? p0 : p1
+        if (holderPresence > 0) {
+          const enemy = (1 - holder) as 0 | 1
+          world.victoryPoints[enemy] = Math.max(0, world.victoryPoints[enemy] - VP_DRAIN_PER_SHRINE)
+        }
       }
     }
   }
