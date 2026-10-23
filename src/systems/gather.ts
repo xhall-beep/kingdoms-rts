@@ -111,7 +111,13 @@ export class GatherSystemImpl implements System {
           if (world.moving[id] === 1) break // still walking there
           // Tilled Farmland: human workers near a finished farm swing 15% faster.
           const haste = nearFinishedFarm(world, id) ? 1.15 : 1
-          world.gatherTimer[id] += dt * haste
+          // Faction gather modifier (mods.gather): the designed offset for
+          // carry capacity — orc Drudges haul 20 per trip but swing 10%
+          // slower. The modifier was declared with no consumer anywhere in
+          // the sim (orc-human audit 2026-10-22), so the offset never
+          // billed. Human/elf sit at 1.0 and are unaffected.
+          const gatherMod = FACTIONS[world.factionOfTeam[world.team[id] as 0 | 1]].mods.gather
+          world.gatherTimer[id] += dt * haste * gatherMod
           if (world.gatherTimer[id] < GATHER_TIME) break
           world.gatherTimer[id] = 0
           world.carryKind[id] = world.kind[node] === KIND_TREE ? CARRY_WOOD : CARRY_GOLD

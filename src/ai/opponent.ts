@@ -25,7 +25,8 @@ import { orderBuild, orderGather } from '../systems/gather.ts'
 import { orderAttackMove } from '../systems/combat.ts'
 import { orderMove } from '../systems/movement.ts'
 import { CAPTURE_RADIUS } from '../systems/shrines.ts'
-import { enqueueTrain, upgradeBuilding } from '../systems/production.ts'
+import { enqueueTrain, researchUpgrade, upgradeBuilding } from '../systems/production.ts'
+import { UPGRADES, type UpgradeType } from '../data/upgrades.ts'
 import {
   BUILDING_TYPE_BY_KIND,
   placeStructure,
@@ -125,6 +126,28 @@ const UNDEAD_ARMY_SUPPLY_RESERVE = 4
  * attack(). Every other faction's attack behavior is unchanged.
  */
 const UNDEAD_ATTACK_ARMY = 3
+
+/** Muster radius of the Militia Bell — mirrors World.ringMilitiaBell. */
+const MILITIA_MUSTER_RADIUS = 25
+
+/**
+ * AI research discipline: the upgrade ladder was only ever driven from
+ * the player UI, so in AI-vs-AI every faction's research sat dark —
+ * including human's Adaptable discount, its signature (orc-human audit
+ * 2026-10-22). The AI buys the next level only from a genuine surplus:
+ * the army it would upgrade already stands (soldiers >= its attack
+ * threshold) and the bank clears this floor. The floor is the orc
+ * foundry-tier line itself: researchUpgrades runs AFTER
+ * upgradeOrcBuildings in the think order, so tiers keep first claim on
+ * any bank at their >=400 gate, and since researching only ever spends
+ * gold, it can delay a tier — never trigger one. An earlier draft of
+ * this step (floor 250, no army precondition) taxed every faction's
+ * opening and halved undead's 5:00 peak army in the cold-start pins —
+ * the surplus gates are what keep research a mid-game lever.
+ */
+const RESEARCH_GOLD_FLOOR = 400
+/** Melee first: winners' armies run ~58% melee, so its ladder pays most. */
+const RESEARCH_ORDER: readonly UpgradeType[] = ['meleeDmg', 'meleeHp', 'rangedDmg']
 
 export type AIDifficulty = 'easy' | 'normal' | 'hard'
 
@@ -300,6 +323,7 @@ export class OpponentAI implements System {
     const reserveGold = this.expand(world, hall, workers)
     this.resumeStalledBuilds(world, workers)
     this.upgradeOrcBuildings(world, hall)
+    this.researchUpgrades(world)
     this.contestShrine(world, soldiers)
     this.trainSoldiers(world, workers.length, reserveGold)
     if (!this.defend(world, hall, soldiers)) this.attack(world, hall, soldiers)
@@ -396,6 +420,49 @@ export class OpponentAI implements System {
     for (const id of world.entities.keys()) {
       if (world.team[id] !== this.team || world.kind[id] !== KIND_BARRACKS) continue
       if (upgradeBuilding(world, id)) return
+    }
+  }
+
+  /**
+   * AI research step (all factions). Buys at most one level per think
+   * tick: the first ladder below max whose own building (barracks for
+   * melee, archery for ranged — per UPGRADES) stands finished, whose
+   * cost the bank covers, and only once the standing army meets the
+   * attack threshold (see RESEARCH_GOLD_FLOOR). researchUpgrade applies
+   * the faction factor
+   * itself, so human's Adaptable discount (0.8x) differentiates human
+   * exactly the way orc's foundry tiers differentiate orc.
+   *
+   * Lockstep: applied directly, exactly like the AI's orc tier upgrades
+   * (upgradeBuilding in upgradeOrcBuildings). There is no 'research'
+   * Command type — adding one would change the PvP wire protocol — and
+   * the AI joins lockstep only in single-world practice mode, where a
+   * deterministic direct mutation cannot diverge between peers (real
+   * PvP fields no AI). The levels are hashed world state (net/hash.ts).
+   */
+  private researchUpgrades(world: World): void {
+    if (world.gold[this.team] < RESEARCH_GOLD_FLOOR) return
+    // Upgrade the army you have: no standing army, no research. This
+    // keeps the opening ramp (where gold converts straight into
+    // soldiers every think) untaxed.
+    const soldiers =
+      unitsOf(world, this.team, KIND_MELEE).length +
+      unitsOf(world, this.team, KIND_RANGED).length
+    if (soldiers < this.attackThreshold(world)) return
+    for (const type of RESEARCH_ORDER) {
+      const def = UPGRADES[type]
+      const level =
+        type === 'meleeDmg'
+          ? world.meleeDmgLvl[this.team]
+          : type === 'meleeHp'
+            ? world.meleeHpLvl[this.team]
+            : world.rangedDmgLvl[this.team]
+      if (level >= def.maxLevel) continue
+      const kind = def.building === 'barracks' ? KIND_BARRACKS : KIND_ARCHERY
+      const building = structuresOf(world, this.team, kind, true)[0]
+      if (building === undefined) continue
+      researchUpgrade(world, building, type)
+      return // One level per think tick, bought or not — no cascade.
     }
   }
 
@@ -788,6 +855,7 @@ export class OpponentAI implements System {
   private defend(world: World, hall: number, soldiers: number[]): boolean {
     const threat = this.nearestVisibleThreat(world, hall)
     if (threat === NO_TARGET) return false
+    this.soundMilitiaBell(world, hall)
     const tx = world.positionX[threat]
     const tz = world.positionZ[threat]
     for (const id of soldiers) {
@@ -795,6 +863,48 @@ export class OpponentAI implements System {
       this.emitAttackMove(world, id, tx, tz)
     }
     return true
+  }
+
+  /**
+   * Militia Bell (human racial): when an enemy soldier is inside the
+   * defense radius, ring the hall bell so the peasants take up pikes
+   * (4x damage Levy Pikemen) instead of being slaughtered at the
+   * resource line — human lost 10-13 workers a game in the orc matchup
+   * because this designed counter never fired for the AI (orc-human
+   * audit 2026-10-22). Gates mirror ringMilitiaBell's own: human only
+   * (it returns 0 for other factions), bell off cooldown, at least one
+   * peasant inside muster range of the hall. One refinement: the threat
+   * must be military — a lone enemy worker scouting the base must not
+   * spend the 120s cooldown the real wave will need.
+   */
+  private soundMilitiaBell(world: World, hall: number): void {
+    if (world.factionOfTeam[this.team] !== 'human') return
+    if (world.matchTime < world.militiaCooldown[this.team]) return // still cooling down
+    const hx = world.positionX[hall]
+    const hz = world.positionZ[hall]
+    let peasantInRange = false
+    let militaryThreat = false
+    for (const id of world.entities.keys()) {
+      if (world.health[id] <= 0) continue
+      const kind = world.kind[id]
+      const d = Math.hypot(world.positionX[id] - hx, world.positionZ[id] - hz)
+      if (world.team[id] === this.team) {
+        if (kind === KIND_WORKER && d <= MILITIA_MUSTER_RADIUS) peasantInRange = true
+      } else if (kind === KIND_MELEE || kind === KIND_RANGED) {
+        if (d <= this.tuning.defenseRadius && canSee(world, this.team, id)) {
+          militaryThreat = true
+        }
+      }
+      if (peasantInRange && militaryThreat) break
+    }
+    if (!peasantInRange || !militaryThreat) return
+    if (this.sink) {
+      // Lockstep: the 'militia' command applies ringMilitiaBell on both
+      // peers at the turn boundary (net/apply.ts).
+      this.sink({ type: 'militia', step: 0, team: this.team })
+    } else {
+      world.ringMilitiaBell(this.team)
+    }
   }
 
   /** How many soldiers to keep at home as garrison (scales with game time + personality). */

@@ -129,9 +129,13 @@ test('farmland aura is human-only', () => {
   world.moving[worker] = 0
   world.gatherTimer[worker] = 0
   world.update(STEP)
-  // Base rate: 1/60 per tick. With aura it would be 1.15/60.
+  // No aura haste for orcs: the timer advances at the plain faction
+  // gather rate — mods.gather 0.9 (wired 2026-10-22; before that the
+  // modifier was dead and this pin read the unmodified 1/60). With the
+  // aura it would be 1.15x that.
+  const expected = (1 / 60) * 0.9
   assert(
-    Math.abs(world.gatherTimer[worker] - 1 / 60) < 1e-6,
+    Math.abs(world.gatherTimer[worker] - expected) < 1e-6,
     'orcs get no farmland haste',
   )
 })

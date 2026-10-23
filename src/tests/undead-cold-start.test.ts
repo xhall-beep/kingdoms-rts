@@ -141,7 +141,17 @@ test('undead AI fields soldiers past the old plateau of 3 in the opening minutes
     if (s > peakBy5) peakBy5 = s
   }
   assert(peakBy3_5 >= 4, `past the old plateau by 3:30 (peak ${peakBy3_5}, was exactly 3)`)
-  assert(peakBy5 >= 8, `a real army by 5:00 (peak ${peakBy5})`)
+  // The 5:00 peak was pinned at >=8 when this test was written — in a
+  // world where the defending human's Militia Bell never fired and
+  // undead's waves massacred peasants unopposed. Since the AI levers
+  // slice (2026-10-22) the bell rings: undead now pays real casualties
+  // for its early waves, so its simultaneous-living peak inside 5:00
+  // reads 6 while the war itself is a rout (Soul-Ash cap 18 -> 50+,
+  // the human army collapses). The deadlock claim this test guards —
+  // undead fields a real army and starts the combat — is unchanged;
+  // the number is recalibrated to the defended-base dynamic, the same
+  // way the farmland pin was recalibrated when mods.gather was wired.
+  assert(peakBy5 >= 6, `a real army by 5:00 (peak ${peakBy5})`)
   assert(
     world.supplyCap[TEAM_PLAYER] > UNDEAD_HALL_SUPPLY,
     'Soul-Ash unlocked the cap through combat the undead started',
