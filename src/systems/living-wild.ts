@@ -7,12 +7,19 @@ import { NO_TARGET, STATE_ATTACK } from '../core/World.ts'
  * Every swing that tears wood from a tree feeds the harvesting team's
  * wild heat. Heat decays steadily, so an ordinary wood line — a handful
  * of workers — never accumulates: measured on the seeded scenario, a
- * 4-worker economy extracts ~1.3 wood/s from trees and a grown 9-worker
- * economy peaks near 8.5 wood/s only in its opening minutes. A deliberate
- * clear-cut (10+ workers on wood) sustains 8–15 wood/s and crosses the
- * threshold in about a minute and a half. Elven sap-tapping is symbiotic
- * and feeds no heat (the gather system does not call recordTreeHarvest
- * for it).
+ * 4-worker economy extracts ~1.3 wood/s from trees, under the 3 wood/s
+ * the decay sheds. A grown 9-worker economy peaks near 8.5 wood/s in
+ * its opening minutes and now answers for cutting sustained at that
+ * pace; a deliberate clear-cut (10+ workers on wood) sustains 8–15
+ * wood/s and crosses the threshold in about a minute. Elven
+ * sap-tapping is symbiotic and feeds no heat (the gather system does
+ * not call recordTreeHarvest for it).
+ *
+ * Tuning (2026-10-23, Balance Report recommendation): at the original
+ * 600 heat / 4-per-second decay the forest almost never answered in AI
+ * games (1 treant across a 36-match series), so the threshold dropped
+ * to 450 and the decay to 3/s — small wood lines stay beneath notice,
+ * grown economies and clear-cuts draw the forest's answer.
  *
  * When heat crosses the threshold, the forest answers: a treant rises
  * at the most recent harvest site and hunts the worker who cut there.
@@ -26,9 +33,9 @@ import { NO_TARGET, STATE_ATTACK } from '../core/World.ts'
  */
 
 /** Wood-from-trees pressure at which the forest retaliates. */
-export const WILD_HEAT_THRESHOLD = 600
+export const WILD_HEAT_THRESHOLD = 450
 /** Heat shed per second while a team leaves the forest alone. */
-export const WILD_HEAT_DECAY_PER_SEC = 4
+export const WILD_HEAT_DECAY_PER_SEC = 3
 
 /**
  * Record one swing's worth of wood torn from a tree. Called by the
