@@ -1,4 +1,5 @@
 import { FACTIONS } from '../data/factions.ts'
+import { RESOURCES } from '../data/resources.ts'
 import type { World, DeathPop } from '../core/World'
 import { sfx } from '../ui/feedback.ts'
 import {
@@ -592,12 +593,41 @@ export class Renderer {
     const color = this.teamColor(world, id)
 
     if (kind === KIND_TREE) {
-      const canopy = treeColorsAt(world.positionX[id], world.positionZ[id])
-      this.circle(p.x, p.y, r, canopy.outer)
-      this.circle(p.x, p.y, r * 0.55, canopy.inner)
+      // Kenney CC0 tree sprite; variant picked by a stable position hash so
+      // a given tree never flickers between pine and leafy. The old
+      // two-circle canopy remains as the not-yet-decoded fallback.
+      const leafy = hash2(Math.round(world.positionX[id]), Math.round(world.positionZ[id])) < 0.5
+      const sprite = getSprite(leafy ? 'tree_leafy' : 'tree_pine')
+      if (sprite) {
+        // Subtle shrink as the node depletes (amount is render-visible stock).
+        const stock = 0.8 + 0.2 * (world.amount[id] / RESOURCES.wood.amount)
+        const size = r * 2.6 * stock
+        this.groundShadow(p.x, p.y, r * 0.55)
+        this.ctx.drawImage(sprite, p.x - size / 2, p.y - size / 2, size, size)
+      } else {
+        const canopy = treeColorsAt(world.positionX[id], world.positionZ[id])
+        this.circle(p.x, p.y, r, canopy.outer)
+        this.circle(p.x, p.y, r * 0.55, canopy.inner)
+      }
     } else if (kind === KIND_GOLDMINE) {
-      this.circle(p.x, p.y, r, '#b8912f')
-      this.circle(p.x, p.y, r * 0.55, '#f5c542')
+      // Kenney CC0 rock cluster over a dirt mound (the pack has no dedicated
+      // mine sprite — rocks + mound is the honest stand-in). The old gold
+      // discs remain as the not-yet-decoded fallback.
+      const rocks = getSprite('gold_rocks')
+      const mound = getSprite('dirt_mound')
+      if (rocks) {
+        const stock = 0.8 + 0.2 * (world.amount[id] / RESOURCES.gold.amount)
+        this.groundShadow(p.x, p.y, r)
+        if (mound) {
+          const ms = r * 2.3 * stock
+          this.ctx.drawImage(mound, p.x - ms / 2, p.y - ms / 2 + r * 0.22, ms, ms)
+        }
+        const size = r * 2.1 * stock
+        this.ctx.drawImage(rocks, p.x - size / 2, p.y - size / 2, size, size)
+      } else {
+        this.circle(p.x, p.y, r, '#b8912f')
+        this.circle(p.x, p.y, r * 0.55, '#f5c542')
+      }
     } else if (kind === KIND_SHRINE) {
       // Shrine of Kings: stone ring, glowing rune colored by holder.
       const held = world.shrineHeld[id]
