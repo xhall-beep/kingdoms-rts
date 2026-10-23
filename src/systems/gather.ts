@@ -41,6 +41,8 @@ function finishConstruction(world: World, site: number): void {
     const btype = BUILDING_TYPE_BY_KIND[bkind]
     world.supplyCap[world.team[site]] += buildingSupply(btype, world.factionOfTeam[world.team[site]])
   }
+  // Game-feel: completion cue (visual-only; renderer drains it each frame).
+  world.completionFlashes.push({ id: site, unit: false, team: world.team[site] as 0 | 1 })
 }
 
 /**

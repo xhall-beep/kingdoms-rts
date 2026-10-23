@@ -84,6 +84,8 @@ export class ProductionSystemImpl implements System {
       world.stopDist[uid] = 0.5
       world.moving[uid] = 1
       world.state[uid] = STATE_MOVE
+      // Game-feel: completion cue (visual-only; renderer drains it each frame).
+      world.completionFlashes.push({ id, unit: true, team })
     }
   }
 }

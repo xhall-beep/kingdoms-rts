@@ -110,6 +110,10 @@ export class Renderer {
   private deathPops: DeathPop[] = []
   /** Last loss-sfx time (performance.now), throttled so mass deaths stay quiet. */
   private lastLossSfx = 0
+  /** Completion pops being animated: gold ring at finished buildings/units. */
+  private completionPops: { x: number; z: number; age: number; r: number; unit: boolean }[] = []
+  /** Last completion-sfx time (performance.now), throttled like loss stings. */
+  private lastCompletionSfx = 0
   /** Last render dt in seconds; used to age hit flashes inside drawEntity. */
   private lastDt = 1 / 60
 
@@ -263,6 +267,25 @@ export class Renderer {
       if (pop.age === 0 && pop.team === team) this.playLossSfx(pop)
     }
     world.deathPops.length = 0
+    // Consume visual-only completion events pushed by the sim this frame.
+    // Only the owning team's viewer cues: enemy completions stay silent and
+    // invisible (fog already hides them; this keeps ears from leaking intel).
+    for (const ev of world.completionFlashes) {
+      if (ev.team !== team || !world.entities.has(ev.id)) continue
+      this.completionPops.push({
+        x: world.positionX[ev.id],
+        z: world.positionZ[ev.id],
+        age: 0,
+        r: world.radius[ev.id],
+        unit: ev.unit,
+      })
+      this.playCompletionSfx(ev.unit)
+    }
+    world.completionFlashes.length = 0
+    // Cap: a queued economy can finish several things at once.
+    if (this.completionPops.length > 24) {
+      this.completionPops.splice(0, this.completionPops.length - 24)
+    }
     // A corrupted camera transform (NaN/Infinity from a bad event or a
     // desync) would paint nothing and misroute every tap. Recover to the
     // default base view instead of leaving the player in a black void.
@@ -285,6 +308,7 @@ export class Renderer {
     this.drawSelectionBox()
     this.drawDamageNumbers(world, dtSeconds)
     this.drawDeathPops(dtSeconds)
+    this.drawCompletionPops(dtSeconds)
     this.drawGhost()
     this.drawRallyPoints(world)
     this.drawMoveIndicators(dtSeconds)
@@ -322,6 +346,39 @@ export class Renderer {
     this.deathPops = keep
   }
 
+  /**
+   * Completion pops: brief gold expanding ring where a building finished or
+   * a unit mustered out. Visual-only (excluded from lockstep hash); ages in
+   * real seconds. Mirrors the death-pop drawing style for consistency.
+   */
+  private drawCompletionPops(dtSeconds: number): void {
+    const { ctx } = this
+    const keep: typeof this.completionPops = []
+    for (const pop of this.completionPops) {
+      pop.age += dtSeconds
+      if (pop.age > 0.6) continue
+      keep.push(pop)
+      const p = this.toScreen(pop.x, pop.z)
+      const q = pop.age / 0.6
+      const alpha = 1 - q
+      ctx.save()
+      ctx.globalAlpha = alpha
+      // Gold ring, expanding out from the finished structure/unit.
+      ctx.strokeStyle = '#f5c542'
+      ctx.lineWidth = 2.5
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, pop.r * this.zoom * (1 + q * 1.4), 0, Math.PI * 2)
+      ctx.stroke()
+      // Filled dot at the center, shrinking as the ring expands.
+      ctx.fillStyle = '#fbbf24'
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, Math.max(1, 5 * (1 - q)), 0, Math.PI * 2)
+      ctx.fill()
+      ctx.restore()
+    }
+    this.completionPops = keep
+  }
+
   /** Throttled loss sting for the player's own deaths (units vs buildings). */
   private playLossSfx(pop: DeathPop): void {
     const now = typeof performance !== 'undefined' ? performance.now() : 0
@@ -330,6 +387,15 @@ export class Renderer {
     const isBuilding = (pop.kind >= KIND_HALL && pop.kind <= KIND_FARM) || pop.kind === KIND_TOWER
     if (isBuilding) sfx.buildingLost()
     else sfx.unitLost()
+  }
+
+  /** Completion cue for the player's own side (building or trained unit), throttled. */
+  private playCompletionSfx(unit: boolean): void {
+    const now = typeof performance !== 'undefined' ? performance.now() : 0
+    if (now - this.lastCompletionSfx < 300) return
+    this.lastCompletionSfx = now
+    if (unit) sfx.train()
+    else sfx.buildComplete()
   }
 
   private drawMoveIndicators(dtSeconds: number): void {

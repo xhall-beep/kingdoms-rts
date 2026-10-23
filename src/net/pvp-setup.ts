@@ -94,6 +94,7 @@ export function resetWorldForMatch(
   world.damageNumbers.length = 0
   world.hitFlashes.length = 0
   world.deathPops.length = 0
+  world.completionFlashes.length = 0
 
   for (const s of world.systems) {
     if (s instanceof VictorySystemImpl) s.setTimer(0)

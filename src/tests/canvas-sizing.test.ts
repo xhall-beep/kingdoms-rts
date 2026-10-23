@@ -86,6 +86,7 @@ function emptyWorld(): unknown {
     damageNumbers: [],
     hitFlashes: [],
     deathPops: [],
+    completionFlashes: [],
   }
 }
 

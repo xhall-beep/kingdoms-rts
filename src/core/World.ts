@@ -101,6 +101,15 @@ export interface HitFlash {
   id: number
 }
 
+export interface CompletionFlash {
+  /** Entity id whose construction or training just finished (visual-only). */
+  id: number
+  /** True when a unit finished training, false when a building finished. */
+  unit: boolean
+  /** Owning team; only this team's viewer cues on it. */
+  team: 0 | 1
+}
+
 export interface DeathPop {
   x: number
   z: number
@@ -132,6 +141,9 @@ export class World {
 
   /** Visual-only death pops (expanding ring at kill position); not sim state. */
   deathPops: DeathPop[] = []
+
+  /** Visual-only completion events (building finished, unit trained); not sim state. */
+  completionFlashes: CompletionFlash[] = []
 
   // ---- combat ----
   readonly health: Float32Array
