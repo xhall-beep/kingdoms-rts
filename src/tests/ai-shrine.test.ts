@@ -7,7 +7,7 @@
  * never produces — so the AI bled out with soldiers standing at home.
  * The emergency answer: any idle soldier beyond the garrison marches.
  */
-import { TEAM_PLAYER, TEAM_ENEMY, KIND_SHRINE, KIND_MELEE, KIND_RANGED, STATE_ATTACKMOVE, STATE_IDLE } from '../core/World.ts'
+import { TEAM_PLAYER, TEAM_ENEMY, KIND_SHRINE, KIND_MELEE, KIND_RANGED, STATE_IDLE } from '../core/World.ts'
 import { OpponentAI } from '../ai/opponent.ts'
 import { CAPTURE_RADIUS } from '../systems/shrines.ts'
 import { makeWorld, stepWorld } from './setup.ts'
@@ -67,27 +67,27 @@ function shrineOf(world: ReturnType<typeof makeWorld>): { shrine: number; sx: nu
   return { shrine, sx: world.positionX[shrine], sz: world.positionZ[shrine] }
 }
 
-test('emergency answer draws on the garrison when no surplus exists', () => {
+test('emergency answer does not draw on the garrison when no surplus exists', () => {
   const world = makeWorld()
   const { shrine, sx, sz } = shrineOf(world)
   // The enemy holds the point with a single unit: VP is draining now.
   world.spawnUnit('melee', TEAM_PLAYER, sx + 2, sz)
   // A defender AI whose whole army IS its garrison: two idle soldiers,
   // garrison 2 in the opening (defender personality) — zero idle surplus
-  // beyond it. The old emergency path required a surplus beyond the
-  // garrison, so this drain ran unopposed (human-v-undead audit
-  // 2026-10-23, cause 2: presence ≤8.5s in 7 of 9 cells while VP burned).
+  // beyond it. The emergency path spends only genuine surplus beyond
+  // the garrison, so this drain runs unopposed. A below-garrison stake
+  // was tried (87a6cc1) and reverted: the dip/elf audit (2026-10-23)
+  // measured the staked parties dying at home — the attack-move order
+  // engages the home siege first — with 0 of 103 dips buying hold time.
+  // A garrison-only army dispatching NOTHING is the accepted, measured
+  // behavior until a redesign (not a retune) replaces it.
   const s1 = world.spawnUnit('melee', TEAM_ENEMY, 34, 34).id
   const s2 = world.spawnUnit('melee', TEAM_ENEMY, 36, 34).id
   stepWorld(world, 5)
   world.shrineHeld[shrine] = TEAM_PLAYER // The camper's claim (5 steps run no capture check).
   new OpponentAI(TEAM_ENEMY, 'normal', 'defender').update(world, 2)
   for (const s of [s1, s2]) {
-    assertEqual(world.state[s], STATE_ATTACKMOVE, 'a garrison soldier answers the drain')
-    assert(
-      Math.hypot(world.targetX[s] - sx, world.targetZ[s] - sz) < 1,
-      'the answer marches on the shrine',
-    )
+    assertEqual(world.state[s], STATE_IDLE, 'a garrison soldier stays home — no dip below the garrison')
   }
 })
 
@@ -107,7 +107,7 @@ test('no emergency dip below the garrison while the claim sits empty', () => {
   assertEqual(world.state[s2], STATE_IDLE, 'garrison soldier 2 stays home')
 })
 
-test('a garrison-only AI still answers a live drain (integration)', () => {
+test('a garrison-only AI does not answer a live drain — the drain runs (integration)', () => {
   const world = makeWorld()
   world.registerSystem(new OpponentAI(TEAM_ENEMY, 'normal', 'defender'))
   const { shrine, sx, sz } = shrineOf(world)
@@ -115,6 +115,10 @@ test('a garrison-only AI still answers a live drain (integration)', () => {
   world.spawnUnit('melee', TEAM_ENEMY, 34, 34)
   world.spawnUnit('melee', TEAM_ENEMY, 36, 34)
 
+  // Restored semantics (dip revert, 2026-10-23 audit): with no idle
+  // surplus beyond the garrison, nobody is staked on the point — the
+  // garrison stays home and the drain runs for the full window. This
+  // is the accepted, measured behavior until a redesign replaces it.
   let drainStarted = false
   let soldierReached = false
   for (let sec = 0; sec < 45; sec += 1) {
@@ -130,10 +134,6 @@ test('a garrison-only AI still answers a live drain (integration)', () => {
   }
 
   assert(drainStarted, 'the enemy drain actually started (test is not vacuous)')
-  assert(soldierReached, 'a garrison soldier marched to the shrine')
-  assert(
-    world.victoryPoints[TEAM_ENEMY] > 700,
-    `AI answered before losing 300 VP (VP left: ${world.victoryPoints[TEAM_ENEMY]})`,
-  )
-  assertEqual(world.shrineHeld[shrine], TEAM_ENEMY, 'AI retook the shrine')
+  assert(!soldierReached, 'no garrison soldier marched to the shrine')
+  assertEqual(world.shrineHeld[shrine], TEAM_PLAYER, 'the drain holder keeps the shrine')
 })

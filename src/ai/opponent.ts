@@ -365,9 +365,7 @@ export class OpponentAI implements System {
    *
    * Exception — the emergency answer: while an enemy holder keeps a unit
    * on the point, our VP drains every second, so any idle soldier beyond
-   * the garrison marches to contest it, attack threshold be damned. If
-   * no idle soldier stands beyond the garrison (a besieged army has no
-   * surplus), up to two of the garrison itself answer instead.
+   * the garrison marches to contest it, attack threshold be damned.
    */
   private contestShrine(world: World, soldiers: number[]): void {
     let shrine = -1
@@ -395,24 +393,8 @@ export class OpponentAI implements System {
     const holder = world.shrineHeld[shrine]
     if (holder !== -1 && this.shrinePresence(world, shrine, holder) > 0) {
       const available = idle.length - this.garrisonFor(world)
-      if (available >= 1) {
-        const party = idle.slice(0, Math.min(3, available))
-        for (const id of party) {
-          this.emitAttackMove(world, id, world.positionX[shrine], world.positionZ[shrine])
-        }
-        return
-      }
-      // Besieged case (human-v-undead audit 2026-10-23, cause 2): no
-      // idle soldier stands beyond the garrison — the whole army is
-      // consumed by home defense, so the surplus answer above never
-      // exists and the drain runs unopposed (presence ≤8.5s in 7 of 9
-      // cells while VP burned). The drain stops only when the holder's
-      // presence dies, and that presence is usually a single unit:
-      // stake up to two of the garrison itself on killing it rather
-      // than bleed 5 VP/s for the rest of the siege. This widens only
-      // the emergency path, and only while a drain is actually
-      // running — the normal contest below is untouched.
-      const party = idle.slice(0, Math.min(2, idle.length))
+      if (available < 1) return
+      const party = idle.slice(0, Math.min(3, available))
       for (const id of party) {
         this.emitAttackMove(world, id, world.positionX[shrine], world.positionZ[shrine])
       }
