@@ -92,7 +92,22 @@ export class CombatSystemImpl implements System {
       if (world.cooldown[id] > 0) world.cooldown[id] -= dt
 
       let target = world.targetId[id]
-      if (target === NO_TARGET || !world.entities.has(target) || world.health[target] <= 0) {
+      // A pre-set target is honored only if it is still a legitimate one:
+      // attackable and not our own team. Pre-set targets bypass the checks
+      // in findNearestEnemy, so without this a mustered militia peasant —
+      // whose targetId still points at the gold mine or tree it was
+      // gathering — swings on its own resource field (nodes have 1 HP;
+      // one 4x militia swing deletes a mine). Resource nodes are not
+      // attackable and friendly units/buildings are not enemies; stale
+      // targets of either kind fall through to normal acquisition.
+      // (Post-ring defense audit 2026-10-23, Finding 1.)
+      if (
+        target === NO_TARGET ||
+        !world.entities.has(target) ||
+        world.health[target] <= 0 ||
+        !world.isAttackable(target) ||
+        world.team[target] === world.team[id]
+      ) {
         // Auto-acquire: idle soldiers defend themselves, attack-move engages
         // on the march. Plain move orders (STATE_MOVE) walk through.
         const stance = world.state[id]

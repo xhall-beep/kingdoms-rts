@@ -5,7 +5,7 @@
  * 25 seconds (4x damage, they fight), at the cost of halting resource
  * collection. 120s cooldown. Only humans can ring it.
  */
-import { World, TEAM_PLAYER, TEAM_ENEMY, STATE_ATTACK, STATE_IDLE } from '../core/World.ts'
+import { World, TEAM_PLAYER, TEAM_ENEMY, STATE_ATTACK, STATE_GATHER, STATE_IDLE } from '../core/World.ts'
 import { GatherSystemImpl } from '../systems/gather.ts'
 import { CombatSystemImpl } from '../systems/combat.ts'
 import { STEP, stepWorld } from './setup.ts'
@@ -88,6 +88,46 @@ test('militia do not gather while mustered', () => {
   stepWorld(world, 120)
   assertEqual(world.carryAmount[peasant], 0, 'militia carries nothing')
   assertEqual(world.state[peasant], STATE_IDLE, 'militia holds position')
+})
+
+test('mustered militia do not destroy their own gold mine (Finding 1 regression)', () => {
+  const world = makeWorld()
+  world.spawnBuilding('hall', TEAM_PLAYER, 0, 0, true)
+  const mine = world.spawnResource('gold', 7, 5).id
+  const peasant = world.spawnUnit('worker', TEAM_PLAYER, 5, 5).id
+  // The peasant is mid-gather on the mine when the bell rings: its
+  // targetId still points at the node, exactly as in a real match.
+  world.state[peasant] = STATE_GATHER
+  world.targetId[peasant] = mine
+  world.ringMilitiaBell(TEAM_PLAYER)
+  stepWorld(world, 120) // 2 seconds of the stand
+  assert(world.entities.has(mine), 'gold mine survives the militia stand')
+  assertEqual(world.amount[mine], 1600, 'mine stock untouched by militia swings')
+})
+
+test('mustered militia do not destroy their own trees (Finding 1 regression)', () => {
+  const world = makeWorld()
+  world.spawnBuilding('hall', TEAM_PLAYER, 0, 0, true)
+  const tree = world.spawnResource('wood', 7, 5).id
+  const peasant = world.spawnUnit('worker', TEAM_PLAYER, 5, 5).id
+  world.state[peasant] = STATE_GATHER
+  world.targetId[peasant] = tree
+  world.ringMilitiaBell(TEAM_PLAYER)
+  stepWorld(world, 120)
+  assert(world.entities.has(tree), 'tree survives the militia stand')
+})
+
+test('combat ignores a pre-set friendly target', () => {
+  const world = makeWorld()
+  const hall = world.spawnBuilding('hall', TEAM_PLAYER, 0, 0, true).id
+  const peasant = world.spawnUnit('worker', TEAM_PLAYER, 4, 4).id
+  world.ringMilitiaBell(TEAM_PLAYER)
+  // A stale pre-set target on a friendly building must never be honored.
+  world.targetId[peasant] = hall
+  world.state[peasant] = STATE_ATTACK
+  const before = world.health[hall]
+  stepWorld(world, 120)
+  assertEqual(world.health[hall], before, 'own hall takes no militia damage')
 })
 
 test('militia command round-trips through the net protocol', async () => {
