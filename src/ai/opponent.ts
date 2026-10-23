@@ -524,10 +524,17 @@ export class OpponentAI implements System {
    * leaves the economy hypersensitive to spawn geometry.
    */
   /**
-   * Worker micro: when a visible enemy is inside the base, workers near the
-   * threat evacuate behind the hall instead of harvesting through the raid.
-   * Evacuated workers stay out of the gather rotation (and off construction
-   * duty) until the threat is gone, then the normal rotation re-arms them.
+   * Worker micro: threat is evaluated per worker. A worker evacuates
+   * behind the hall when a visible enemy is within FLEE_TRIGGER of the
+   * WORKER, and is released the think no visible enemy is near it — the
+   * normal rotation then re-arms it. The previous hall-centric trigger
+   * (any visible enemy inside the hall's defense radius) could not see a
+   * raider working the far wood line beyond that radius, and its global
+   * release meant one parked enemy held every evacuee out for as long as
+   * it stood anywhere inside the radius — the evacuation freeze the elf
+   * audit found. Per-worker release closes that class: a parked enemy
+   * can only hold the workers it is actually near (post-ring defense
+   * audit 2026-10-23, Finding 3).
    * Mustered militia are exempt: they hold their stand instead of fleeing.
    * Deterministic: same visible state always yields the same orders.
    */
@@ -536,12 +543,6 @@ export class OpponentAI implements System {
     for (const id of this.fleeing) {
       if (!world.entities.has(id)) this.fleeing.delete(id)
     }
-    const threat = this.nearestVisibleThreat(world, hall)
-    if (threat === NO_TARGET) {
-      this.fleeing.clear()
-      return
-    }
-    const dest = this.fleeDestination(world, hall, threat)
     for (const id of workers) {
       if (id === this.scoutId) continue // The scout keeps its mission.
       // Militia Bell: a mustered pikeman chose to fight. Re-ordering it
@@ -562,14 +563,21 @@ export class OpponentAI implements System {
       // the churn keeps the build on schedule).
       if (world.state[id] === STATE_BUILD) continue
       if (!world.entities.has(id) || world.health[id] <= 0) continue
-      const d = Math.hypot(
-        world.positionX[id] - world.positionX[threat],
-        world.positionZ[id] - world.positionZ[threat],
+      const threat = this.nearestVisibleThreatTo(
+        world,
+        world.positionX[id],
+        world.positionZ[id],
+        FLEE_TRIGGER,
       )
-      if (d < FLEE_TRIGGER) {
-        this.emitMove(world, id, dest.x, dest.z)
-        this.fleeing.add(id)
+      if (threat === NO_TARGET) {
+        // Released: no visible enemy near THIS worker, whatever is
+        // happening elsewhere in the base.
+        this.fleeing.delete(id)
+        continue
       }
+      const dest = this.fleeDestination(world, hall, threat)
+      this.emitMove(world, id, dest.x, dest.z)
+      this.fleeing.add(id)
     }
   }
 
@@ -596,19 +604,29 @@ export class OpponentAI implements System {
    * Deterministic: ties break on the spatial hash sequence number.
    */
   private nearestVisibleThreat(world: World, hall: number): number {
-    const hx = world.positionX[hall]
-    const hz = world.positionZ[hall]
+    return this.nearestVisibleThreatTo(
+      world,
+      world.positionX[hall],
+      world.positionZ[hall],
+      this.tuning.defenseRadius,
+    )
+  }
+
+  /**
+   * Nearest visible enemy within `radius` of an arbitrary point.
+   * Deterministic: ties break on the spatial hash sequence number.
+   */
+  private nearestVisibleThreatTo(world: World, x: number, z: number, radius: number): number {
     const hash = world.spatialHash
     let threat = NO_TARGET
-    let nearest = this.tuning.defenseRadius
+    let nearest = radius
     let bestSeq = Number.MAX_SAFE_INTEGER
-    // defenseRadius (20-28) fits in the hash 3x3; fall back to full scan if larger.
     const consider = (id: number) => {
       const kind = world.kind[id]
       if (kind !== KIND_WORKER && kind !== KIND_MELEE && kind !== KIND_RANGED) return
       if (world.team[id] === this.team) return
       if (!canSee(world, this.team, id)) return
-      const d = Math.hypot(world.positionX[id] - hx, world.positionZ[id] - hz)
+      const d = Math.hypot(world.positionX[id] - x, world.positionZ[id] - z)
       const seq = hash.sequenceOf(id)
       if (d < nearest || (d === nearest && seq < bestSeq)) {
         nearest = d
@@ -616,9 +634,8 @@ export class OpponentAI implements System {
         threat = id
       }
     }
-    // Spatial hash rect query covers the defense circle exactly (any radius).
-    const r = this.tuning.defenseRadius
-    hash.forEachInRect(hx - r, hz - r, hx + r, hz + r, consider)
+    // Spatial hash rect query covers the circle exactly (any radius).
+    hash.forEachInRect(x - radius, z - radius, x + radius, z + radius, consider)
     return threat
   }
 

@@ -3,7 +3,7 @@
  * personalities actually change AI decisions (resolved tuning + behavior).
  * Headless and deterministic.
  */
-import { World, HARVEST_OFF, KIND_HALL, KIND_WORKER, STATE_ATTACKMOVE, STATE_MOVE, TEAM_ENEMY, TEAM_PLAYER } from '../core/World.ts'
+import { World, HARVEST_OFF, KIND_HALL, KIND_MELEE, KIND_RANGED, KIND_WORKER, STATE_ATTACKMOVE, STATE_MOVE, TEAM_ENEMY, TEAM_PLAYER } from '../core/World.ts'
 import { OpponentAI, type AIDifficulty, type AIPersonality } from '../ai/opponent.ts'
 import { suite, test, assert, assertEqual } from './harness.ts'
 import { makeWorld, stepWorld } from './setup.ts'
@@ -206,4 +206,115 @@ test('flee orders are deterministic', () => {
       .join('|')
   }
   assertEqual(run(), run(), 'the same raid must produce identical flee orders')
+})
+
+/** Enemy workers of a fresh scenario world, in spawn order. */
+function placedWorkers(world: World): number[] {
+  const workers: number[] = []
+  for (const id of world.entities.keys()) {
+    if (world.kind[id] === KIND_WORKER && world.team[id] === TEAM_ENEMY) workers.push(id)
+  }
+  return workers
+}
+
+function place(world: World, id: number, x: number, z: number): void {
+  world.positionX[id] = x
+  world.positionZ[id] = z
+}
+
+test('a raider beyond the hall radius evacuates only the workers near it', () => {
+  // Enemy hall at (40,40), defense radius 28 — but the far wood line sits
+  // ~31 out. The old hall-centric trigger never saw a raider working it:
+  // nothing evacuated at all. Per-worker evaluation (post-ring defense
+  // audit 2026-10-23, Finding 3) keys on the worker instead.
+  const world = makeWorld()
+  world.fog[TEAM_ENEMY].reveal(-40, -40, 40) // Player hall scouted: no scout is sent.
+  const [near, far, spare1, spare2] = placedWorkers(world)
+  place(world, near, 50, 13) // far wood line
+  place(world, far, 18, 34) // far gold line, 43 from the raider
+  place(world, spare1, 24, 30)
+  place(world, spare2, 26, 38)
+  world.spawnUnit('melee', TEAM_PLAYER, 56, 13) // 6 from `near`, 31.4 from the hall
+  stepWorld(world, 5)
+  const ai = new OpponentAI(TEAM_ENEMY, 'normal', 'expander')
+  ai.update(world, 2)
+  assert(
+    world.state[near] === STATE_MOVE && world.harvestKind[near] === HARVEST_OFF,
+    'the worker next to the raider flees',
+  )
+  assert(world.harvestKind[far] !== HARVEST_OFF, 'the distant gold worker keeps gathering')
+  assert(world.harvestKind[spare1] !== HARVEST_OFF, 'mid-base worker 1 keeps gathering')
+  assert(world.harvestKind[spare2] !== HARVEST_OFF, 'mid-base worker 2 keeps gathering')
+})
+
+test('release is per-worker: a parked enemy holds only the workers near it', () => {
+  // Two separated threats: a melee raider by the wood-line worker, and an
+  // unarmed enemy WORKER parked by the gold-line worker (harvest disarmed
+  // so the gather system never walks it off its post). The parked worker
+  // pins the shipped predicate semantics (the scout case): enemy workers
+  // still count as threats — but under per-worker evaluation its hold is
+  // local, and when the raider is gone, the wood-line worker is released
+  // and re-armed even though an enemy still stands in the base. The old
+  // global release failed both directions: one enemy anywhere inside the
+  // hall radius held every evacuee out indefinitely (the evacuation
+  // freeze), and clearing it released everyone at once.
+  const world = makeWorld()
+  world.fog[TEAM_ENEMY].reveal(-40, -40, 40) // Player hall scouted: no scout is sent.
+  const [spare1, held, spare2, released] = placedWorkers(world)
+  place(world, spare1, 40, 52)
+  place(world, held, 18, 34) // gold line
+  place(world, spare2, 44, 50)
+  place(world, released, 54, 16) // far wood line
+  const raider = world.spawnUnit('melee', TEAM_PLAYER, 57, 13).id // 4.2 from `released`
+  const parked = world.spawnUnit('worker', TEAM_PLAYER, 14, 30).id // 5.7 from `held`
+  world.harvestKind[parked] = HARVEST_OFF // Parked for real: never auto-assigned.
+  stepWorld(world, 5)
+  const ai = new OpponentAI(TEAM_ENEMY, 'normal', 'expander')
+  ai.update(world, 2)
+  assert(
+    world.state[released] === STATE_MOVE && world.harvestKind[released] === HARVEST_OFF,
+    'wood-line worker flees its raider',
+  )
+  assert(
+    world.state[held] === STATE_MOVE && world.harvestKind[held] === HARVEST_OFF,
+    'gold-line worker flees the parked enemy worker',
+  )
+  // The raider is destroyed; the parked scout stays where it stands.
+  world.removeEntityById(raider)
+  const nearestEnemyDist = (id: number): number => {
+    let best = Infinity
+    for (const e of world.entities.keys()) {
+      if (world.team[e] !== TEAM_PLAYER) continue
+      const k = world.kind[e]
+      if (k !== KIND_WORKER && k !== KIND_MELEE && k !== KIND_RANGED) continue
+      const d = Math.hypot(world.positionX[e] - world.positionX[id], world.positionZ[e] - world.positionZ[id])
+      if (d < best) best = d
+    }
+    return best
+  }
+  let heldOffSamples = 0
+  let releasedArmedLateSamples = 0
+  let phantomHolds = 0
+  for (let i = 0; i < 30; i += 1) {
+    ai.update(world, 1)
+    stepWorld(world, 60)
+    if (world.harvestKind[held] === HARVEST_OFF) heldOffSamples += 1
+    if (i >= 15) {
+      if (world.harvestKind[released] !== HARVEST_OFF) releasedArmedLateSamples += 1
+      // Phantom hold: evacuated while no enemy is within the trigger
+      // radius — the old global release's signature failure.
+      if (world.harvestKind[released] === HARVEST_OFF && nearestEnemyDist(released) > 32) {
+        phantomHolds += 1
+      }
+    }
+  }
+  assertEqual(phantomHolds, 0, 'the released worker is never held out by a distant enemy')
+  assert(
+    releasedArmedLateSamples >= 5,
+    `the released worker is back on resources in the late samples (${releasedArmedLateSamples}/15)`,
+  )
+  assert(
+    heldOffSamples >= 5,
+    `the held worker keeps being flushed by its parked neighbor (${heldOffSamples}/30 samples off)`,
+  )
 })
