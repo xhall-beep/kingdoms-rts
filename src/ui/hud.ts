@@ -146,8 +146,9 @@ export class HudImpl implements Hud {
         <p><b>Tap</b> your unit or building to select it.</p>
         <p><b>Tap</b> again to deselect.</p>
         <p>With units selected: <b>tap ground</b> to move, <b>tap enemy</b> to attack, <b>tap trees/gold</b> to gather.</p>
-        <p><b>Drag</b> to box-select. <b>Two-finger drag</b> to pan.</p>
-        <p><b>Pinch</b> with two fingers to zoom in and out.</p>
+        <p><b>Drag</b> to pan. <b>Hold, then drag</b> — or drag starting on a unit — to box-select.</p>
+        <p><b>Double-tap</b> or <b>long-press</b> a unit to select all of its type on screen.</p>
+        <p><b>Two-finger drag</b> to pan. <b>Pinch</b> to zoom.</p>
         <p>Use the <b>menu</b> to build, train, save, and pick factions.</p>
         <button id="hud-tutorial-close">Got it!</button>
       </div>
@@ -494,8 +495,11 @@ export class HudImpl implements Hud {
       this.lastSelectionKey = selKey
       this.buildOpen = false
     }
-    // Key includes HP so the card refreshes as damage is taken.
-    const hpKey = selected.length > 0 ? Math.floor(world.health[selected[0]]) : 0
+    // Key includes HP so the card refreshes as damage is taken. For a
+    // group selection this is the AGGREGATE HP, so the group card's bar
+    // moves when any member is hurt, not just the first.
+    let hpKey = 0
+    for (const sid of selected) hpKey += Math.floor(world.health[sid] ?? 0)
     const key = `${selKey}|${Math.floor(world.gold[TEAM_PLAYER])}|${Math.floor(world.wood[TEAM_PLAYER])}|${hpKey}|${this.buildOpen ? 1 : 0}`
     if (key === this.lastActionsKey) return
     this.lastActionsKey = key

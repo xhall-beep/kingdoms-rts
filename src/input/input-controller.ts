@@ -40,6 +40,33 @@ export interface InputController {
 
 const PICK_RADIUS_PX = 40 // minimum tap target in screen pixels (finger-friendly)
 
+// --- Selection gesture tuning (touch, selection mode) ---
+// One finger must both pan the camera and draw a marquee; the conflict is
+// resolved by intent, not by a mode toggle:
+//   * a drag that STARTS on a friendly unit is a marquee (past the dead zone);
+//   * a QUICK drag anywhere else pans (past the pan threshold, before the
+//     hold window elapses);
+//   * a press HELD for HOLD_ARM_MS arms the marquee, so a deliberate slow
+//     drag boxes instead of panning;
+//   * releasing a held press on empty ground without dragging is an aborted
+//     marquee — never a move order.
+const DEAD_ZONE_PX = 10 // press slop: movement inside this starts nothing
+const PAN_THRESHOLD_PX = 16 // quick-drag distance that commits to a camera pan
+const HOLD_ARM_MS = 200 // press-and-hold that arms the marquee
+const LONG_PRESS_MS = 450 // press-and-hold on an own unit: select all of its kind on screen
+const DOUBLE_TAP_MS = 320 // second tap within this window on the same unit kind…
+const DOUBLE_TAP_RADIUS_PX = 40 // …and within this screen distance: select all of its kind on screen
+
+/** Unit kinds the player can select/order (buildings and nodes are not units). */
+function isUnitKind(kind: number): boolean {
+  return kind === KIND_WORKER || kind === KIND_MELEE || kind === KIND_RANGED
+}
+
+/** Event timestamp, coerced: synthetic events in tests may omit it. */
+function timeOf(e: PointerEvent): number {
+  return typeof e.timeStamp === 'number' ? e.timeStamp : 0
+}
+
 export interface PinchStep {
   /** Zoom multiplier: ratio of the new inter-pointer distance to the old. */
   factor: number
@@ -80,10 +107,14 @@ export function pinchStep(
 }
 
 /**
- * Pointer input: left-click selects, left-drag pans, wheel zooms,
- * two-finger drag pans and pinch zooms (touch), right-click issues smart
- * orders (move / attack / gather) to the selection.
- * Modes also allow left-click move/attack/gather for touch users.
+ * Pointer input: tap selects, right-click issues smart orders (move /
+ * attack / gather), two-finger drag pans and pinch zooms (touch), wheel
+ * zooms. One-finger gestures in selection mode are disambiguated by
+ * intent (see the tuning constants above): drag from a friendly unit or
+ * hold-then-drag draws a marquee box-select, a quick drag elsewhere pans
+ * the camera. Double-tap or long-press on a unit selects every unit of
+ * that kind currently on screen. Modes also allow left-click
+ * move/attack/gather for touch users.
  */
 export class InputControllerImpl implements InputController {
   private mode: InputMode = 'selection'
@@ -99,6 +130,17 @@ export class InputControllerImpl implements InputController {
    * final finger release that ends it is never misread as a tap.
    */
   private multiTouch = false
+  /** Press bookkeeping for the pending (undecided) single-pointer gesture. */
+  private downTime = 0
+  private downHit = -1
+  private downHitKind = -1
+  /** Long-press fired mid-press: the rest of this gesture is inert. */
+  private gestureConsumed = false
+  private longPressTimer: ReturnType<typeof setTimeout> | null = null
+  /** True once attach() bound real canvas listeners (enables the hold timer). */
+  private attached = false
+  /** Previous unit tap, for double-tap select-all-of-kind detection. */
+  private lastTap: { t: number; x: number; y: number; kind: number } | null = null
   private pendingBuilding: BuildingType | null = null
   private ghostPos: { x: number; z: number } | null = null
   private commandListener: ((cmd: Command) => void) | null = null
@@ -116,6 +158,10 @@ export class InputControllerImpl implements InputController {
     this.selected = []
     this.pendingBuilding = null
     this.ghostPos = null
+    this.lastTap = null
+    this.downHit = -1
+    this.downHitKind = -1
+    this.clearLongPressTimer()
   }
 
   setLocalTeam(team: 0 | 1): void {
@@ -129,6 +175,7 @@ export class InputControllerImpl implements InputController {
   attach(canvas: HTMLCanvasElement, world: World, renderer: Renderer): void {
     this.world = world
     this.renderer = renderer
+    this.attached = true
     canvas.addEventListener('pointerdown', (e) => this.onDown(e))
     canvas.addEventListener('pointermove', (e) => this.onMove(e))
     canvas.addEventListener('pointerup', (e) => this.onUp(e))
@@ -331,6 +378,21 @@ export class InputControllerImpl implements InputController {
       this.dragStart = { x: e.offsetX, y: e.offsetY, pointerType: e.pointerType }
       this.panning = false
       this.boxSelecting = false
+      this.gestureConsumed = false
+      this.downTime = timeOf(e)
+      this.downHit = -1
+      this.downHitKind = -1
+      // What did the press land on? Gesture intent (marquee-from-unit,
+      // long-press type-select) is decided from this, once, at press time.
+      if (this.mode === 'selection' && this.world && this.renderer) {
+        const p = this.renderer.screenToWorld(e.offsetX, e.offsetY)
+        const hit = this.entityAt(p.x, p.z, true)
+        if (hit !== -1) {
+          this.downHit = hit
+          this.downHitKind = this.world.kind[hit]
+        }
+      }
+      this.armLongPressTimer()
     } else {
       // Second finger: switch to a two-finger gesture (pan + pinch zoom),
       // cancel any box select, and latch it so the releases that end the
@@ -338,8 +400,50 @@ export class InputControllerImpl implements InputController {
       this.multiTouch = true
       this.boxSelecting = false
       this.panning = true
+      this.clearLongPressTimer()
       this.renderer?.setSelectionBox(null)
     }
+  }
+
+  private clearLongPressTimer(): void {
+    if (this.longPressTimer !== null) {
+      clearTimeout(this.longPressTimer)
+      this.longPressTimer = null
+    }
+  }
+
+  /**
+   * Long-press on an own unit selects all of its kind on screen. The timer
+   * fires while the finger is still down (production path, attach() only);
+   * onUp carries the same check by press duration so the behavior is
+   * identical headless. Fires at most once per press: it consumes the
+   * gesture, so the eventual release is inert.
+   */
+  private armLongPressTimer(): void {
+    this.clearLongPressTimer()
+    if (!this.attached) return
+    if (this.mode !== 'selection' || !this.isOwnUnit(this.downHit, this.downHitKind)) return
+    this.longPressTimer = setTimeout(() => {
+      this.longPressTimer = null
+      if (this.pointers.size !== 1 || this.gestureConsumed) return
+      if (this.panning || this.boxSelecting || this.mode !== 'selection') return
+      if (!this.isOwnUnit(this.downHit, this.downHitKind)) return
+      this.gestureConsumed = true
+      this.lastTap = null
+      this.selectAllOfKindOnScreen(this.downHitKind)
+    }, LONG_PRESS_MS)
+  }
+
+  /** Is `id` (with the kind recorded for it) still one of our units? */
+  private isOwnUnit(id: number, kind: number): boolean {
+    const world = this.world
+    return (
+      !!world &&
+      id >= 0 &&
+      isUnitKind(kind) &&
+      world.team[id] === this.localTeam &&
+      world.kind[id] === kind
+    )
   }
 
   private onMove(e: PointerEvent): void {
@@ -387,14 +491,11 @@ export class InputControllerImpl implements InputController {
     }
 
     if (!this.dragStart) return
+    if (this.gestureConsumed) return
     const dx = e.offsetX - this.dragStart.x
     const dy = e.offsetY - this.dragStart.y
     const dist = Math.hypot(dx, dy)
 
-    // In selection mode a drag becomes a box-select; otherwise it pans.
-    if (this.mode === 'selection' && !this.panning && dist > this.dragThreshold()) {
-      this.boxSelecting = true
-    }
     if (this.boxSelecting) {
       this.renderer.setSelectionBox({
         x0: this.dragStart.x,
@@ -404,11 +505,59 @@ export class InputControllerImpl implements InputController {
       })
       return
     }
-    if (!this.panning && dist > this.dragThreshold()) this.panning = true
     if (this.panning) {
       this.renderer.pan(mdx, mdy)
-      this.dragStart = { x: e.offsetX, y: e.offsetY, pointerType: this.dragStart?.pointerType ?? e.pointerType }
+      this.dragStart = { x: e.offsetX, y: e.offsetY, pointerType: this.dragStart.pointerType }
+      return
     }
+
+    // Gesture still PENDING (inside the dead zone, or held without
+    // committing): decide marquee vs pan exactly once, from intent.
+    if (this.mode === 'selection' && this.dragStart.pointerType !== 'touch') {
+      // Mouse/pen are precise: classic RTS — a drag is a marquee.
+      if (dist > this.dragThreshold()) this.startBox(e)
+      return
+    }
+    if (this.mode === 'selection') {
+      // Touch, one finger, selection mode:
+      //  - a drag starting on a friendly unit is a marquee;
+      //  - a press held past HOLD_ARM_MS has armed the marquee;
+      //  - anything quicker is a camera pan.
+      if (this.isOwnUnit(this.downHit, this.downHitKind) && dist > DEAD_ZONE_PX) {
+        this.startBox(e)
+        return
+      }
+      if (timeOf(e) - this.downTime >= HOLD_ARM_MS) {
+        this.startBox(e)
+        return
+      }
+      if (dist > PAN_THRESHOLD_PX) this.startPan(e, mdx, mdy)
+      return
+    }
+    // Non-selection modes: a drag pans (unchanged).
+    if (dist > this.dragThreshold()) this.startPan(e, mdx, mdy)
+  }
+
+  /** Commit the pending gesture to a marquee box-select. */
+  private startBox(e: PointerEvent): void {
+    if (!this.dragStart || !this.renderer) return
+    this.boxSelecting = true
+    this.clearLongPressTimer()
+    this.renderer.setSelectionBox({
+      x0: this.dragStart.x,
+      y0: this.dragStart.y,
+      x1: e.offsetX,
+      y1: e.offsetY,
+    })
+  }
+
+  /** Commit the pending gesture to a camera pan. */
+  private startPan(e: PointerEvent, mdx: number, mdy: number): void {
+    if (!this.dragStart || !this.renderer) return
+    this.panning = true
+    this.clearLongPressTimer()
+    this.renderer.pan(mdx, mdy)
+    this.dragStart = { x: e.offsetX, y: e.offsetY, pointerType: this.dragStart.pointerType }
   }
 
   /**
@@ -429,10 +578,18 @@ export class InputControllerImpl implements InputController {
 
     const wasBox = this.boxSelecting
     const wasPan = this.panning
+    const consumed = this.gestureConsumed
     const start = this.dragStart
+    const downTime = this.downTime
+    const downHit = this.downHit
+    const downHitKind = this.downHitKind
+    this.clearLongPressTimer()
     this.dragStart = null
     this.panning = false
     this.boxSelecting = false
+    this.gestureConsumed = false
+    this.downHit = -1
+    this.downHitKind = -1
     this.renderer?.setSelectionBox(null)
 
     // Another finger still down: ignore this release.
@@ -446,17 +603,44 @@ export class InputControllerImpl implements InputController {
       return
     }
 
+    // A long-press already fired mid-press and consumed this gesture.
+    if (consumed) return
+
     if (wasBox && start) {
       this.boxSelect(start.x, start.y, e.offsetX, e.offsetY)
       return
     }
     if (wasPan) return
 
+    // The press never became a pan or a marquee: it resolves as a tap, a
+    // long-press, or an aborted hold, by duration and what it landed on.
+    const now = timeOf(e)
+    if (this.mode === 'selection' && start) {
+      const duration = now - downTime
+      const drift = Math.hypot(e.offsetX - start.x, e.offsetY - start.y)
+      if (
+        duration >= LONG_PRESS_MS &&
+        drift <= DEAD_ZONE_PX * 2 &&
+        this.isOwnUnit(downHit, downHitKind)
+      ) {
+        // Long-press on a unit (release-path twin of the hold timer).
+        this.lastTap = null
+        this.selectAllOfKindOnScreen(downHitKind)
+        return
+      }
+      if (downHit === -1 && duration >= HOLD_ARM_MS) {
+        // Held on empty ground to arm a marquee, then released without
+        // dragging: an aborted marquee. NOT a tap — it must not turn
+        // into a move order or a deselect.
+        return
+      }
+    }
+
     // Tap.
     if (this.mode === 'selection') {
-      this.tapSelect(e.offsetX, e.offsetY)
+      this.tapSelect(e.offsetX, e.offsetY, now)
     } else if (this.selected.length === 0) {
-      this.tapSelect(e.offsetX, e.offsetY)
+      this.tapSelect(e.offsetX, e.offsetY, now)
     } else {
       this.modeOrder(e.offsetX, e.offsetY)
     }
@@ -472,10 +656,14 @@ export class InputControllerImpl implements InputController {
   private onCancel(e: PointerEvent): void {
     this.pointers.delete(e.pointerId)
     if (this.pointers.size > 0) return
+    this.clearLongPressTimer()
     this.dragStart = null
     this.panning = false
     this.boxSelecting = false
     this.multiTouch = false
+    this.gestureConsumed = false
+    this.downHit = -1
+    this.downHitKind = -1
     this.renderer?.setSelectionBox(null)
   }
 
@@ -485,7 +673,7 @@ export class InputControllerImpl implements InputController {
   }
 
   /** Tap: select entities for info/commands, or smart-order the selection. */
-  private tapSelect(sx: number, sy: number): void {
+  private tapSelect(sx: number, sy: number, now = 0): void {
     const world = this.world
     const renderer = this.renderer
     if (!world || !renderer) return
@@ -493,6 +681,7 @@ export class InputControllerImpl implements InputController {
     const hit = this.entityAt(p.x, p.z, true)
 
     if (hit === -1) {
+      if (now > 0) this.lastTap = null
       // Empty ground: order selected units, or deselect.
       if (this.hasUnitsSelected(world)) {
         this.smartOrder(sx, sy)
@@ -505,6 +694,16 @@ export class InputControllerImpl implements InputController {
 
     const isOwn = world.team[hit] === this.localTeam
     if (isOwn) {
+      // Double-tap on a unit: select every unit of that kind on screen.
+      // It deliberately replaces the tap-again-to-deselect toggle, but
+      // only inside the double-tap window — a slower second tap still
+      // toggles as before.
+      if (now > 0 && isUnitKind(world.kind[hit])) {
+        if (this.tryDoubleTap(now, sx, sy, world.kind[hit])) return
+        this.lastTap = { t: now, x: sx, y: sy, kind: world.kind[hit] }
+      } else if (now > 0) {
+        this.lastTap = null
+      }
       // Own entity: select it; tapping the sole selection deselects.
       if (this.selected.length === 1 && this.selected[0] === hit) {
         this.selected = []
@@ -519,6 +718,7 @@ export class InputControllerImpl implements InputController {
 
     // Enemy or resource: if we have units selected, smart-order (attack/gather).
     // Otherwise select it for info viewing.
+    if (now > 0) this.lastTap = null
     if (this.hasUnitsSelected(world)) {
       this.smartOrder(sx, sy)
     } else {
@@ -556,6 +756,51 @@ export class InputControllerImpl implements InputController {
     })
     this.selected = inside
     renderer.setSelection(this.selected)
+  }
+
+  /**
+   * Double-tap check: the previous tap hit a unit of the same kind,
+   * recently, and nearby on screen. On a match, select all of that kind
+   * on screen and consume the tap chain.
+   */
+  private tryDoubleTap(now: number, sx: number, sy: number, kind: number): boolean {
+    const lt = this.lastTap
+    if (!lt || lt.kind !== kind) return false
+    if (now - lt.t > DOUBLE_TAP_MS) return false
+    if (Math.hypot(sx - lt.x, sy - lt.y) > DOUBLE_TAP_RADIUS_PX) return false
+    this.lastTap = null
+    this.selectAllOfKindOnScreen(kind)
+    return true
+  }
+
+  /**
+   * Select every own unit of `kind` inside the camera's current view
+   * (double-tap / long-press on a unit). "On screen" is the renderer's
+   * visible world rectangle — units a screen-edge away are excluded even
+   * if they are the same kind.
+   */
+  private selectAllOfKindOnScreen(kind: number): void {
+    const world = this.world
+    const renderer = this.renderer
+    if (!world || !renderer) return
+    const size = renderer.getCssSize()
+    const a = renderer.screenToWorld(0, 0)
+    const b = renderer.screenToWorld(size.w, size.h)
+    const minX = Math.min(a.x, b.x)
+    const maxX = Math.max(a.x, b.x)
+    const minZ = Math.min(a.z, b.z)
+    const maxZ = Math.max(a.z, b.z)
+    const picked: number[] = []
+    world.spatialHash.forEachInRect(minX, minZ, maxX, maxZ, (id) => {
+      if (world.team[id] !== this.localTeam || world.kind[id] !== kind) return
+      const x = world.positionX[id]
+      const z = world.positionZ[id]
+      if (x >= minX && x <= maxX && z >= minZ && z <= maxZ) picked.push(id)
+    })
+    if (picked.length === 0) return
+    this.selected = picked
+    renderer.setSelection(this.selected)
+    sfx.select()
   }
 
   private hasUnitsSelected(world: World): boolean {

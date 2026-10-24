@@ -75,6 +75,24 @@ function buildingLabel(kind: number): string {
   return '?'
 }
 
+type CmdFn = (label: string, fn: () => void, disabled?: boolean, sub?: string) => void
+
+/**
+ * The worker Build sub-menu buttons (build options + Back), shared by the
+ * single-worker card and the all-worker group card so the two can never
+ * drift apart.
+ */
+function appendBuildButtons(cmd: CmdFn, world: World, cb: CommandCardCallbacks): void {
+  for (const btype of PLAYER_BUILDABLE) {
+    // Undead raise no farms — Soul-Ash feeds their supply cap.
+    if (btype === 'farm' && world.factionOfTeam[TEAM_PLAYER] === 'undead') continue
+    const bdef = BUILDINGS[btype]
+    const afford = canAfford(world, TEAM_PLAYER, btype)
+    cmd(bdef.name, () => cb.onBuildType(btype), !afford, `${bdef.cost.gold}g ${bdef.cost.wood}w`)
+  }
+  cmd('◀ Back', () => cb.onToggleBuild?.())
+}
+
 /**
  * Render a command card into `el` for the given selection.
  * Returns true if a card was rendered, false for empty selection.
@@ -84,6 +102,10 @@ function buildingLabel(kind: number): string {
  * single row of unit-specific command buttons. For workers, Build is an
  * expander: `opts.buildOpen` swaps the command row for the build options
  * (plus Back) in the same dashboard space.
+ *
+ * A multi-unit selection of own units renders the GROUP card instead
+ * (counts by class, aggregate HP, union command row) — see
+ * renderGroupCard. Single-selection rendering is unchanged.
  */
 export function renderCommandCard(
   el: HTMLElement,
@@ -94,6 +116,17 @@ export function renderCommandCard(
 ): boolean {
   el.innerHTML = ''
   if (selected.length === 0) return false
+
+  if (selected.length > 1) {
+    const allOwnUnits = selected.every((sid) => {
+      const k = world.kind[sid]
+      return (
+        world.team[sid] === TEAM_PLAYER &&
+        (k === KIND_WORKER || k === KIND_MELEE || k === KIND_RANGED)
+      )
+    })
+    if (allOwnUnits) return renderGroupCard(el, world, selected, cb, opts)
+  }
 
   const id = selected[0]
   const kind = world.kind[id]
@@ -222,14 +255,7 @@ export function renderCommandCard(
       if (kind === KIND_WORKER && opts?.buildOpen && cb.onToggleBuild) {
         // Build sub-menu: the build options replace the command row inside
         // the same dashboard space (never a second stacked panel).
-        for (const btype of PLAYER_BUILDABLE) {
-          // Undead raise no farms — Soul-Ash feeds their supply cap.
-          if (btype === 'farm' && world.factionOfTeam[TEAM_PLAYER] === 'undead') continue
-          const bdef = BUILDINGS[btype]
-          const afford = canAfford(world, TEAM_PLAYER, btype)
-          cmd(bdef.name, () => cb.onBuildType(btype), !afford, `${bdef.cost.gold}g ${bdef.cost.wood}w`)
-        }
-        cmd('◀ Back', () => cb.onToggleBuild?.())
+        appendBuildButtons(cmd, world, cb)
       } else {
         cmd('Move', () => cb.onMode('move'))
         cmd('Attack', () => cb.onMode('attack'))
@@ -326,6 +352,133 @@ export function renderCommandCard(
 
     if (grid.children.length > 0) card.appendChild(grid)
   }
+
+  el.appendChild(card)
+  return true
+}
+
+/**
+ * Group card for a multi-unit selection (marquee, idle-workers, or
+ * type-select): same dashboard footprint as the single card — identity
+ * row, one stat line, one command row — but the identity is the GROUP:
+ * unit count, per-class counts with faction names, and an aggregate HP
+ * bar (sum over the group, so it visibly drains as the group takes
+ * damage). The command row is the union of what the group's classes can
+ * do — Move/Attack/Stop for everyone, Gather when any worker is in the
+ * group, Patrol/Hold when any military is — and every button drives the
+ * EXISTING whole-selection order paths (input modes, stop, hold), so a
+ * group order fans out through the same order types as a single order.
+ * An all-worker group also keeps the Build ▸ expander, preserving the
+ * idle-workers → build flow.
+ */
+function renderGroupCard(
+  el: HTMLElement,
+  world: World,
+  selected: number[],
+  cb: CommandCardCallbacks,
+  opts?: { buildOpen?: boolean },
+): boolean {
+  const counts = new Map<number, number>()
+  let hpSum = 0
+  let maxSum = 0
+  for (const sid of selected) {
+    counts.set(world.kind[sid], (counts.get(world.kind[sid]) ?? 0) + 1)
+    hpSum += Math.max(0, Math.floor(world.health[sid]))
+    maxSum += Math.floor(world.maxHealth[sid])
+  }
+  const nWorkers = counts.get(KIND_WORKER) ?? 0
+  const nMelee = counts.get(KIND_MELEE) ?? 0
+  const nRanged = counts.get(KIND_RANGED) ?? 0
+  const anyMilitary = nMelee + nRanged > 0
+  const allWorkers = nWorkers === selected.length
+
+  const card = document.createElement('div')
+  card.className = 'cmd-card'
+  card.style.pointerEvents = 'auto'
+
+  // --- Header: group chip + count + aggregate HP ---
+  const header = document.createElement('div')
+  header.className = 'cmd-header'
+  const portrait = document.createElement('div')
+  portrait.className = 'cmd-portrait'
+  portrait.style.background = factionColor(world, selected[0])
+  portrait.textContent = '👥'
+  header.appendChild(portrait)
+
+  const titleWrap = document.createElement('div')
+  titleWrap.className = 'cmd-title-wrap'
+  const title = document.createElement('div')
+  title.className = 'cmd-title'
+  title.textContent = `${selected.length} units`
+  titleWrap.appendChild(title)
+
+  const hpWrap = document.createElement('div')
+  hpWrap.className = 'cmd-hpbar'
+  const hpFill = document.createElement('div')
+  hpFill.className = 'cmd-hpfill'
+  const ratio = maxSum > 0 ? hpSum / maxSum : 0
+  hpFill.style.width = `${ratio * 100}%`
+  hpFill.style.background = ratio > 0.5 ? '#4ade80' : ratio > 0.25 ? '#facc15' : '#ef4444'
+  hpWrap.appendChild(hpFill)
+  const hpText = document.createElement('div')
+  hpText.className = 'cmd-hptext'
+  hpText.textContent = `${hpSum}/${maxSum}`
+  titleWrap.appendChild(hpWrap)
+  titleWrap.appendChild(hpText)
+  header.appendChild(titleWrap)
+  card.appendChild(header)
+
+  // --- Stat line: counts by class, faction names ---
+  const classParts: string[] = []
+  for (const [kind, n] of [
+    [KIND_WORKER, nWorkers],
+    [KIND_MELEE, nMelee],
+    [KIND_RANGED, nRanged],
+  ] as const) {
+    if (n === 0) continue
+    const utype = unitKindToType(kind)
+    if (utype) classParts.push(`${n} ${factionUnitName(world, TEAM_PLAYER, utype)}`)
+  }
+  const line = document.createElement('div')
+  line.className = 'cmd-statline'
+  line.textContent = classParts.join(' · ')
+  card.appendChild(line)
+
+  // --- Command row: the union of the group's class commands ---
+  const grid = document.createElement('div')
+  grid.className = 'cmd-grid'
+  const cmd: CmdFn = (label, fn, disabled = false, sub) => {
+    const btn = document.createElement('button')
+    btn.className = 'cmd-btn'
+    btn.disabled = disabled
+    const lbl = document.createElement('span')
+    lbl.className = 'cmd-btn-label'
+    lbl.textContent = label
+    btn.appendChild(lbl)
+    if (sub) {
+      const s = document.createElement('span')
+      s.className = 'cmd-btn-sub'
+      s.textContent = sub
+      btn.appendChild(s)
+    }
+    btn.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); fn() })
+    grid.appendChild(btn)
+  }
+
+  if (allWorkers && opts?.buildOpen && cb.onToggleBuild) {
+    appendBuildButtons(cmd, world, cb)
+  } else {
+    cmd('Move', () => cb.onMode('move'))
+    cmd('Attack', () => cb.onMode('attack'))
+    cmd('Stop', () => cb.onStop())
+    if (nWorkers > 0) cmd('Gather', () => cb.onMode('gather'))
+    if (anyMilitary) {
+      cmd('Patrol', () => cb.onMode('patrol'))
+      cmd('Hold', () => cb.onHold())
+    }
+    if (allWorkers && cb.onToggleBuild) cmd('Build ▸', () => cb.onToggleBuild?.())
+  }
+  card.appendChild(grid)
 
   el.appendChild(card)
   return true
