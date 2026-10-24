@@ -78,7 +78,11 @@ export class MovementSystemImpl implements System {
 /** Order any unit to a point on the map. */
 /**
  * Stop a unit: cancel movement, attacks, and other orders.
- * Workers keep HARVEST_OFF (hold position); use Gather to re-arm.
+ * Workers also disarm auto-gather (HARVEST_OFF — the same mechanism an
+ * explicit move order uses), so a stopped worker STAYS stopped instead of
+ * walking straight back to a node on the next tick. A worker carrying
+ * resources still walks home to deliver first (the gather FSM returns
+ * carried loads before idling), then holds position until ordered.
  */
 export function orderStop(world: World, id: number): void {
   world.moving[id] = 0
@@ -86,6 +90,7 @@ export function orderStop(world: World, id: number): void {
   world.velocityZ[id] = 0
   world.targetId[id] = NO_TARGET
   world.state[id] = STATE_IDLE
+  if (world.kind[id] === KIND_WORKER) world.harvestKind[id] = HARVEST_OFF
 }
 
 export function orderMove(world: World, id: number, x: number, z: number): void {

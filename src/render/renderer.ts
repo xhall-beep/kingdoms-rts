@@ -14,6 +14,8 @@ import {
   KIND_TREANT,
   KIND_WORKER,
   KIND_TOWER,
+  STATE_IDLE,
+  HARVEST_OFF,
 } from '../core/World'
 import { FOG_UNEXPLORED, FOG_VISIBLE } from '../world/fog.ts'
 import { getSprite } from './sprites.ts'
@@ -21,6 +23,22 @@ import type { FogGrid } from '../world/fog.ts'
 import { canSee } from '../world/visibility.ts'
 
 const css = (hex: number): string => `#${hex.toString(16).padStart(6, '0')}`
+
+/**
+ * Held-worker ("statue") condition, shared by the renderer marker and the
+ * toolbar pulse: a worker that is idle, has auto-gather disarmed
+ * (HARVEST_OFF — set by an explicit move order or by Stop), and carries
+ * nothing. Such a worker will NEVER re-task itself: without a marker it
+ * reads as frozen. Render-only; the sim never consults this.
+ */
+export function isHeldWorker(world: World, id: number): boolean {
+  return (
+    world.kind[id] === KIND_WORKER &&
+    world.state[id] === STATE_IDLE &&
+    world.harvestKind[id] === HARVEST_OFF &&
+    world.carryAmount[id] === 0
+  )
+}
 
 /** Sprite key per entity kind (Human faction). Null = procedural. */
 const SPRITE_FOR_KIND: Record<number, string | null> = {
@@ -304,6 +322,13 @@ export class Renderer {
     for (const id of world.entities.keys()) {
       if (!canSee(world, team, id)) continue
       this.drawEntity(world, id)
+    }
+    // SECOND PASS — held-worker ⏸ markers, after every entity (and every
+    // selection ring) has been drawn, so no ring stroke can overpaint any
+    // marker. Same visibility rule as the entity loop.
+    for (const id of world.entities.keys()) {
+      if (!canSee(world, team, id)) continue
+      this.drawHeldMarker(world, id)
     }
     this.drawFog(world, team)
     this.drawSelectionBox()
@@ -768,6 +793,34 @@ export class Renderer {
       this.ctx.arc(p.x, p.y, r + 4, 0, Math.PI * 2)
       this.ctx.stroke()
     }
+
+    // Held-worker ⏸ markers are NOT drawn here: they get their own second
+    // pass after the entity loop (see render()), because a later-drawn
+    // entity's selection-ring stroke overpainted an earlier held worker's
+    // marker when the two clustered — only one of two markers survived.
+  }
+
+  /**
+   * Held-worker marker: a statue (idle + auto-gather disarmed + empty
+   * hands) will never re-task itself — without a marker it reads as
+   * frozen. Amber ⏸ above the unit, own team only (same precedent as
+   * the low-HP pulse: no intel leak about enemy idles). Drawn in its own
+   * pass after the entity loop so no selection ring can overpaint it.
+   */
+  private drawHeldMarker(world: World, id: number): void {
+    if (world.team[id] !== this.viewTeam || !isHeldWorker(world, id)) return
+    const p = this.toScreen(world.positionX[id], world.positionZ[id])
+    const r = Math.max(5, world.radius[id] * this.zoom)
+    this.ctx.save()
+    this.ctx.font = `bold ${Math.max(11, Math.round(r))}px sans-serif`
+    this.ctx.textAlign = 'center'
+    this.ctx.textBaseline = 'middle'
+    this.ctx.lineWidth = 3
+    this.ctx.strokeStyle = 'rgba(0,0,0,0.75)'
+    this.ctx.strokeText('⏸', p.x, p.y - r - 18)
+    this.ctx.fillStyle = '#f5c542'
+    this.ctx.fillText('⏸', p.x, p.y - r - 18)
+    this.ctx.restore()
   }
 
   private drawFog(world: World, team: 0 | 1): void {

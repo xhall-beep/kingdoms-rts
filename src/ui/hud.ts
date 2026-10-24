@@ -6,7 +6,7 @@ import type { BuildingType } from '../data/buildings.ts'
 import type { UnitType } from '../data/units.ts'
 import type { AIDifficulty, AIPersonality } from '../ai/opponent.ts'
 import type { AiPracticeTier } from '../net/pvp-ai.ts'
-import type { InputMode } from '../input/input-controller'
+import type { InputMode, GestureMode } from '../input/input-controller'
 import type { World } from '../core/World'
 import {
   KIND_ARCHERY,
@@ -19,12 +19,17 @@ import {
 import { BUILDING_TYPE_BY_KIND } from '../world/construction.ts'
 import { renderCommandCard } from './command-card.ts'
 import { BUILD_STAMP_LABEL } from '../build-stamp.ts'
+import { isHeldWorker } from '../render/renderer.ts'
 
 export interface Hud {
   render(world: World): void
   setPvpActive(active: boolean): void
   /** Match-phase status line (reconnect grace, resync); null hides it. */
   setPvpStatus(msg: string | null): void
+  /** Armed order mode (Cancel button visibility); synced via mode listener. */
+  setInputMode(mode: InputMode): void
+  /** Toolbar drag-intent toggle state (Move / Select). */
+  setGestureMode(mode: GestureMode): void
 }
 
 export interface HudCallbacks {
@@ -39,6 +44,12 @@ export interface HudCallbacks {
   onLocateBase(): void
   onStop(): void
   onHold(): void
+  /** Toolbar drag-intent toggle: Move (drag pans) / Select (drag boxes). */
+  onGestureMode(mode: GestureMode): void
+  /** ✕ in the toolbar: clear the selection and disarm any armed mode. */
+  onDeselect(): void
+  /** Cancel in the toolbar: disarm the armed order mode, keep selection. */
+  onCancelMode(): void
   onMilitia(): void
   onUpgrade(): void
   onWarHorn(rally: 1 | 2 | 3): void
@@ -62,12 +73,14 @@ export interface HudCallbacks {
  * DOM HUD (decluttered layout): ONE translucent top strip (resources + VP
  * read-only, ❓ Help, ☰ menu; the ⏸ pause button mounts itself into the
  * strip), a dropdown menu for session controls, and an ALWAYS-ON bottom
- * dashboard. The dashboard idles at ≤56px (Idle Workers / Base / building
- * quick-select); when a selection exists it expands IN PLACE into the
- * unit/building command dashboard (rendered by command-card.ts) — there
- * is no floating selection card anywhere else. mount() builds the
- * elements once; update() refreshes values and the dashboard every frame
- * from the current selection.
+ * toolbar (Playtest fixes v1: the thin idle strip replaced by a robust
+ * game-styled bar — drag-intent toggle Move/Select, Idle Workers,
+ * Base, ✕ deselect, Cancel — plus a slim info row with Workers/Army and
+ * the building quick-select). When a selection exists, the unit/building
+ * command dashboard (rendered by command-card.ts) appears ABOVE the
+ * toolbar — there is no floating selection card anywhere else. mount()
+ * builds the elements once; update() refreshes values and the dashboard
+ * every frame from the current selection.
  */
 export class HudImpl implements Hud {
   private goldEl: HTMLElement | null = null
@@ -86,6 +99,13 @@ export class HudImpl implements Hud {
   private lastSelectionKey = ''
   private buildOpen = false
   private pvpLobby: PvPLobby | null = null
+  /** Armed order mode, synced from the input controller (Cancel visibility). */
+  private inputMode: InputMode = 'selection'
+  private modeMoveBtn: HTMLElement | null = null
+  private modeSelectBtn: HTMLElement | null = null
+  private deselectBtn: HTMLElement | null = null
+  private cancelBtn: HTMLElement | null = null
+  private idleBtn: HTMLElement | null = null
 
   mount(parent: HTMLElement, callbacks?: HudCallbacks): void {
     this.callbacks = callbacks ?? null
@@ -129,13 +149,23 @@ export class HudImpl implements Hud {
         </div>
       </div>
       <div class="hud-dash" id="hud-dash">
-        <div class="hud-dash-idle" id="hud-dash-idle">
-          <button class="hud-pill hud-action" id="hud-idle">Idle Workers</button>
-          <button class="hud-pill hud-action" id="hud-locate" title="Jump camera back to your base">⌂ Base</button>
-          <span class="hud-dash-army" id="hud-info-army"></span>
-          <div class="hud-buildings" id="hud-buildings"></div>
-        </div>
         <div class="hud-actions" id="hud-actions"></div>
+        <div class="hud-toolbar" id="hud-toolbar">
+          <div class="tb-row-main">
+            <div class="tb-mode" role="group" aria-label="Drag mode">
+              <button class="tb-btn tb-mode-btn tb-mode-on" id="hud-mode-move" title="Drag pans the camera">✋ Move</button>
+              <button class="tb-btn tb-mode-btn" id="hud-mode-select" title="Any drag draws a selection box">▦ Select</button>
+            </div>
+            <button class="tb-btn" id="hud-idle">👷 Idle Workers</button>
+            <button class="tb-btn" id="hud-locate" title="Jump camera back to your base">⌂ Base</button>
+            <button class="tb-btn tb-danger" id="hud-deselect" hidden title="Clear the selection">✕</button>
+            <button class="tb-btn tb-cancel" id="hud-cancel-mode" hidden title="Back out of the current order without issuing it">Cancel</button>
+          </div>
+          <div class="tb-row-info">
+            <span class="hud-dash-army" id="hud-info-army"></span>
+            <div class="hud-buildings" id="hud-buildings"></div>
+          </div>
+        </div>
       </div>
       <div class="hud-banner" id="hud-banner" hidden></div>
       <div class="hud-pvp-status" id="hud-pvp-status" hidden></div>
@@ -144,11 +174,11 @@ export class HudImpl implements Hud {
         <button class="hud-tutorial-x" id="hud-tutorial-x" aria-label="Close help">✕</button>
         <h2>How to Play</h2>
         <p><b>Tap</b> your unit or building to select it.</p>
-        <p><b>Tap</b> again to deselect.</p>
+        <p><b>Tap</b> again to deselect, or tap <b>✕</b> in the toolbar to clear any selection.</p>
         <p>With units selected: <b>tap ground</b> to move, <b>tap enemy</b> to attack, <b>tap trees/gold</b> to gather.</p>
-        <p><b>Drag</b> to pan. <b>Hold, then drag</b> — or drag starting on a unit — to box-select.</p>
+        <p><b>Drag</b> pans in <b>✋ Move</b> mode. Switch to <b>▦ Select</b> mode (toolbar, bottom) and any drag draws a selection box. <b>Pinch</b> zooms in both modes.</p>
         <p><b>Double-tap</b> or <b>long-press</b> a unit to select all of its type on screen.</p>
-        <p><b>Two-finger drag</b> to pan. <b>Pinch</b> to zoom.</p>
+        <p><b>Cancel</b> backs out of placing a building or an armed Move/Attack/Gather order without issuing it. <b>Stop</b> halts a unit — it delivers what it carries, then waits for you.</p>
         <p>Use the <b>menu</b> to build, train, save, and pick factions.</p>
         <button id="hud-tutorial-close">Got it!</button>
       </div>
@@ -162,9 +192,25 @@ export class HudImpl implements Hud {
     this.actionsEl = parent.querySelector('#hud-actions')
     this.buildingsEl = parent.querySelector('#hud-buildings')
     const idleBtn = parent.querySelector('#hud-idle')
+    this.idleBtn = idleBtn as HTMLElement | null
     if (idleBtn) idleBtn.addEventListener('click', () => this.callbacks?.onSelectIdleWorkers())
     const locateBtn = parent.querySelector('#hud-locate')
     if (locateBtn) locateBtn.addEventListener('click', () => this.callbacks?.onLocateBase())
+    // Toolbar: drag-intent toggle, ✕ deselect, Cancel. The toggle is the
+    // explicit answer to "will this drag pan or box?" — its active state
+    // is visible at all times, in both the idle and selection states.
+    this.modeMoveBtn = parent.querySelector('#hud-mode-move')
+    this.modeSelectBtn = parent.querySelector('#hud-mode-select')
+    this.deselectBtn = parent.querySelector('#hud-deselect')
+    this.cancelBtn = parent.querySelector('#hud-cancel-mode')
+    this.modeMoveBtn?.addEventListener('click', () => this.callbacks?.onGestureMode('move'))
+    this.modeSelectBtn?.addEventListener('click', () => this.callbacks?.onGestureMode('select'))
+    this.deselectBtn?.addEventListener('click', () => {
+      this.buildOpen = false
+      this.lastActionsKey = ''
+      this.callbacks?.onDeselect()
+    })
+    this.cancelBtn?.addEventListener('click', () => this.callbacks?.onCancelMode())
     this.bannerEl = parent.querySelector('#hud-banner')
     // How to Play overlay: ON DEMAND ONLY — it never appears on load, flag
     // or no flag; the ❓ Help button is the only way in. Auto-showing it on
@@ -403,8 +449,22 @@ export class HudImpl implements Hud {
     if (!active) this.setPvpStatus(null)
   }
 
-  /** Match-phase status line; separate from the banner so the per-frame
-   *  updateBanner() (victory/defeat) never clobbers it. */
+  /** Armed order mode, synced from the input controller's mode listener. */
+  setInputMode(mode: InputMode): void {
+    this.inputMode = mode
+    this.refreshToolbarButtons()
+  }
+
+  /** Toolbar drag-intent toggle state (Move / Select). */
+  setGestureMode(mode: GestureMode): void {
+    this.modeMoveBtn?.classList.toggle('tb-mode-on', mode === 'move')
+    this.modeSelectBtn?.classList.toggle('tb-mode-on', mode === 'select')
+  }
+
+  /** ✕ shows iff something is selected; Cancel iff an order mode is armed. */
+  private refreshToolbarButtons(): void {
+    if (this.cancelBtn) this.cancelBtn.hidden = this.inputMode === 'selection'
+  }
   setPvpStatus(msg: string | null): void {    const el = document.querySelector<HTMLElement>('#hud-pvp-status')
     if (!el) return
     if (msg === null) {
@@ -427,27 +487,36 @@ export class HudImpl implements Hud {
     // Workers/Army (they no longer earn a second strip row).
     let workers = 0
     let army = 0
+    let statues = 0
     for (const id of world.entities.keys()) {
       if (world.team[id] !== TEAM_PLAYER) continue
-      if (world.kind[id] === KIND_WORKER) workers += 1
-      else if (world.kind[id] <= 2) army += 1
+      if (world.kind[id] === KIND_WORKER) {
+        workers += 1
+        if (isHeldWorker(world, id)) statues += 1
+      } else if (world.kind[id] <= 2) army += 1
     }
+    // Statues exist: pulse the Idle Workers button. It already selects
+    // exactly these workers (STATE_IDLE + empty hands), so recovery is one
+    // discoverable tap away — tap it, then Gather, and the squad works.
+    this.idleBtn?.classList.toggle('tb-pulse', statues > 0)
     if (this.infoEl) {
-      // Victory Points.
-      let text = `VP ${Math.ceil(world.victoryPoints[TEAM_PLAYER])}`
+      // Top strip carries VP only now: the old combined string (VP + Soul-Ash
+      // + horn charge) ellipsized into uselessness ("VP 1…") on a 412px
+      // phone. The extras live in the toolbar info row, where they fit.
+      this.infoEl.textContent = `VP ${Math.ceil(world.victoryPoints[TEAM_PLAYER])}`
+    }
+    if (this.armyEl) {
+      let armyText = `Workers ${workers} · Army ${army}`
       // Undead economy: show harvested Soul-Ash feeding the supply cap.
       if (world.factionOfTeam[TEAM_PLAYER] === 'undead') {
-        text += ` · ☠ ${world.soulAsh[TEAM_PLAYER]}`
+        armyText += ` · ☠ ${world.soulAsh[TEAM_PLAYER]}`
       }
       // War Horn charge.
       const charge = Math.floor(world.warCharge[TEAM_PLAYER])
       if (charge > 0 || (world.rallyKind[TEAM_PLAYER] !== 0 && world.rallyUntil[TEAM_PLAYER] > world.matchTime)) {
-        text += ` · 📯 ${charge}`
+        armyText += ` · 📯 ${charge}`
       }
-      this.infoEl.textContent = text
-    }
-    if (this.armyEl) {
-      this.armyEl.textContent = `Workers ${workers} · Army ${army}`
+      this.armyEl.textContent = armyText
     }
     this.updateActions(world, selected)
     this.updateBuildings(world)
@@ -518,10 +587,13 @@ export class HudImpl implements Hud {
         this.lastActionsKey = ''
       },
     }, { buildOpen: this.buildOpen })
-    // The dashboard expands in place: while the tray is shown, the idle
-    // row is hidden by CSS (.hud-dash-expanded), so the tray REPLACES the
-    // idle bar's space instead of stacking on top of it.
+    // The dashboard expands in place: while the tray is shown, the tray
+    // sits ABOVE the always-visible toolbar (never stacked under it).
     if (this.dashEl) this.dashEl.classList.toggle('hud-dash-expanded', shown)
+    // ✕ deselect lives in the toolbar and follows the selection exactly.
+    if (this.deselectBtn) this.deselectBtn.hidden = selected.length === 0
+    // Cancel follows the armed mode (also refreshed by setInputMode).
+    if (this.cancelBtn) this.cancelBtn.hidden = this.inputMode === 'selection'
   }
 
   private updateBanner(world: World): void {

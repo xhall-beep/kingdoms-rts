@@ -360,8 +360,8 @@ code {
 .hud-strip {
   height: 44px;
   min-height: 44px;
-  padding: 0 4px 0 8px;
-  gap: 6px;
+  padding: 0 2px 0 6px;
+  gap: 4px;
   flex-wrap: nowrap;
   background: rgba(10, 26, 26, 0.55);
   border-bottom: 1px solid rgba(255, 243, 212, 0.12);
@@ -373,7 +373,7 @@ code {
 .hud-strip-stats {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -381,7 +381,7 @@ code {
 
 .hud-stat {
   color: #fff3d4;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
   flex: 0 0 auto;
@@ -407,7 +407,7 @@ code {
   color: #fff3d4;
   font-size: 18px;
   line-height: 1;
-  min-width: 44px;
+  min-width: 40px;
   min-height: 44px;
   padding: 0;
   display: flex;
@@ -431,7 +431,7 @@ code {
 .hud-strip .hud-pause-btn {
   order: 4;
   flex: 0 0 auto;
-  min-width: 44px;
+  min-width: 40px;
   min-height: 44px;
   margin: 0;
   padding: 0;
@@ -456,24 +456,140 @@ code {
   border-radius: 8px;
 }
 
-/* Bottom dashboard: idle row is persistent; the selection tray replaces
- * it in place while a selection exists (never stacks above it). */
+/* Bottom toolbar (Playtest fixes v1): a persistent, game-styled bar that
+ * REPLACES the thin idle strip. Persistent budget (412x915, measured
+ * headless DOM geometry): top strip 45px + toolbar 92px = 137px ≈ 15.0%
+ * of viewport height — OVER the old 12% budget, deliberately and
+ * reported, not hidden: Montz asked for a robust toolbar instead of the
+ * narrow bar, and the trade is his call. The selection card above the
+ * toolbar (136px measured) is contextual, not persistent; expanded
+ * total is 273px ≈ 29.8%. */
 .hud-dash {
   margin-top: auto;
 }
 
-.hud-dash-idle {
+.hud-toolbar {
+  background: linear-gradient(rgba(28, 46, 38, 0.96), rgba(10, 26, 26, 0.96));
+  border-top: 2px solid rgba(245, 197, 66, 0.45);
+  /* 6px sides (was 8px): with ✕ AND Cancel both visible the main row
+   * measured ~448px against a 412px viewport, hiding most of Cancel.
+   * Together with the tighter gaps/padding below, the armed+selection
+   * row now fits inside 412px with both buttons fully on screen.
+   * overflow-x stays as a backstop only — the default state must not
+   * need scrolling. Touch height (52px min) is untouched. */
+  padding: 6px 6px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tb-row-main {
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  /* Safety net: if a future button ever widens the row past 412px, it
+   * scrolls instead of clipping the ✕/Cancel off the right edge. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tb-row-main::-webkit-scrollbar {
+  display: none;
+}
+
+.tb-row-info {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 56px;
-  padding: 0 10px;
-  background: rgba(10, 26, 26, 0.62);
-  border-top: 1px solid rgba(255, 243, 212, 0.12);
+  min-height: 24px;
+  overflow: hidden;
 }
 
-.hud-dash-expanded .hud-dash-idle {
+.tb-btn {
+  pointer-events: auto;
+  cursor: pointer;
+  min-height: 52px;
+  padding: 6px 4px;
+  border-radius: 10px;
+  border: 2px solid rgba(245, 197, 66, 0.35);
+  background: #143c32;
+  color: #fff3d4;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.tb-btn:active {
+  background: #1f5a4c;
+}
+
+/* Segmented drag-intent toggle: the active mode is unmissable (gold). */
+.tb-mode {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.tb-mode-btn {
+  border-radius: 0;
+  min-width: 0;
+}
+
+.tb-mode-btn:first-child {
+  border-radius: 10px 0 0 10px;
+  border-right-width: 1px;
+}
+
+.tb-mode-btn:last-child {
+  border-radius: 0 10px 10px 0;
+  border-left-width: 1px;
+}
+
+.tb-mode-on {
+  background: #f5c542;
+  color: #102b2b;
+  border-color: #f5c542;
+}
+
+.tb-danger {
+  background: #5b1f1f;
+  border-color: rgba(239, 68, 68, 0.5);
+  min-width: 40px;
+  font-size: 18px;
+}
+
+.tb-cancel {
+  background: #3a2a12;
+  border-color: rgba(245, 197, 66, 0.6);
+  flex: 0 0 auto;
+}
+
+.tb-btn[hidden] {
   display: none;
+}
+
+/* Idle Workers pulses while held workers ("statues") exist: the button
+ * already selects exactly those workers, so the pulse is the recovery
+ * path advertising itself. */
+@keyframes tb-pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 197, 66, 0); }
+  50% { box-shadow: 0 0 12px 2px rgba(245, 197, 66, 0.75); }
+}
+
+.tb-pulse {
+  animation: tb-pulse-glow 1.6s ease-in-out infinite;
+  border-color: #f5c542;
+}
+
+/* Building quick-select pills shrink to fit the toolbar info row. */
+.tb-row-info .hud-building {
+  font-size: 11px;
+  padding: 2px 8px;
+  min-height: 0;
 }
 
 .hud-dash-army {
@@ -652,15 +768,15 @@ code {
 .hud-tutorial[hidden]{display:none}
 .hud-tutorial-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:99;pointer-events:auto}
 .hud-tutorial-backdrop[hidden]{display:none}
-.hud-build-stamp{position:fixed;right:6px;bottom:62px;z-index:5;pointer-events:none;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10px;line-height:1.2;color:rgba(255,243,212,0.38);letter-spacing:0.02em}
+.hud-build-stamp{position:fixed;right:6px;bottom:90px;z-index:5;pointer-events:none;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10px;line-height:1.2;color:rgba(255,243,212,0.38);letter-spacing:0.02em}
 .hud-tutorial h2{margin:0 0 12px;color:#f5c542}
 .hud-tutorial p{margin:8px 0;font-size:14px;line-height:1.4}
 .hud-tutorial button{margin-top:12px;min-height:44px;padding:8px 24px;font:inherit;font-weight:700;background:#f5c542;color:#102b2b;border:none;border-radius:8px;cursor:pointer}
 .hud-tutorial .hud-tutorial-x{position:absolute;top:6px;right:6px;margin:0;min-height:44px;min-width:44px;padding:4px 10px;background:transparent;color:#f5c542;font-size:20px;line-height:1}
 
 /* --- RTS Command Dashboard (bottom tray form of the command card) ---
- * Identity row (40px) + stat line + ONE row of command buttons (48px):
- * ~131px expanded, inside the 150px dashboard cap. */
+ * Identity row (40px) + stat line + ONE row of command buttons (56px):
+ * ~139px expanded, inside the 150px dashboard cap. */
 .cmd-card{pointer-events:auto;background:rgba(10,26,26,0.85);border-top:2px solid rgba(245,197,66,0.35);padding:6px 10px;display:flex;flex-direction:column;gap:4px}
 .cmd-header{display:flex;gap:10px;align-items:center}
 .cmd-portrait{width:40px;height:40px;min-width:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:#fff;border:2px solid #ffffff33}
@@ -671,7 +787,7 @@ code {
 .cmd-hptext{font-size:11px;line-height:1.15;color:#fff3d488}
 .cmd-statline{font-size:12px;line-height:1.15;color:rgba(255,243,212,0.75);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cmd-grid{display:flex;gap:12px}
-.cmd-btn{flex:1 1 0;min-width:0;min-height:48px;border-radius:10px;border:2px solid #f5c54244;background:#143c32;color:#fff3d4;font:inherit;font-weight:700;font-size:12px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:4px 2px}
+.cmd-btn{flex:1 1 0;min-width:0;min-height:56px;border-radius:10px;border:2px solid #f5c54244;background:#143c32;color:#fff3d4;font:inherit;font-weight:700;font-size:12px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:4px 2px}
 .cmd-btn:active{background:#1f5a4c}
 .cmd-btn:disabled{opacity:0.35;cursor:default}
 .cmd-btn-label{line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}

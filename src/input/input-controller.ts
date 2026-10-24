@@ -28,6 +28,18 @@ import { orderMove, orderHold, orderPatrol } from '../systems/movement'
 
 export type InputMode = 'selection' | 'move' | 'attack' | 'gather' | 'build' | 'patrol'
 
+/**
+ * One-finger drag intent, chosen EXPLICITLY by the player on the toolbar
+ * toggle (Playtest fixes v1): 'move' keeps the 58c10d0 latching rules
+ * (quick drag pans, hold arms the marquee, unit-anchored drag boxes);
+ * 'select' makes ANY one-finger drag on ground a marquee, so the player
+ * never has to guess which gesture a drag will become. Two-finger
+ * pan/pinch zoom the same in both modes and never box. Orthogonal to
+ * InputMode: gesture mode only governs drags while InputMode is
+ * 'selection' (armed order modes still take their tap to target).
+ */
+export type GestureMode = 'move' | 'select'
+
 export interface InputController {
   setMode(mode: InputMode): void
   getMode(): InputMode
@@ -41,8 +53,10 @@ export interface InputController {
 const PICK_RADIUS_PX = 40 // minimum tap target in screen pixels (finger-friendly)
 
 // --- Selection gesture tuning (touch, selection mode) ---
-// One finger must both pan the camera and draw a marquee; the conflict is
-// resolved by intent, not by a mode toggle:
+// One finger must both pan the camera and draw a marquee. The toolbar's
+// gesture-mode toggle (Playtest fixes v1) makes the intent EXPLICIT, so
+// the player never guesses: in Select mode any drag boxes; in Move mode
+// (the default) the conflict is resolved by intent, not by a toggle:
 //   * a drag that STARTS on a friendly unit is a marquee (past the dead zone);
 //   * a QUICK drag anywhere else pans (past the pan threshold, before the
 //     hold window elapses);
@@ -109,15 +123,20 @@ export function pinchStep(
 /**
  * Pointer input: tap selects, right-click issues smart orders (move /
  * attack / gather), two-finger drag pans and pinch zooms (touch), wheel
- * zooms. One-finger gestures in selection mode are disambiguated by
- * intent (see the tuning constants above): drag from a friendly unit or
- * hold-then-drag draws a marquee box-select, a quick drag elsewhere pans
- * the camera. Double-tap or long-press on a unit selects every unit of
- * that kind currently on screen. Modes also allow left-click
- * move/attack/gather for touch users.
+ * zooms. One-finger drags in selection mode are governed by the toolbar's
+ * gesture-mode toggle: Select mode boxes on any drag, Move mode (default)
+ * disambiguates by intent (see the tuning constants above): drag from a
+ * friendly unit or hold-then-drag draws a marquee box-select, a quick drag
+ * elsewhere pans the camera. Double-tap or long-press on a unit selects
+ * every unit of that kind currently on screen, in either gesture mode.
+ * Modes also allow left-click move/attack/gather for touch users.
  */
 export class InputControllerImpl implements InputController {
   private mode: InputMode = 'selection'
+  /** Explicit drag intent from the toolbar toggle (default: Move). */
+  private gestureMode: GestureMode = 'move'
+  /** Notified on every setMode so the HUD's Cancel button stays in sync. */
+  private modeListener: ((mode: InputMode) => void) | null = null
   private world: World | null = null
   private renderer: Renderer | null = null
   private selected: number[] = []
@@ -187,10 +206,53 @@ export class InputControllerImpl implements InputController {
   setMode(mode: InputMode): void {
     this.mode = mode
     this.updateModeBanner()
+    this.modeListener?.(mode)
   }
 
   getMode(): InputMode {
     return this.mode
+  }
+
+  /** The HUD's Cancel button stays in sync through this, not by polling. */
+  setModeListener(fn: ((mode: InputMode) => void) | null): void {
+    this.modeListener = fn
+  }
+
+  /** Explicit drag intent from the toolbar toggle (default: Move). */
+  setGestureMode(mode: GestureMode): void {
+    this.gestureMode = mode
+  }
+
+  getGestureMode(): GestureMode {
+    return this.gestureMode
+  }
+
+  /**
+   * ✕ deselect: clear the selection AND disarm any armed order mode, so a
+   * deselect can never strand the player in a targeting mode with nothing
+   * selected (build placement with no builder would only answer taps with
+   * an error beep). Issues no order.
+   */
+  deselect(): void {
+    this.selected = []
+    this.pendingBuilding = null
+    this.ghostPos = null
+    this.setMode('selection')
+    this.renderer?.setSelection(this.selected)
+    sfx.deselect()
+  }
+
+  /**
+   * Cancel: back out of an armed order mode (build placement, move /
+   * attack / gather / patrol targeting) WITHOUT issuing an order. The
+   * selection is kept, so Cancel means "not this order", not "never mind
+   * everything". No-op in plain selection mode.
+   */
+  cancelMode(): void {
+    if (this.mode === 'selection' && this.pendingBuilding === null) return
+    this.pendingBuilding = null
+    this.ghostPos = null
+    this.setMode('selection')
   }
 
   /** Legacy entry: treat as a left-click at canvas pixel position. */
@@ -514,12 +576,21 @@ export class InputControllerImpl implements InputController {
     // Gesture still PENDING (inside the dead zone, or held without
     // committing): decide marquee vs pan exactly once, from intent.
     if (this.mode === 'selection' && this.dragStart.pointerType !== 'touch') {
-      // Mouse/pen are precise: classic RTS — a drag is a marquee.
+      // Mouse/pen are precise: classic RTS — a drag is a marquee, in
+      // either gesture mode (wheel zooms; there is no drag/zoom ambiguity).
       if (dist > this.dragThreshold()) this.startBox(e)
       return
     }
     if (this.mode === 'selection') {
-      // Touch, one finger, selection mode:
+      // Touch, one finger, selection mode. The toolbar's gesture mode
+      // decides what a drag IS, so the player never has to guess:
+      if (this.gestureMode === 'select') {
+        // Select mode: ANY drag past the dead zone draws a marquee from
+        // the press point, on the very first armed frame.
+        if (dist > DEAD_ZONE_PX) this.startBox(e)
+        return
+      }
+      // Move mode: the 58c10d0 latching rules (unchanged default).
       //  - a drag starting on a friendly unit is a marquee;
       //  - a press held past HOLD_ARM_MS has armed the marquee;
       //  - anything quicker is a camera pan.

@@ -364,6 +364,12 @@ export function initializeGame(): GameComposition {
     onLocateBase: () => composition.inputController.centerOnBase(),
     onStop: () => composition.inputController.stopSelected(),
     onHold: () => composition.inputController.holdSelected(),
+    onGestureMode: (mode) => {
+      composition.inputController.setGestureMode(mode)
+      composition.hud.setGestureMode(mode)
+    },
+    onDeselect: () => composition.inputController.deselect(),
+    onCancelMode: () => composition.inputController.cancelMode(),
     onResearch: (type) => {
       const selected = composition.inputController.getSelected()
       if (selected.length !== 1) return
@@ -555,6 +561,9 @@ export function initializeGame(): GameComposition {
     },
   }
   composition.hud.mount(hudRoot, hudCallbacks)
+  // Every armed-mode change (card buttons, placement, auto-reset after an
+  // order) syncs the toolbar's Cancel button through this listener.
+  composition.inputController.setModeListener((mode) => composition.hud.setInputMode(mode))
   composition.engine.start()
 
   // Pause overlay: single-player/campaign only — never PvP (lockstep).

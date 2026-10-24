@@ -2,7 +2,8 @@
  * Input controller regression tests — selection, smart orders, box-select,
  * building quick-select. Uses a mock renderer (no canvas/DOM).
  */
-import { TEAM_PLAYER, KIND_HALL, KIND_WORKER } from '../core/World.ts'
+import { TEAM_PLAYER, KIND_HALL, KIND_WORKER, HARVEST_OFF, HARVEST_WOOD, STATE_IDLE, STATE_BUILD, STATE_GATHER, STATE_MOVE, NO_TARGET } from '../core/World.ts'
+import { isHeldWorker } from '../render/renderer.ts'
 import { makeWorld } from './setup.ts'
 import { orderMove, orderStop } from '../systems/movement.ts'
 import { InputControllerImpl } from '../input/input-controller.ts'
@@ -652,4 +653,235 @@ test('single selection still renders the single card, not the group card', () =>
     assert(text.includes('Peasant'), 'single card shows the unit name')
     assert(!text.includes('1 units'), 'single card is not the group summary')
   })
+})
+
+suite('playtest fixes v1: gesture-mode toggle, deselect, cancel, authoritative stop')
+
+test('gesture mode defaults to Move', () => {
+  const { input } = gestureSetup()
+  assertEqual(input.getGestureMode(), 'move', 'default drag intent is Move (pan)')
+})
+
+test('Select mode: a quick drag on empty ground boxes immediately, never pans', () => {
+  const { world, renderer, input, ctl } = gestureSetup()
+  const w1 = world.spawnUnit('worker', TEAM_PLAYER, 520, 520)
+  const w2 = world.spawnUnit('worker', TEAM_PLAYER, 550, 540)
+  world.update(1 / 60)
+  input.setGestureMode('select')
+  gDown(ctl, 500, 500, 0)
+  gMove(ctl, 560, 560, 50) // 50ms: quick — in Move mode this would pan
+  const armed = renderer.boxes[renderer.boxes.length - 1]
+  assert(armed !== null && armed !== undefined, 'marquee armed on the first drag frame in Select mode')
+  assertEqual(renderer.pans.length, 0, 'camera did not pan in Select mode')
+  gUp(ctl, 560, 560, 80)
+  const sel = input.getSelected()
+  assert(sel.includes(w1.id) && sel.includes(w2.id), 'box selected the workers inside')
+})
+
+test('Move mode: a quick drag on empty ground still pans, never boxes', () => {
+  const { renderer, input, ctl } = gestureSetup()
+  input.setGestureMode('move')
+  gDown(ctl, 500, 500, 0)
+  gMove(ctl, 540, 500, 50)
+  gUp(ctl, 540, 500, 80)
+  assert(renderer.pans.length > 0, 'camera panned on quick drag in Move mode')
+  assert(renderer.boxes.every((b) => b === null), 'no marquee box was ever drawn')
+})
+
+test('Select mode: tap still selects a unit', () => {
+  const { world, input, ctl } = gestureSetup()
+  const w1 = world.spawnUnit('worker', TEAM_PLAYER, 100, 100)
+  world.update(1 / 60)
+  input.setGestureMode('select')
+  gTap(ctl, 100, 100, 1000)
+  assertEqual(input.getSelected().length, 1, 'tap selects in Select mode')
+  assertEqual(input.getSelected()[0], w1.id, 'the tapped worker is selected')
+})
+
+test('pinch zoom works in both gesture modes and never draws a box', () => {
+  for (const mode of ['move', 'select'] as const) {
+    const world = makeWorld()
+    const zooms: number[] = []
+    const boxes: (unknown | null)[] = []
+    const renderer = {
+      ...gestureRenderer(),
+      zoomBy(f: number) {
+        zooms.push(f)
+      },
+      setSelectionBox(box: unknown | null) {
+        boxes.push(box)
+      },
+    }
+    const input = new InputControllerImpl()
+    const ctl = input as unknown as GestureCtl
+    ctl.renderer = renderer
+    ctl.world = world
+    input.setGestureMode(mode)
+    // Two fingers down, then spread them: distance 100 -> 200.
+    ctl.onDown({ button: 0, pointerId: 1, offsetX: 100, offsetY: 100, pointerType: 'touch', timeStamp: 0 })
+    ctl.onDown({ button: 0, pointerId: 2, offsetX: 200, offsetY: 100, pointerType: 'touch', timeStamp: 10 })
+    ctl.onMove({ pointerId: 2, offsetX: 300, offsetY: 100, pointerType: 'touch', timeStamp: 20 })
+    assert(zooms.length > 0, `pinch zoomed in ${mode} mode`)
+    assert(zooms.some((f) => f > 1), `pinch-out zoomed in in ${mode} mode`)
+    assert(boxes.every((b) => b === null), `two fingers never box in ${mode} mode`)
+  }
+})
+
+test('deselect clears the selection and disarms the mode, issuing no order', () => {
+  const { world, input, ctl } = gestureSetup()
+  const w = world.spawnUnit('worker', TEAM_PLAYER, 100, 100)
+  world.update(1 / 60)
+  gTap(ctl, 100, 100, 1000)
+  assertEqual(input.getSelected().length, 1, 'worker selected')
+  // Give the worker a live move order, then arm an order mode: deselect
+  // must change NEITHER (no stop, no new order) — it only clears state.
+  orderMove(world, w.id, 600, 600)
+  assertEqual(world.moving[w.id], 1, 'worker moving before deselect')
+  withFakeDocument(() => {
+    ctl.mode = 'move'
+    ;(input as unknown as { pendingBuilding: unknown }).pendingBuilding = 'farm'
+    input.deselect()
+  })
+  assertEqual(input.getSelected().length, 0, 'selection cleared')
+  assertEqual(input.getMode(), 'selection', 'armed mode disarmed')
+  assertEqual(input.getPendingBuilding(), null, 'pending building cleared')
+  assertEqual(world.moving[w.id], 1, 'no order issued: the move order survives untouched')
+})
+
+test('cancel disarms every armed order mode and keeps the selection', () => {
+  const { world, input, ctl } = gestureSetup()
+  const w = world.spawnUnit('worker', TEAM_PLAYER, 100, 100)
+  world.update(1 / 60)
+  ctl.selected = [w.id]
+  for (const mode of ['move', 'attack', 'gather', 'patrol'] as const) {
+    ctl.mode = mode
+    withFakeDocument(() => {
+      input.cancelMode()
+    })
+    assertEqual(input.getMode(), 'selection', `${mode} mode disarmed by Cancel`)
+    assertEqual(input.getSelected().length, 1, `selection kept after cancelling ${mode}`)
+  }
+  // Build placement: the pending building is cleared too. (Fields set
+  // directly: setPendingBuilding would take the DOM banner path, which
+  // the fake document stub cannot serve — cancelMode is what's tested.)
+  ctl.selected = [w.id]
+  ctl.mode = 'build'
+  ;(input as unknown as { pendingBuilding: unknown }).pendingBuilding = 'farm'
+  withFakeDocument(() => {
+    input.cancelMode()
+  })
+  assertEqual(input.getMode(), 'selection', 'build mode disarmed by Cancel')
+  assertEqual(input.getPendingBuilding(), null, 'pending building cleared by Cancel')
+  assertEqual(input.getSelected().length, 1, 'selection kept after cancelling placement')
+  // Plain selection mode: Cancel is a no-op.
+  withFakeDocument(() => {
+    input.cancelMode()
+  })
+  assertEqual(input.getMode(), 'selection', 'still plain selection')
+  assertEqual(input.getSelected().length, 1, 'selection untouched by no-op Cancel')
+})
+
+test('orderStop disarms auto-gather: a stopped worker stays idle', () => {
+  const { world } = setup()
+  let workerId = -1
+  for (const id of world.entities.keys()) {
+    if (world.team[id] === TEAM_PLAYER && world.kind[id] === KIND_WORKER) {
+      workerId = id
+      break
+    }
+  }
+  // Simulate a mid-gather worker, then Stop it.
+  world.harvestKind[workerId] = HARVEST_WOOD
+  orderStop(world, workerId)
+  assertEqual(world.state[workerId], STATE_IDLE, 'worker idle after Stop')
+  assertEqual(world.harvestKind[workerId], HARVEST_OFF, 'Stop disarms auto-gather')
+  world.update(1 / 60)
+  assertEqual(world.state[workerId], STATE_IDLE, 'worker still idle a tick later (no re-acquire)')
+  assertEqual(world.moving[workerId], 0, 'worker not walking anywhere')
+})
+
+test('orderStop frees a builder from its construction task', () => {
+  const { world } = setup()
+  let workerId = -1
+  for (const id of world.entities.keys()) {
+    if (world.team[id] === TEAM_PLAYER && world.kind[id] === KIND_WORKER) {
+      workerId = id
+      break
+    }
+  }
+  // Simulate a worker walking to / working a farm site, then Stop it.
+  const hallId = [...world.entities.keys()].find(
+    (id) => world.team[id] === TEAM_PLAYER && world.kind[id] === KIND_HALL,
+  )!
+  world.targetId[workerId] = hallId
+  world.state[workerId] = STATE_BUILD
+  world.harvestKind[workerId] = HARVEST_WOOD
+  orderStop(world, workerId)
+  assertEqual(world.state[workerId], STATE_IDLE, 'builder idle after Stop')
+  assertEqual(world.targetId[workerId], NO_TARGET, 'construction target released')
+  assertEqual(world.harvestKind[workerId], HARVEST_OFF, 'no auto-gather re-acquire after Stop')
+  world.update(1 / 60)
+  assertEqual(world.state[workerId], STATE_IDLE, 'builder still idle a tick later')
+})
+
+suite('playtest fixes v1b: held-worker statues are visible and recoverable')
+
+test('Idle Workers selects statues (and only idle workers)', () => {
+  const { world, input } = setup()
+  const statue = world.spawnUnit('worker', TEAM_PLAYER, 100, 100)
+  world.state[statue.id] = STATE_IDLE
+  world.harvestKind[statue.id] = HARVEST_OFF
+  world.carryAmount[statue.id] = 0
+  const gathering = world.spawnUnit('worker', TEAM_PLAYER, 160, 100)
+  world.state[gathering.id] = STATE_GATHER
+  world.harvestKind[gathering.id] = HARVEST_WOOD
+  const walking = world.spawnUnit('worker', TEAM_PLAYER, 220, 100)
+  world.state[walking.id] = STATE_MOVE
+  world.harvestKind[walking.id] = HARVEST_OFF
+  input.selectIdleWorkers()
+  const sel = input.getSelected()
+  assert(sel.includes(statue.id), 'statue is selected by Idle Workers')
+  assert(!sel.includes(gathering.id), 'gathering worker is not idle-selected')
+  assert(!sel.includes(walking.id), 'walking worker is not idle-selected')
+})
+
+test('marker condition is true exactly for held workers', () => {
+  const { world } = setup()
+  const mk = (kind: string, x: number) => {
+    const u = world.spawnUnit(kind as 'worker' | 'melee', TEAM_PLAYER, x, 100)
+    return u.id
+  }
+  const held = mk('worker', 100)
+  world.state[held] = STATE_IDLE
+  world.harvestKind[held] = HARVEST_OFF
+  world.carryAmount[held] = 0
+  assert(isHeldWorker(world, held), 'idle + HARVEST_OFF + empty hands is held')
+
+  const pending = mk('worker', 160)
+  world.state[pending] = STATE_IDLE
+  world.harvestKind[pending] = HARVEST_WOOD
+  world.carryAmount[pending] = 0
+  assert(!isHeldWorker(world, pending), 'idle but auto-gather armed is not held')
+
+  const gathering = mk('worker', 220)
+  world.state[gathering] = STATE_GATHER
+  world.harvestKind[gathering] = HARVEST_WOOD
+  assert(!isHeldWorker(world, gathering), 'gathering worker is not held')
+
+  const walking = mk('worker', 280)
+  world.state[walking] = STATE_MOVE
+  world.harvestKind[walking] = HARVEST_OFF
+  assert(!isHeldWorker(world, walking), 'worker still walking to its hold point is not held')
+
+  const carrying = mk('worker', 340)
+  world.state[carrying] = STATE_IDLE
+  world.harvestKind[carrying] = HARVEST_OFF
+  world.carryAmount[carrying] = 5
+  assert(!isHeldWorker(world, carrying), 'worker with a load is delivering, not held')
+
+  const soldier = mk('melee', 400)
+  world.state[soldier] = STATE_IDLE
+  world.harvestKind[soldier] = HARVEST_OFF
+  world.carryAmount[soldier] = 0
+  assert(!isHeldWorker(world, soldier), 'a soldier is never a held worker')
 })
