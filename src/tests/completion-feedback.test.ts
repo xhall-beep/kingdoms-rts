@@ -1,14 +1,15 @@
 /**
- * Completion feedback — building-finished and unit-trained events are
- * visual-only: the sim pushes them into world.completionFlashes, the
- * renderer drains them each frame for the gold-ring pop + completion sfx,
- * and the lockstep hash must never see them. Guards the completion-cue
- * game-feel pass (buildings and trained units no longer finish silently).
+ * Completion feedback — building-finished, unit-trained, research, and
+ * Orc tier-upgrade events are visual-only: the sim pushes them into
+ * world.completionFlashes, the renderer drains them each frame for the
+ * gold-ring pop + completion sfx, and the lockstep hash must never see
+ * them. Guards the completion-cue game-feel pass (nothing in the game
+ * finishes silently any more).
  */
 import { World, KIND_WORKER, KIND_HALL, STATE_BUILD } from '../core/World.ts'
 import { hashWorldState } from '../net/hash.ts'
 import { makeWorld, stepWorld, STEP } from './setup.ts'
-import { enqueueTrain } from '../systems/production.ts'
+import { enqueueTrain, researchUpgrade, upgradeBuilding } from '../systems/production.ts'
 import { suite, test, assert } from './harness.ts'
 
 suite('completion-feedback: building and training completion cues')
@@ -79,6 +80,61 @@ test('enemy completions are pushed too — the renderer filters by viewer team',
   stepWorld(world, 10)
   assert(world.completionFlashes.length === 1, 'enemy completion should still be recorded')
   assert(world.completionFlashes[0].team === 1, 'flash should record the enemy team')
+})
+
+test('researching an upgrade pushes a completion flash at the building', () => {
+  const world = makeWorld()
+  world.gold[0] = 10000
+  world.wood[0] = 10000
+  let hall = -1
+  for (const id of world.entities.keys()) {
+    if (world.team[id] === 0 && world.kind[id] === KIND_HALL) { hall = id; break }
+  }
+  assert(hall !== -1, 'need a team-0 hall')
+  world.completionFlashes.length = 0
+  const ok = researchUpgrade(world, hall, 'meleeDmg')
+  assert(ok, 'research should succeed')
+  assert(world.completionFlashes.length === 1, 'expected exactly one completion flash')
+  const ev = world.completionFlashes[0]
+  assert(ev.id === hall, 'flash should name the researching building')
+  assert(ev.unit === false, 'research completion is a building event, not a unit event')
+  assert(ev.team === 0, 'flash should record the owning team')
+})
+
+test('a failed research pushes no completion flash', () => {
+  const world = makeWorld()
+  world.gold[0] = 0
+  world.wood[0] = 0
+  let hall = -1
+  for (const id of world.entities.keys()) {
+    if (world.team[id] === 0 && world.kind[id] === KIND_HALL) { hall = id; break }
+  }
+  assert(hall !== -1, 'need a team-0 hall')
+  world.completionFlashes.length = 0
+  const ok = researchUpgrade(world, hall, 'meleeDmg')
+  assert(!ok, 'broke research should fail')
+  assert(world.completionFlashes.length === 0, 'no flash on a failed research')
+})
+
+test('an Orc tier upgrade finishing pushes a completion flash at the building', () => {
+  const world = makeWorld()
+  world.factionOfTeam[0] = 'orc'
+  world.gold[0] = 10000
+  world.wood[0] = 10000
+  let hall = -1
+  for (const id of world.entities.keys()) {
+    if (world.team[id] === 0 && world.kind[id] === KIND_HALL) { hall = id; break }
+  }
+  assert(hall !== -1, 'need a team-0 hall')
+  assert(upgradeBuilding(world, hall), 'tier upgrade should start')
+  world.upgradeLeft[hall] = STEP / 2 // finish on the next tick
+  world.completionFlashes.length = 0
+  stepWorld(world, 10)
+  assert(world.tier[hall] === 2, 'hall should reach tier 2')
+  const found = world.completionFlashes.find((e) => e.id === hall && e.unit === false)
+  assert(found !== undefined, 'expected a completion flash for the tier upgrade')
+  const ev = found as { id: number; unit: boolean; team: 0 | 1 }
+  assert(ev.team === 0, 'flash should record the owning team')
 })
 
 test('completion flashes never enter the lockstep hash', () => {

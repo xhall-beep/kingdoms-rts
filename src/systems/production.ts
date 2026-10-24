@@ -126,6 +126,9 @@ export function upgradeBuilding(world: World, buildingId: number): boolean {
 /** Finish a tier upgrade: bump the tier and reinforce the structure. */
 function completeUpgrade(world: World, id: number): void {
   world.tier[id] = Math.min(3, world.tier[id] + 1) as 1 | 2 | 3
+  // Game-feel: tier upgrades finished silently until now; cue them like any
+  // other building completion (visual-only; renderer drains it each frame).
+  world.completionFlashes.push({ id, unit: false, team: world.team[id] as 0 | 1 })
   // Each tier adds 40% max HP; heal the building by the same proportion.
   const newMax = world.maxHealth[id] * 1.4
   const ratio = world.health[id] / world.maxHealth[id]
@@ -210,5 +213,9 @@ export function researchUpgrade(world: World, buildingId: number, type: UpgradeT
   if (type === 'meleeDmg') world.meleeDmgLvl[team]++
   else if (type === 'meleeHp') world.meleeHpLvl[team]++
   else world.rangedDmgLvl[team]++
+  // Game-feel: research is instant and previously finished with no cue at
+  // all. Push the same visual-only completion flash buildings and trained
+  // units already use (renderer drains it; never enters the lockstep hash).
+  world.completionFlashes.push({ id: buildingId, unit: false, team })
   return true
 }
