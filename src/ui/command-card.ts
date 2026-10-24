@@ -14,7 +14,8 @@ import {
 } from '../core/World'
 import { getUnits } from '../data/stats.ts'
 import type { UnitType } from '../data/units.ts'
-import { ORC_TIER_NAMES } from '../systems/production.ts'
+import { ORC_TIER_NAMES, trainingStateFor, trainingQueueFor } from '../systems/production.ts'
+import { buildersOnSite } from '../systems/gather.ts'
 import { BUILDINGS } from '../data/buildings.ts'
 import { PLAYER_BUILDABLE, canAfford } from '../world/construction.ts'
 import { FACTIONS } from '../data/factions.ts'
@@ -26,6 +27,12 @@ export interface CommandCardCallbacks {
   onHold(): void
   onBuildType(type: string): void
   onTrain(type: string): void
+  /**
+   * Tap-to-cancel production: index -1 cancels the ACTIVE training
+   * item; index >= 0 cancels that queue position (full refund either
+   * way). Optional: without it the training row renders read-only.
+   */
+  onCancelTrain?(index: number): void
   onResearch(type: string): void
   onMilitia(): void
   onUpgrade(): void
@@ -78,17 +85,50 @@ function buildingLabel(kind: number): string {
 type CmdFn = (label: string, fn: () => void, disabled?: boolean, sub?: string) => void
 
 /**
+ * Collapse a production queue into ordered display runs with duplicate
+ * collapsing: [worker, worker, melee] → "Peasant ×2 · Footman".
+ * Presentation only; faction names resolved for the viewing team.
+ */
+export function formatQueueRuns(world: World, team: number, queue: readonly UnitType[]): string {
+  const runs: string[] = []
+  let i = 0
+  while (i < queue.length) {
+    let j = i + 1
+    while (j < queue.length && queue[j] === queue[i]) j += 1
+    const n = j - i
+    const name = factionUnitName(world, team, queue[i])
+    runs.push(n > 1 ? `${name} ×${n}` : name)
+    i = j
+  }
+  return runs.join(' · ')
+}
+
+/**
  * The worker Build sub-menu buttons (build options + Back), shared by the
  * single-worker card and the all-worker group card so the two can never
  * drift apart.
  */
+/**
+ * Short command-card names for build buttons: state text must never
+ * truncate at phone widths (UX-audit acceptance data measured
+ * 'Archery Range' and 'Guard Tower' ellipsizing in the Build menu).
+ * The full names stay in the data tables (pills, How to Play).
+ */
+const BUILD_BUTTON_LABELS: Record<string, string> = {
+  hall: 'Hall',
+  farm: 'Farm',
+  barracks: 'Barracks',
+  archery: 'Archery',
+  tower: 'Tower',
+}
+
 function appendBuildButtons(cmd: CmdFn, world: World, cb: CommandCardCallbacks): void {
   for (const btype of PLAYER_BUILDABLE) {
     // Undead raise no farms — Soul-Ash feeds their supply cap.
     if (btype === 'farm' && world.factionOfTeam[TEAM_PLAYER] === 'undead') continue
     const bdef = BUILDINGS[btype]
     const afford = canAfford(world, TEAM_PLAYER, btype)
-    cmd(bdef.name, () => cb.onBuildType(btype), !afford, `${bdef.cost.gold}g ${bdef.cost.wood}w`)
+    cmd(BUILD_BUTTON_LABELS[btype] ?? bdef.name, () => cb.onBuildType(btype), !afford, `${bdef.cost.gold}g ${bdef.cost.wood}w`)
   }
   cmd('◀ Back', () => cb.onToggleBuild?.())
 }
@@ -228,6 +268,98 @@ export function renderCommandCard(
     card.appendChild(line)
   }
 
+  // --- Construction state: an unfinished structure shows its progress
+  // and (for our own) how many builders are on it. The multi-builder
+  // mechanic is invisible without this, and invisible mechanics read
+  // as bugs. All numbers are sim state, read-only. ---
+  if (isBuilding && world.buildProgress[id] < world.buildTotal[id]) {
+    const pct = Math.floor((world.buildProgress[id] / world.buildTotal[id]) * 100)
+    const line = document.createElement('div')
+    line.className = 'cmd-statline'
+    const builders = isOwn ? buildersOnSite(world, id) : 0
+    line.textContent =
+      builders > 0
+        ? `🔨 ${builders} builder${builders > 1 ? 's' : ''} · ${pct}% built`
+        : `🔨 Under construction · ${pct}% built`
+    card.appendChild(line)
+  }
+
+  // --- Training state (own production buildings): the active item
+  // with its real progress bar + seconds remaining, and the queue
+  // behind it as an ordered row with duplicates collapsed. Progress
+  // conventions: bar + countdown on the ACTIVE item only. With a
+  // cancel callback wired, the active item and each queue run are
+  // buttons — tapping cancels (full refund). ---
+  if (isOwn && isBuilding) {
+    const train = trainingStateFor(world, id)
+    if (train) {
+      const wrap = document.createElement('div')
+      wrap.className = 'cmd-train'
+      const labelText = `Training ${factionUnitName(world, TEAM_PLAYER, train.type)} · ${Math.ceil(train.secondsLeft)}s left`
+      if (cb.onCancelTrain) {
+        const cancelBtn = document.createElement('button')
+        cancelBtn.className = 'cmd-train-label cmd-train-cancel'
+        cancelBtn.textContent = `${labelText} ✕`
+        cancelBtn.addEventListener('click', (e) => {
+          e.stopPropagation()
+          e.preventDefault()
+          cb.onCancelTrain!(-1)
+        })
+        wrap.appendChild(cancelBtn)
+      } else {
+        const label = document.createElement('div')
+        label.className = 'cmd-train-label'
+        label.textContent = labelText
+        wrap.appendChild(label)
+      }
+      const bar = document.createElement('div')
+      bar.className = 'cmd-hpbar cmd-trainbar'
+      const fill = document.createElement('div')
+      fill.className = 'cmd-hpfill cmd-trainfill'
+      fill.style.width = `${train.fraction * 100}%`
+      bar.appendChild(fill)
+      wrap.appendChild(bar)
+      const queue = trainingQueueFor(world, id)
+      if (queue.length > 0) {
+        if (cb.onCancelTrain) {
+          // Tappable run chips: duplicates stay collapsed (×N), and a
+          // tap cancels ONE item — the last of the tapped run.
+          const q = document.createElement('div')
+          q.className = 'cmd-train-queue cmd-train-chips'
+          const head = document.createElement('span')
+          head.className = 'cmd-train-chiphead'
+          head.textContent = 'Queued:'
+          q.appendChild(head)
+          let i = 0
+          while (i < queue.length) {
+            let j = i + 1
+            while (j < queue.length && queue[j] === queue[i]) j += 1
+            const n = j - i
+            const name = factionUnitName(world, TEAM_PLAYER, queue[i])
+            const cancelIndex = j - 1
+            const chip = document.createElement('button')
+            chip.className = 'cmd-train-chip'
+            chip.textContent = n > 1 ? `${name} ×${n}` : name
+            chip.addEventListener('click', (e) => {
+              e.stopPropagation()
+              e.preventDefault()
+              cb.onCancelTrain!(cancelIndex)
+            })
+            q.appendChild(chip)
+            i = j
+          }
+          wrap.appendChild(q)
+        } else {
+          const q = document.createElement('div')
+          q.className = 'cmd-train-queue'
+          q.textContent = `Queued: ${formatQueueRuns(world, TEAM_PLAYER, queue)}`
+          wrap.appendChild(q)
+        }
+      }
+      card.appendChild(wrap)
+    }
+  }
+
   // --- Command grid (own units/buildings only) ---
   if (isOwn && (isUnit || isBuilding)) {
     const grid = document.createElement('div')
@@ -270,7 +402,7 @@ export function renderCommandCard(
               if (btype === 'farm' && world.factionOfTeam[TEAM_PLAYER] === 'undead') continue
               const bdef = BUILDINGS[btype]
               const afford = canAfford(world, TEAM_PLAYER, btype)
-              cmd(bdef.name, () => cb.onBuildType(btype), !afford, `${bdef.cost.gold}g ${bdef.cost.wood}w`)
+              cmd(BUILD_BUTTON_LABELS[btype] ?? bdef.name, () => cb.onBuildType(btype), !afford, `${bdef.cost.gold}g ${bdef.cost.wood}w`)
             }
           }
         } else {
@@ -310,10 +442,12 @@ export function renderCommandCard(
         }
       }
       // Militia Bell (human racial): muster nearby peasants as Levy Pikemen.
+      // Button label is the short 'Bell': the full 'Militia Bell' name
+      // ellipsized at phone card widths (UX-audit acceptance data).
       if (kind === KIND_HALL && world.factionOfTeam[TEAM_PLAYER] === 'human') {
         const onCooldown = world.matchTime < world.militiaCooldown[TEAM_PLAYER]
         cmd(
-          onCooldown ? '🔔 Bell (cd)' : '🔔 Militia Bell',
+          onCooldown ? '🔔 Bell (cd)' : '🔔 Bell',
           () => cb.onMilitia(),
           onCooldown,
         )
@@ -336,7 +470,12 @@ export function renderCommandCard(
       if (kind === KIND_HALL) {
         const charge = Math.floor(world.warCharge[TEAM_PLAYER])
         const rallying = world.rallyKind[TEAM_PLAYER] !== 0 && world.rallyUntil[TEAM_PLAYER] > world.matchTime
-        const labels: Record<number, string> = { 1: '🌪 Gale March', 2: '🩸 Ironblood', 3: '💨 Second Wind' }
+        // Short labels (UX-audit acceptance data): the full rally
+        // names ellipsized to 'Gale …' / 'Iron…' / 'Seco…' at card
+        // widths, leaving the three horns indistinguishable. The
+        // emoji + short name keep them distinct; full names live in
+        // How to Play and the warhorn system.
+        const labels: Record<number, string> = { 1: '🌪 Gale', 2: '🩸 Iron', 3: '💨 Wind' }
         for (const r of [1, 2, 3] as const) {
           const ready = charge >= 50 && !rallying
           cmd(

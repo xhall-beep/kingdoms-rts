@@ -1,7 +1,7 @@
 import { BUILDINGS } from '../data/buildings.ts'
 import type { BuildingType } from '../data/buildings.ts'
 import type { World } from '../core/World'
-import { KIND_ARCHERY, KIND_BARRACKS, KIND_FARM, KIND_HALL, NO_TARGET } from '../core/World'
+import { KIND_ARCHERY, KIND_BARRACKS, KIND_FARM, KIND_HALL, KIND_TOWER, NO_TARGET } from '../core/World'
 
 /** BuildingType for each building kind constant. */
 export const BUILDING_TYPE_BY_KIND: Record<number, BuildingType> = {
@@ -9,6 +9,7 @@ export const BUILDING_TYPE_BY_KIND: Record<number, BuildingType> = {
   [KIND_BARRACKS]: 'barracks',
   [KIND_ARCHERY]: 'archery',
   [KIND_FARM]: 'farm',
+  [KIND_TOWER]: 'tower',
 }
 
 /** Buildings the player is allowed to place. Halls are scenario/AI only. */

@@ -58,12 +58,27 @@ export function initPauseUi(h: PauseHost): void {
   })
 }
 
+/**
+ * The HUD menu's Pause/Resume pill mirrors the ONE source of truth for
+ * the paused state — host.isPaused() — and is synced here, from the
+ * module that owns every pause transition. The pill's own click
+ * handler used to flip its label locally, so pausing via the pill and
+ * resuming via this overlay left the pill reading "Resume" while the
+ * game ran (audit fix H).
+ */
+function syncPausePill(): void {
+  if (!host) return
+  const pill = document.querySelector('#hud-pause')
+  if (pill) pill.textContent = host.isPaused() ? 'Resume' : 'Pause'
+}
+
 /** Re-evaluate button visibility and overlay state (e.g. after mode changes). */
 export function refreshPauseUi(): void {
   if (pauseBtn && host) {
     pauseBtn.style.display = host.canPause() ? '' : 'none'
   }
   if (host && !host.isPaused()) hideOverlay()
+  syncPausePill()
 }
 
 /** Programmatic pause entry point (e.g. for auto-pause). Returns true if paused. */
@@ -71,6 +86,7 @@ export function requestPause(): boolean {
   if (!host || !host.canPause() || host.isPaused()) return false
   host.pause()
   showOverlay()
+  syncPausePill()
   return true
 }
 
@@ -79,6 +95,7 @@ export function requestResume(): boolean {
   if (!host || !host.isPaused()) return false
   host.resume()
   hideOverlay()
+  syncPausePill()
   return true
 }
 

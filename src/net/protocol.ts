@@ -165,6 +165,7 @@ const CmdTag = {
   Upgrade: 12,
   WarHorn: 13,
   PvpSetup: 14,
+  CancelTrain: 15,
 } as const
 type CmdTag = (typeof CmdTag)[keyof typeof CmdTag]
 
@@ -191,6 +192,8 @@ function cmdSize(cmd: Command): number {
     case 'build':
       return 1 + varintSize(cmd.workerId) + 1 + 4 + 4 + varintSize(cmd.siteId)
     case 'train':
+      return 1 + varintSize(cmd.buildingId) + 1
+    case 'cancelTrain':
       return 1 + varintSize(cmd.buildingId) + 1
     case 'rally':
       return 1 + varintSize(cmd.buildingId) + 4 + 4
@@ -279,6 +282,12 @@ function writeCommand(view: DataView, o: number, cmd: Command): number {
       o = writeVarint(view, o, cmd.buildingId)
       view.setUint8(o++, unitToByte(cmd.unit))
       return o
+    case 'cancelTrain':
+      view.setUint8(o++, CmdTag.CancelTrain)
+      o = writeVarint(view, o, cmd.buildingId)
+      // Index rides as index+1 in a u8: 0 = active item (-1), 1.. = queue index.
+      view.setUint8(o++, cmd.index + 1)
+      return o
     case 'rally':
       view.setUint8(o++, CmdTag.Rally)
       o = writeVarint(view, o, cmd.buildingId)
@@ -361,6 +370,11 @@ function readCommand(view: DataView, o: number): { cmd: Command; next: number } 
       const b = readVarint(view, o); o = b.next
       const u = view.getUint8(o++)
       return { cmd: { type: 'train', step: 0, buildingId: b.value, unit: byteToUnit(u) }, next: o }
+    }
+    case CmdTag.CancelTrain: {
+      const b = readVarint(view, o); o = b.next
+      const i = view.getUint8(o++)
+      return { cmd: { type: 'cancelTrain', step: 0, buildingId: b.value, index: i - 1 }, next: o }
     }
     case CmdTag.Rally: {
       const b = readVarint(view, o); o = b.next

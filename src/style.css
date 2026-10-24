@@ -462,8 +462,18 @@ code {
  * of viewport height — OVER the old 12% budget, deliberately and
  * reported, not hidden: Montz asked for a robust toolbar instead of the
  * narrow bar, and the trade is his call. The selection card above the
- * toolbar (136px measured) is contextual, not persistent; expanded
- * total is 273px ≈ 29.8%. */
+ * toolbar is contextual, not persistent.
+ *
+ * Formatting (build-flow pass): the main row is a FIXED GRID (the
+ * WC3/SC2 command-card invariant) — every cell is permanently reserved
+ * at a uniform height with uniform gaps/padding, and state renders
+ * INSIDE the cell (✕/Cancel grey in place when inapplicable) instead
+ * of cells appearing/disappearing and shoving the row around. The old
+ * show/hide pattern is what pushed the armed+selection row to ~448px
+ * and hid Cancel off-screen. All cells are border-box so the grid math
+ * is exact: mode toggle 116 + Idle/Base sharing the middle + ✕ 42 +
+ * Cancel 62 + 4 gaps × 6 + toolbar padding 12 ≤ 412 in EVERY state,
+ * because the state's cells never come or go. */
 .hud-dash {
   margin-top: auto;
 }
@@ -471,12 +481,6 @@ code {
 .hud-toolbar {
   background: linear-gradient(rgba(28, 46, 38, 0.96), rgba(10, 26, 26, 0.96));
   border-top: 2px solid rgba(245, 197, 66, 0.45);
-  /* 6px sides (was 8px): with ✕ AND Cancel both visible the main row
-   * measured ~448px against a 412px viewport, hiding most of Cancel.
-   * Together with the tighter gaps/padding below, the armed+selection
-   * row now fits inside 412px with both buttons fully on screen.
-   * overflow-x stays as a backstop only — the default state must not
-   * need scrolling. Touch height (52px min) is untouched. */
   padding: 6px 6px 4px;
   display: flex;
   flex-direction: column;
@@ -486,9 +490,10 @@ code {
 .tb-row-main {
   display: flex;
   align-items: stretch;
-  gap: 3px;
+  gap: 6px;
   /* Safety net: if a future button ever widens the row past 412px, it
-   * scrolls instead of clipping the ✕/Cancel off the right edge. */
+   * scrolls instead of clipping the ✕/Cancel off the right edge. With
+   * the fixed grid the default states never need it. */
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -506,10 +511,12 @@ code {
 }
 
 .tb-btn {
+  box-sizing: border-box;
   pointer-events: auto;
   cursor: pointer;
+  height: 52px;
   min-height: 52px;
-  padding: 6px 4px;
+  padding: 6px 8px;
   border-radius: 10px;
   border: 2px solid rgba(245, 197, 66, 0.35);
   background: #143c32;
@@ -528,15 +535,26 @@ code {
   background: #1f5a4c;
 }
 
-/* Segmented drag-intent toggle: the active mode is unmissable (gold). */
+/* Inapplicable fixed-grid cell: same slot, same size, greyed in place.
+ * It still swallows taps (pointer-events stay on) so a greyed ✕ can
+ * never fall through to a map order; the HUD guards the callback. */
+.tb-inactive {
+  opacity: 0.35;
+  filter: grayscale(0.7);
+}
+
+/* Segmented drag-intent toggle: two equal halves of one fixed cell.
+ * The active mode is unmissable (gold). */
 .tb-mode {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 0 116px;
 }
 
 .tb-mode-btn {
-  border-radius: 0;
+  flex: 1 1 0;
   min-width: 0;
+  border-radius: 0;
+  padding: 6px 2px;
 }
 
 .tb-mode-btn:first-child {
@@ -555,21 +573,35 @@ code {
   border-color: #f5c542;
 }
 
+/* Worker actions share the middle of the row equally. */
+#hud-idle,
+#hud-locate {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* Two-line button label: '👷 Idle Workers' measured 84px in a ~74px
+ * button on one line and spilled over the seam (UX-audit acceptance
+ * data). Stacked, both words render in full — state text never
+ * truncates. */
+.tb-lines {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.15;
+}
+
 .tb-danger {
   background: #5b1f1f;
   border-color: rgba(239, 68, 68, 0.5);
-  min-width: 40px;
+  flex: 0 0 42px;
   font-size: 18px;
 }
 
 .tb-cancel {
   background: #3a2a12;
   border-color: rgba(245, 197, 66, 0.6);
-  flex: 0 0 auto;
-}
-
-.tb-btn[hidden] {
-  display: none;
+  flex: 0 0 62px;
 }
 
 /* Idle Workers pulses while held workers ("statues") exist: the button
@@ -585,14 +617,27 @@ code {
   border-color: #f5c542;
 }
 
-/* Building quick-select pills shrink to fit the toolbar info row. */
+/* Building quick-select pills in the toolbar info row: one uniform
+ * height (22px) and padding rhythm with the army readout, so the row
+ * reads as a single aligned line. The ⏳ training badge rides the same
+ * text line (appended by hud.ts when a building of that kind trains). */
 .tb-row-info .hud-building {
+  box-sizing: border-box;
+  height: 22px;
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
   font-size: 11px;
-  padding: 2px 8px;
-  min-height: 0;
+  line-height: 1;
 }
 
 .hud-dash-army {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  line-height: 1;
+  flex: 0 0 auto;
   font-size: 12px;
   color: #fff3d4;
   opacity: 0.85;
@@ -792,6 +837,23 @@ code {
 .cmd-btn:disabled{opacity:0.35;cursor:default}
 .cmd-btn-label{line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
 .cmd-btn-sub{font-size:10px;color:rgba(245,197,66,0.8);font-weight:400;line-height:1.1;white-space:nowrap}
+/* Training row on a production building's card: name + countdown on
+ * one line, the progress bar under it (cmd-hpbar geometry), then the
+ * queue row when a queue exists. Bar + seconds live on the ACTIVE item
+ * only, per genre convention. */
+.cmd-train{display:flex;flex-direction:column;gap:3px}
+.cmd-train-label{font-size:12px;line-height:1.15;font-weight:700;color:#fff3d4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmd-trainbar{margin:0}
+.cmd-trainfill{background:#f5c542}
+.cmd-train-queue{font-size:11px;line-height:1.15;color:rgba(255,243,212,0.75);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Tap-to-cancel affordances: the active training label is a button
+ * (same text geometry as the read-only label), and queue runs are
+ * tappable chips that keep the row compact at the 8-item cap. */
+.cmd-train-cancel{background:none;border:none;padding:0;cursor:pointer;text-align:left}
+.cmd-train-chips{display:flex;align-items:center;gap:4px;flex-wrap:wrap;white-space:normal;overflow:visible;text-overflow:clip}
+.cmd-train-chiphead{font-size:11px;color:rgba(255,243,212,0.75)}
+.cmd-train-chip{pointer-events:auto;cursor:pointer;background:#143c32;border:1px solid rgba(245,197,66,0.45);color:#fff3d4;border-radius:999px;padding:2px 8px;font:inherit;font-size:11px;line-height:1.2}
+.cmd-train-chip:active{background:#1f5a4c}
 
 /* PvP Lobby */
 .pvp-lobby {
@@ -802,6 +864,13 @@ code {
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  /* The lobby mounts inside #hud-root (pointer-events: none). Only its
+   * hud-mode buttons opted back in, so Close, queue-Cancel, and both
+   * text inputs (Name, Join code) were dead to taps — clicks fell
+   * through to the canvas (audit fix G). The container opts back in
+   * like the working buttons do; the whole subtree inherits it. The
+   * lobby is display:none while hidden, so this never blocks the game. */
+  pointer-events: auto;
 }
 .pvp-lobby[hidden] { display: none; }
 .pvp-lobby-panel {

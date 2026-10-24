@@ -14,8 +14,11 @@ import {
   KIND_FARM,
   KIND_HALL,
   KIND_WORKER,
+  NO_TRAINING,
   TEAM_PLAYER,
+  TRAIN_QUEUE_WAITING,
 } from '../core/World'
+import { buildersOnSite } from '../systems/gather.ts'
 import { BUILDING_TYPE_BY_KIND } from '../world/construction.ts'
 import { renderCommandCard } from './command-card.ts'
 import { BUILD_STAMP_LABEL } from '../build-stamp.ts'
@@ -36,6 +39,8 @@ export interface HudCallbacks {
   onMode(mode: InputMode): void
   onBuildType(type: BuildingType): void
   onTrain(type: UnitType): void
+  /** Tap-to-cancel production: index -1 = the active item, >= 0 = a queue index. */
+  onCancelTrain(index: number): void
   onResearch(type: string): void
   onSelectBuilding(kind: number): void
   onNewGame(): void
@@ -106,6 +111,8 @@ export class HudImpl implements Hud {
   private deselectBtn: HTMLElement | null = null
   private cancelBtn: HTMLElement | null = null
   private idleBtn: HTMLElement | null = null
+  /** Selection presence, tracked for the ✕ cell's armed/inactive state. */
+  private hasSelection = false
 
   mount(parent: HTMLElement, callbacks?: HudCallbacks): void {
     this.callbacks = callbacks ?? null
@@ -156,10 +163,10 @@ export class HudImpl implements Hud {
               <button class="tb-btn tb-mode-btn tb-mode-on" id="hud-mode-move" title="Drag pans the camera">✋ Move</button>
               <button class="tb-btn tb-mode-btn" id="hud-mode-select" title="Any drag draws a selection box">▦ Select</button>
             </div>
-            <button class="tb-btn" id="hud-idle">👷 Idle Workers</button>
+            <button class="tb-btn" id="hud-idle" aria-label="Idle Workers"><span class="tb-lines"><span>👷 Idle</span><span>Workers</span></span></button>
             <button class="tb-btn" id="hud-locate" title="Jump camera back to your base">⌂ Base</button>
-            <button class="tb-btn tb-danger" id="hud-deselect" hidden title="Clear the selection">✕</button>
-            <button class="tb-btn tb-cancel" id="hud-cancel-mode" hidden title="Back out of the current order without issuing it">Cancel</button>
+            <button class="tb-btn tb-danger tb-inactive" id="hud-deselect" aria-disabled="true" title="Clear the selection">✕</button>
+            <button class="tb-btn tb-cancel tb-inactive" id="hud-cancel-mode" aria-disabled="true" title="Back out of the current order without issuing it">Cancel</button>
           </div>
           <div class="tb-row-info">
             <span class="hud-dash-army" id="hud-info-army"></span>
@@ -206,11 +213,17 @@ export class HudImpl implements Hud {
     this.modeMoveBtn?.addEventListener('click', () => this.callbacks?.onGestureMode('move'))
     this.modeSelectBtn?.addEventListener('click', () => this.callbacks?.onGestureMode('select'))
     this.deselectBtn?.addEventListener('click', () => {
+      // Fixed-grid cell: the button is always rendered; when nothing is
+      // selected it is inactive and swallows the tap instead of firing.
+      if (!this.hasSelection) return
       this.buildOpen = false
       this.lastActionsKey = ''
       this.callbacks?.onDeselect()
     })
-    this.cancelBtn?.addEventListener('click', () => this.callbacks?.onCancelMode())
+    this.cancelBtn?.addEventListener('click', () => {
+      if (this.inputMode === 'selection') return // inactive cell: swallow
+      this.callbacks?.onCancelMode()
+    })
     this.bannerEl = parent.querySelector('#hud-banner')
     // How to Play overlay: ON DEMAND ONLY — it never appears on load, flag
     // or no flag; the ❓ Help button is the only way in. Auto-showing it on
@@ -334,8 +347,9 @@ export class HudImpl implements Hud {
     }
     wire('#hud-pause', () => {
       this.callbacks?.onPause()
-      const btn = parent.querySelector('#hud-pause')
-      if (btn) btn.textContent = btn.textContent === 'Pause' ? 'Resume' : 'Pause'
+      // The label is NOT flipped here: pause-overlay syncs it from the
+      // engine's paused state after every transition, whichever
+      // surface toggled it (audit fix H — one source of truth).
       closeMenu()
     })
     // Help also lives in the menu (the strip's ❓ button is the primary
@@ -461,9 +475,25 @@ export class HudImpl implements Hud {
     this.modeSelectBtn?.classList.toggle('tb-mode-on', mode === 'select')
   }
 
-  /** ✕ shows iff something is selected; Cancel iff an order mode is armed. */
+  /**
+   * Fixed-grid toolbar (WC3/SC2 command-card invariant): cells never
+   * appear, disappear, or move — state renders INSIDE the cell. ✕ is
+   * armed iff a selection exists; Cancel iff an order mode is armed.
+   * Inapplicable cells render greyed/inactive in their reserved slot
+   * instead of hiding (the old show/hide pattern is what let the row
+   * overflow the screen in the armed+selection state).
+   */
   private refreshToolbarButtons(): void {
-    if (this.cancelBtn) this.cancelBtn.hidden = this.inputMode === 'selection'
+    if (this.cancelBtn) {
+      const off = this.inputMode === 'selection'
+      this.cancelBtn.classList.toggle('tb-inactive', off)
+      this.cancelBtn.setAttribute('aria-disabled', String(off))
+    }
+    if (this.deselectBtn) {
+      const off = !this.hasSelection
+      this.deselectBtn.classList.toggle('tb-inactive', off)
+      this.deselectBtn.setAttribute('aria-disabled', String(off))
+    }
   }
   setPvpStatus(msg: string | null): void {    const el = document.querySelector<HTMLElement>('#hud-pvp-status')
     if (!el) return
@@ -527,17 +557,25 @@ export class HudImpl implements Hud {
   private updateBuildings(world: World): void {
     const el = this.buildingsEl
     if (!el) return
-    // Count owned buildings by kind.
+    // Count owned buildings by kind, and how many production ITEMS
+    // (active slot + waiting queue) each kind has in production — the
+    // pill badge (⏳N) must be readable without selecting anything.
     const counts = new Map<number, number>()
+    const training = new Map<number, number>()
     for (const id of world.entities.keys()) {
       if (world.team[id] !== TEAM_PLAYER) continue
       const k = world.kind[id]
       if (k === KIND_HALL || k === KIND_BARRACKS || k === KIND_ARCHERY || k === KIND_FARM) {
         counts.set(k, (counts.get(k) ?? 0) + 1)
+        const items =
+          (world.trainKind[id] !== NO_TRAINING ? 1 : 0) + world.trainQueueLen[id]
+        if (items > 0) {
+          training.set(k, (training.get(k) ?? 0) + items)
+        }
       }
     }
     const order = [KIND_HALL, KIND_BARRACKS, KIND_ARCHERY, KIND_FARM]
-    const key = order.map((k) => `${k}:${counts.get(k) ?? 0}`).join(',')
+    const key = order.map((k) => `${k}:${counts.get(k) ?? 0}:${training.get(k) ?? 0}`).join(',')
     if (key === this.lastBuildingsKey) return
     this.lastBuildingsKey = key
     el.innerHTML = ''
@@ -547,7 +585,9 @@ export class HudImpl implements Hud {
       const btype = BUILDING_TYPE_BY_KIND[k]
       const btn = document.createElement('button')
       btn.className = 'hud-pill hud-building'
-      btn.textContent = count > 1 ? `${BUILDINGS[btype].name} ×${count}` : BUILDINGS[btype].name
+      const trainingNow = training.get(k) ?? 0
+      const badge = trainingNow > 0 ? ` ⏳${trainingNow > 1 ? trainingNow : ''}` : ''
+      btn.textContent = (count > 1 ? `${BUILDINGS[btype].name} ×${count}` : BUILDINGS[btype].name) + badge
       btn.addEventListener('click', () => this.callbacks?.onSelectBuilding(k))
       el.appendChild(btn)
     }
@@ -569,7 +609,27 @@ export class HudImpl implements Hud {
     // moves when any member is hurt, not just the first.
     let hpKey = 0
     for (const sid of selected) hpKey += Math.floor(world.health[sid] ?? 0)
-    const key = `${selKey}|${Math.floor(world.gold[TEAM_PLAYER])}|${Math.floor(world.wood[TEAM_PLAYER])}|${hpKey}|${this.buildOpen ? 1 : 0}`
+    // Training + construction state for a selected building, so its
+    // card's progress bar/countdown, builder line and queue chips stay
+    // live: the countdown is keyed at decisecond granularity (smooth
+    // enough, bounded re-renders), build progress at whole points, and
+    // the queue by its length + queued kinds in order.
+    let stateKey = ''
+    if (selected.length === 1) {
+      const sid = selected[0]
+      const k = world.kind[sid]
+      if (k === KIND_HALL || k === KIND_BARRACKS || k === KIND_ARCHERY || k === KIND_FARM) {
+        let queueKey = ''
+        const qBase = sid * TRAIN_QUEUE_WAITING
+        for (let qi = 0; qi < world.trainQueueLen[sid]; qi += 1) {
+          queueKey += `${world.trainQueueKind[qBase + qi]},`
+        }
+        stateKey =
+          `${world.trainKind[sid]}:${Math.round(world.trainLeft[sid] * 10)}:` +
+          `${Math.floor(world.buildProgress[sid])}:${buildersOnSite(world, sid)}:${queueKey}`
+      }
+    }
+    const key = `${selKey}|${Math.floor(world.gold[TEAM_PLAYER])}|${Math.floor(world.wood[TEAM_PLAYER])}|${hpKey}|${stateKey}|${this.buildOpen ? 1 : 0}`
     if (key === this.lastActionsKey) return
     this.lastActionsKey = key
     const shown = renderCommandCard(el, world, selected, {
@@ -578,6 +638,7 @@ export class HudImpl implements Hud {
       onHold: () => this.callbacks?.onHold(),
       onBuildType: (type) => this.callbacks?.onBuildType(type as never),
       onTrain: (type) => this.callbacks?.onTrain(type as never),
+      onCancelTrain: (index) => this.callbacks?.onCancelTrain(index),
       onResearch: (type) => this.callbacks?.onResearch(type),
       onMilitia: () => this.callbacks?.onMilitia(),
       onUpgrade: () => this.callbacks?.onUpgrade(),
@@ -590,10 +651,10 @@ export class HudImpl implements Hud {
     // The dashboard expands in place: while the tray is shown, the tray
     // sits ABOVE the always-visible toolbar (never stacked under it).
     if (this.dashEl) this.dashEl.classList.toggle('hud-dash-expanded', shown)
-    // ✕ deselect lives in the toolbar and follows the selection exactly.
-    if (this.deselectBtn) this.deselectBtn.hidden = selected.length === 0
-    // Cancel follows the armed mode (also refreshed by setInputMode).
-    if (this.cancelBtn) this.cancelBtn.hidden = this.inputMode === 'selection'
+    // ✕ / Cancel are permanent toolbar cells (fixed grid): track their
+    // armed state here; refreshToolbarButtons renders it in-cell.
+    this.hasSelection = selected.length > 0
+    this.refreshToolbarButtons()
   }
 
   private updateBanner(world: World): void {

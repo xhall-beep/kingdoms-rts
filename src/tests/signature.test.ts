@@ -7,6 +7,8 @@ import { FACTIONS } from '../data/factions.ts'
 import { getUnits } from '../data/stats.ts'
 import { UPGRADES } from '../data/upgrades.ts'
 import { researchUpgrade } from '../systems/production.ts'
+import { orderAttack } from '../systems/combat.ts'
+import { placeStructure } from '../world/construction.ts'
 import { suite, test, assert, assertEqual } from './harness.ts'
 import { makeWorld, STEP } from './setup.ts'
 
@@ -207,4 +209,90 @@ test('non-human pays full upgrade cost', () => {
   assert(ok, 'upgrade should succeed')
   const spent = goldBefore - world.gold[TEAM_PLAYER]
   assertEqual(spent, def.cost.gold, 'orc pays full cost')
+})
+
+suite('audit fix F: reanimate raises units only, never buildings')
+
+/**
+ * The reanimate roll is a pure hash of (entityId, tick) — the same
+ * formula combat uses — so a test can know in advance whether a death
+ * WOULD have raised a skeleton. Deaths are delivered by a real enemy
+ * attacker through the combat system (health set to 1: first hit
+ * kills), and world.tick after the killing update is the tick the roll
+ * read.
+ */
+function reanimateRoll(id: number, tick: number): number {
+  return (((id * 2654435761) ^ (tick * 40503)) >>> 0) % 10000 / 10000
+}
+
+function skeletonCount(world: ReturnType<typeof makeWorld>): number {
+  let n = 0
+  for (const id of world.entities.keys()) if (world.reanimateTicks[id] > 0) n += 1
+  return n
+}
+
+/** Kill `targetId` with a fresh enemy melee unit; returns the killer. */
+function killWithFoe(world: ReturnType<typeof makeWorld>, targetId: number): number {
+  world.health[targetId] = 1
+  const foe = world.spawnUnit(
+    'melee',
+    TEAM_ENEMY,
+    world.positionX[targetId] + 2.5,
+    world.positionZ[targetId],
+  )
+  orderAttack(world, foe.id, targetId)
+  let guard = 0
+  while (world.entities.has(targetId) && guard < 600) {
+    world.update(STEP)
+    guard += 1
+  }
+  assert(!world.entities.has(targetId), 'the target died')
+  return foe.id
+}
+
+test('undead building deaths spawn nothing — even on rolls that would raise a unit', () => {
+  const world = makeWorld()
+  world.factionOfTeam[TEAM_PLAYER] = 'undead'
+  world.gold[TEAM_PLAYER] = 100000
+  world.wood[TEAM_PLAYER] = 100000
+  const chance = FACTIONS.undead.signature!.reanimate!.chance
+  let wouldHaveRaised = 0
+  for (let attempt = 0; attempt < 32 && wouldHaveRaised < 6; attempt += 1) {
+    const placed = placeStructure(world, TEAM_PLAYER, 'barracks', 100 + attempt * 12, 140)
+    assert(placed.ok, 'barracks placed')
+    const site = placed.id
+    world.buildProgress[site] = world.buildTotal[site] // a standing structure, not a site
+    const foe = killWithFoe(world, site)
+    if (reanimateRoll(site, world.tick) < chance) wouldHaveRaised += 1
+    assertEqual(skeletonCount(world), 0, 'no skeleton rose from the rubble')
+    world.removeEntityById(foe)
+  }
+  assert(
+    wouldHaveRaised >= 3,
+    `covered ${wouldHaveRaised} building deaths whose roll would have raised a unit`,
+  )
+})
+
+test('undead unit deaths still reanimate at the designed rate (seeded rolls)', () => {
+  const world = makeWorld()
+  world.factionOfTeam[TEAM_PLAYER] = 'undead'
+  const chance = FACTIONS.undead.signature!.reanimate!.chance
+  let successes = 0
+  let failures = 0
+  for (let attempt = 0; attempt < 48 && (successes < 3 || failures < 3); attempt += 1) {
+    const unit = world.spawnUnit('melee', TEAM_PLAYER, 200 + attempt * 4, 220)
+    const foe = killWithFoe(world, unit.id)
+    if (reanimateRoll(unit.id, world.tick) < chance) {
+      successes += 1
+    } else {
+      failures += 1
+    }
+    assertEqual(
+      skeletonCount(world),
+      successes,
+      `skeletons track the seeded rolls exactly (${successes} successes so far)`,
+    )
+    world.removeEntityById(foe)
+  }
+  assert(successes >= 3 && failures >= 3, `covered ${successes} raises and ${failures} non-raises`)
 })

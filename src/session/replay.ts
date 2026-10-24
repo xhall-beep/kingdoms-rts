@@ -4,13 +4,14 @@ import {
   HARVEST_WOOD,
   KIND_FARM,
   KIND_HALL,
+  KIND_TOWER,
   KIND_TREE,
   KIND_WORKER,
 } from '../core/World'
 import { orderAttack, orderAttackMove } from '../systems/combat.ts'
 import { orderBuild, orderGather } from '../systems/gather.ts'
 import { orderMove, orderPatrol } from '../systems/movement.ts'
-import { enqueueTrain, setRally, upgradeBuilding } from '../systems/production.ts'
+import { cancelTrainActive, cancelTrainQueued, enqueueTrain, setRally, upgradeBuilding } from '../systems/production.ts'
 import { soundWarHorn } from '../systems/warhorn.ts'
 import { placeStructure } from '../world/construction.ts'
 import type { Command } from './commands.ts'
@@ -125,14 +126,14 @@ export class ReplayPlayer {
       }
       case 'build': {
         // Resume: a nonzero siteId targets an existing incomplete structure —
-        // send the worker back to it instead of placing a new one.
+        // send the worker back to it instead of placing a new one. (Mirrors
+        // net/apply.ts, including towers outside the HALL..FARM range.)
         if (cmd.siteId !== 0 && world.entities.has(cmd.siteId)) {
           const site = cmd.siteId
           const skind = world.kind[site]
           if (
             world.team[site] === 0 &&
-            skind >= KIND_HALL &&
-            skind <= KIND_FARM &&
+            ((skind >= KIND_HALL && skind <= KIND_FARM) || skind === KIND_TOWER) &&
             world.buildProgress[site] < world.buildTotal[site] &&
             world.entities.has(cmd.workerId) &&
             world.kind[cmd.workerId] === KIND_WORKER
@@ -150,6 +151,12 @@ export class ReplayPlayer {
       case 'train':
         if (world.entities.has(cmd.buildingId)) {
           enqueueTrain(world, cmd.buildingId, cmd.unit)
+        }
+        break
+      case 'cancelTrain':
+        if (world.entities.has(cmd.buildingId)) {
+          if (cmd.index < 0) cancelTrainActive(world, cmd.buildingId)
+          else cancelTrainQueued(world, cmd.buildingId, cmd.index)
         }
         break
       case 'rally':

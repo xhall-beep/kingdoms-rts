@@ -40,6 +40,7 @@ export const PVP_SETUP_ENTITY_ARRAYS = [
   'carryKind', 'carryAmount', 'carryMax', 'gatherTimer', 'amount',
   'buildProgress', 'buildTotal', 'buildAuto',
   'trainKind', 'trainLeft', 'trainTotal', 'rallyX', 'rallyZ',
+  'trainQueueKind', 'trainQueueLen',
   'harvestKind', 'resumeX', 'resumeZ',
   'bellsRung', 'militiaUntil', 'tier', 'upgradeLeft', 'shrineHeld',
   'reanimateTicks', 'momentumTicks', 'lastCombatTick',

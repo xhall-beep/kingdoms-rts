@@ -1,7 +1,7 @@
 import type { System, World } from '../core/World'
 import { FACTIONS } from '../data/factions.ts'
 import { recordTreeHarvest } from './living-wild.ts'
-import { buildingSupply } from '../data/buildings.ts'
+import { BUILDINGS, buildingSupply } from '../data/buildings.ts'
 import { BUILDING_TYPE_BY_KIND } from '../world/construction.ts'
 import {
   CARRY_GOLD,
@@ -14,6 +14,7 @@ import {
   KIND_FARM,
   KIND_GOLDMINE,
   KIND_HALL,
+  KIND_TOWER,
   KIND_TREE,
   KIND_WORKER,
   NO_TARGET,
@@ -29,6 +30,25 @@ const GATHER_AMOUNT = 2 // resource taken per swing
 const ARRIVE_MARGIN = 0.8 // stand this far from the target's edge
 /** Seed-warp self-construction rate (undead): progress per second with no worker. */
 const SEED_WARP_RATE = 1.2
+/**
+ * Powerbuild crew curve (Warcraft 3 model): the first builder on a site
+ * works at its full rate; every ADDITIONAL builder contributes this
+ * fraction of its own rate. A uniform crew of n therefore builds at
+ * 1 + 0.6·(n−1) × a lone builder's speed — help speeds a site up, but
+ * never linearly. WC3's companion rule is also in force: each
+ * additional builder pays a resource surcharge when it joins (see
+ * POWERBUILD_SURCHARGE_RATE / buildSurchargeFor below).
+ */
+const POWERBUILD_EXTRA_FACTOR = 0.6
+/**
+ * Powerbuild surcharge (WC3 model, Montz-approved): each builder who
+ * joins a site that ALREADY has a builder pays this fraction of the
+ * structure's base cost, per resource, at the moment it joins. The
+ * first builder is always free — including a replacement sent to an
+ * orphaned site with nobody on it. No refund when a builder later
+ * leaves, stops, or dies (v1 rule).
+ */
+const POWERBUILD_SURCHARGE_RATE = 0.15
 
 /**
  * Shared construction-completion handling: full health and supply grant.
@@ -73,6 +93,14 @@ function nearFinishedFarm(world: World, id: number): boolean {
 export class GatherSystemImpl implements System {
   update(world: World, dt: number): void {
     const spentNodes: number[] = []
+    /**
+     * Construction crews by site, collected during the worker pass and
+     * applied in a single pass after it. Progress belongs to the
+     * STRUCTURE, never to a worker: a builder who is stopped, killed, or
+     * re-tasked mid-build leaves the site's progress exactly where it
+     * was, and any worker ordered onto the site joins the crew.
+     */
+    const crews = new Map<number, { builders: number[]; rates: number[] }>()
     for (const id of world.entities.keys()) {
       if (world.kind[id] !== KIND_WORKER) continue
       switch (world.state[id]) {
@@ -177,24 +205,47 @@ export class GatherSystemImpl implements System {
           }
           // Tilled Farmland: human builders near a finished farm work 15% faster.
           const haste = nearFinishedFarm(world, id) ? 1.15 : 1
-          world.buildProgress[site] += dt * workerDef.buildRate * haste
-          const done = world.buildProgress[site] >= world.buildTotal[site]
-          world.health[site] = done
-            ? world.maxHealth[site]
-            : Math.max(
-                world.health[site],
-                Math.floor(
-                  (world.maxHealth[site] * world.buildProgress[site]) / world.buildTotal[site],
-                ),
-              )
-          if (done) {
-            finishConstruction(world, site)
-            world.state[id] = STATE_IDLE
+          // Join the site's crew; the construction pass below applies
+          // the crew's combined powerbuild rate once per tick.
+          let crew = crews.get(site)
+          if (!crew) {
+            crew = { builders: [], rates: [] }
+            crews.set(site, crew)
           }
+          crew.builders.push(id)
+          crew.rates.push(workerDef.buildRate * haste)
           break
         }
         default:
           break
+      }
+    }
+    // Construction pass: one progress application per site per tick, at
+    // the crew's combined powerbuild rate (first builder full rate, each
+    // additional builder at POWERBUILD_EXTRA_FACTOR of its own). Site
+    // health tracks progress exactly as it did for a lone builder. On
+    // completion every assigned builder releases to idle — the same
+    // post-build state a single builder has always ended in. Builders
+    // still walking to the site release via their STATE_BUILD case,
+    // which sees progress >= total on the next tick.
+    for (const [site, crew] of crews) {
+      if (!world.entities.has(site)) continue
+      if (world.buildProgress[site] >= world.buildTotal[site]) continue
+      let combined = 0
+      for (let i = 0; i < crew.rates.length; i += 1) {
+        combined += i === 0 ? crew.rates[i] : crew.rates[i] * POWERBUILD_EXTRA_FACTOR
+      }
+      world.buildProgress[site] += dt * combined
+      const done = world.buildProgress[site] >= world.buildTotal[site]
+      world.health[site] = done
+        ? world.maxHealth[site]
+        : Math.max(
+            world.health[site],
+            Math.floor((world.maxHealth[site] * world.buildProgress[site]) / world.buildTotal[site]),
+          )
+      if (done) {
+        finishConstruction(world, site)
+        for (const wid of crew.builders) world.state[wid] = STATE_IDLE
       }
     }
     // Seed-warp sites (undead) pull themselves up with no worker present.
@@ -340,11 +391,86 @@ export function orderGather(world: World, id: number): void {
   world.state[id] = STATE_IDLE
 }
 
-/** Order a worker to construct an unfinished structure. */
-export function orderBuild(world: World, workerId: number, siteId: number): void {
-  if (world.kind[workerId] !== KIND_WORKER) return
-  if (!world.entities.has(siteId)) return
+/**
+ * The flat powerbuild surcharge for joining this site as an ADDITIONAL
+ * builder: 15% of the structure's base cost per resource, rounding UP
+ * per resource (ceil — a nonzero base cost never surcharges zero),
+ * charged once at the moment the builder joins. Zeroes for a missing
+ * or finished site. Whether a given join actually pays depends on the
+ * crew state — see buildSurchargeFor.
+ */
+export function buildSurchargeAmount(world: World, siteId: number): { gold: number; wood: number } {
+  if (!world.entities.has(siteId)) return { gold: 0, wood: 0 }
+  if (world.buildProgress[siteId] >= world.buildTotal[siteId]) return { gold: 0, wood: 0 }
+  const kind = world.kind[siteId]
+  const btype =
+    kind >= KIND_HALL && kind <= KIND_FARM
+      ? BUILDING_TYPE_BY_KIND[kind]
+      : kind === KIND_TOWER
+        ? 'tower'
+        : undefined
+  if (!btype) return { gold: 0, wood: 0 }
+  const cost = BUILDINGS[btype].cost
+  return {
+    gold: Math.ceil(cost.gold * POWERBUILD_SURCHARGE_RATE),
+    wood: Math.ceil(cost.wood * POWERBUILD_SURCHARGE_RATE),
+  }
+}
+
+/**
+ * The surcharge a NEW builder would pay to join this site right now:
+ * the flat amount when a builder is already on the site, zero for the
+ * first builder — a replacement sent to an orphaned site never pays.
+ * Leaving or being stopped later refunds nothing (v1 rule). orderBuild
+ * enforces this in the sim; the input layer reads these helpers to
+ * pre-check deferred (lockstep) joins for feedback.
+ */
+export function buildSurchargeFor(world: World, siteId: number): { gold: number; wood: number } {
+  if (buildersOnSite(world, siteId) === 0) return { gold: 0, wood: 0 }
+  return buildSurchargeAmount(world, siteId)
+}
+
+/**
+ * Order a worker to construct an unfinished structure. Joining a site
+ * that already has a builder charges the joiner team's powerbuild
+ * surcharge (buildSurchargeFor); when the team can't pay, the join is
+ * refused — the worker keeps its current orders — and false is
+ * returned so the caller can give feedback.
+ */
+export function orderBuild(world: World, workerId: number, siteId: number): boolean {
+  if (world.kind[workerId] !== KIND_WORKER) return false
+  if (!world.entities.has(siteId)) return false
+  // Already building this site: re-issuing the order is a free no-op —
+  // a builder never pays the surcharge twice for the same join.
+  if (world.state[workerId] === STATE_BUILD && world.targetId[workerId] === siteId) return true
+  const surcharge = buildSurchargeFor(world, siteId)
+  if (surcharge.gold > 0 || surcharge.wood > 0) {
+    const team = world.team[workerId]
+    if (world.gold[team] < surcharge.gold || world.wood[team] < surcharge.wood) return false
+    world.gold[team] -= surcharge.gold
+    world.wood[team] -= surcharge.wood
+  }
   world.targetId[workerId] = siteId
   walkTo(world, workerId, siteId, ARRIVE_MARGIN)
   world.state[workerId] = STATE_BUILD
+  return true
+}
+
+/**
+ * Workers currently assigned to a construction site (walking to it or
+ * building on it). Read-only; the structure card shows the crew so the
+ * multi-builder mechanic is visible instead of reading as a bug.
+ */
+export function buildersOnSite(world: World, siteId: number): number {
+  let n = 0
+  for (const id of world.entities.keys()) {
+    if (
+      world.kind[id] === KIND_WORKER &&
+      world.state[id] === STATE_BUILD &&
+      world.targetId[id] === siteId
+    ) {
+      n += 1
+    }
+  }
+  return n
 }

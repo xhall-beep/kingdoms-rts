@@ -66,6 +66,8 @@ function byteLengthOf(world: World): number {
   n += world.trainKind.byteLength
   n += world.trainLeft.byteLength
   n += world.trainTotal.byteLength
+  n += world.trainQueueKind.byteLength
+  n += world.trainQueueLen.byteLength
   n += world.rallyX.byteLength
   n += world.rallyZ.byteLength
   n += world.harvestKind.byteLength
@@ -125,6 +127,8 @@ export function snapshotWorld(world: World): Uint8Array {
   putF32(world.buildProgress); putF32(world.buildTotal)
   putBytes(new Uint8Array(world.trainKind.buffer, world.trainKind.byteOffset, world.trainKind.byteLength))
   putF32(world.trainLeft); putF32(world.trainTotal)
+  putBytes(new Uint8Array(world.trainQueueKind.buffer, world.trainQueueKind.byteOffset, world.trainQueueKind.byteLength))
+  putBytes(world.trainQueueLen)
   putF32(world.rallyX); putF32(world.rallyZ)
   putBytes(world.harvestKind)
   putF32(world.resumeX); putF32(world.resumeZ)
@@ -196,6 +200,8 @@ export function restoreWorld(world: World, data: Uint8Array): void {
   getF32(world.buildProgress); getF32(world.buildTotal)
   world.trainKind.set(new Int8Array(getBytes(world.trainKind.byteLength).buffer))
   getF32(world.trainLeft); getF32(world.trainTotal)
+  world.trainQueueKind.set(new Int8Array(getBytes(world.trainQueueKind.byteLength).buffer))
+  world.trainQueueLen.set(getBytes(world.trainQueueLen.byteLength))
   getF32(world.rallyX); getF32(world.rallyZ)
   world.harvestKind.set(getBytes(world.harvestKind.byteLength))
   getF32(world.resumeX); getF32(world.resumeZ)

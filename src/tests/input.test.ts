@@ -2,12 +2,19 @@
  * Input controller regression tests — selection, smart orders, box-select,
  * building quick-select. Uses a mock renderer (no canvas/DOM).
  */
-import { TEAM_PLAYER, KIND_HALL, KIND_WORKER, HARVEST_OFF, HARVEST_WOOD, STATE_IDLE, STATE_BUILD, STATE_GATHER, STATE_MOVE, NO_TARGET } from '../core/World.ts'
+import { TEAM_PLAYER, KIND_HALL, KIND_WORKER, KIND_FARM, NO_TRAINING, HARVEST_OFF, HARVEST_WOOD, STATE_IDLE, STATE_BUILD, STATE_GATHER, STATE_MOVE, NO_TARGET } from '../core/World.ts'
 import { isHeldWorker } from '../render/renderer.ts'
-import { makeWorld } from './setup.ts'
+import { makeWorld, stepWorld, STEP } from './setup.ts'
 import { orderMove, orderStop } from '../systems/movement.ts'
+import { orderBuild, buildersOnSite, buildSurchargeAmount } from '../systems/gather.ts'
+import { cancelTrainActive, cancelTrainQueued, enqueueTrain, productionCommittedSupply, trainQueueCount, trainingStateFor, trainingQueueFor, MAX_TRAIN_QUEUE } from '../systems/production.ts'
+import { BUILDINGS } from '../data/buildings.ts'
+import { placeStructure } from '../world/construction.ts'
+import { applyCommand } from '../net/apply.ts'
+import type { Command } from '../session/commands.ts'
+import { FACTIONS } from '../data/factions.ts'
 import { InputControllerImpl } from '../input/input-controller.ts'
-import { renderCommandCard } from '../ui/command-card.ts'
+import { renderCommandCard, formatQueueRuns } from '../ui/command-card.ts'
 import { suite, test, assert, assertEqual } from './harness.ts'
 
 /** Minimal renderer mock: 1:1 screen-to-world, records selection. */
@@ -884,4 +891,556 @@ test('marker condition is true exactly for held workers', () => {
   world.harvestKind[soldier] = HARVEST_OFF
   world.carryAmount[soldier] = 0
   assert(!isHeldWorker(world, soldier), 'a soldier is never a held worker')
+})
+
+suite('build flow fixes: placement ends the interaction')
+
+/** Private-surface cast for the build-flow tests (modeOrder/tapSelect/etc.). */
+interface BuildCtl {
+  mode: string
+  selected: number[]
+  pendingBuilding: unknown
+  modeOrder(x: number, z: number): void
+  tapSelect(x: number, z: number, now?: number): void
+  smartOrder(x: number, z: number): void
+}
+
+function findKind(world: ReturnType<typeof makeWorld>, kind: number, team: number): number {
+  for (const id of world.entities.keys()) {
+    if (world.kind[id] === kind && world.team[id] === team) return id
+  }
+  return -1
+}
+
+test('placing a building ends the interaction: selection cleared, mode disarmed, worker builds', () => {
+  const { world, input } = gestureSetup()
+  const bctl = input as unknown as BuildCtl
+  const w = world.spawnUnit('worker', TEAM_PLAYER, 100, 100)
+  world.update(STEP)
+  bctl.selected = [w.id]
+  bctl.mode = 'build'
+  bctl.pendingBuilding = 'farm'
+  withFakeDocument(() => {
+    bctl.modeOrder(112, 100)
+  })
+  const site = findKind(world, KIND_FARM, TEAM_PLAYER)
+  assert(site !== -1, 'the farm was placed')
+  assertEqual(input.getSelected().length, 0, 'selection cleared on placement — no farm stays selected')
+  assertEqual(input.getMode(), 'selection', 'build mode disarmed on placement')
+  assertEqual(input.getPendingBuilding(), null, 'pending building cleared on placement')
+  assertEqual(world.state[w.id], STATE_BUILD, 'worker proceeds to construction on its own')
+  assertEqual(world.targetId[w.id], site, 'worker targets the placed site')
+  stepWorld(world, 60 * 9)
+  assert(world.buildProgress[site] >= world.buildTotal[site], 'the lone builder completes the farm')
+})
+
+test('deferred placement emits the build command and still ends the interaction', () => {
+  const { world, input } = gestureSetup()
+  const bctl = input as unknown as BuildCtl
+  const w = world.spawnUnit('worker', TEAM_PLAYER, 100, 100)
+  world.update(STEP)
+  const emitted: Command[] = []
+  input.setCommandListener((c) => emitted.push(c))
+  input.setDeferredExecution(true)
+  bctl.selected = [w.id]
+  bctl.mode = 'build'
+  bctl.pendingBuilding = 'farm'
+  withFakeDocument(() => {
+    bctl.modeOrder(112, 100)
+  })
+  assertEqual(emitted.length, 1, 'one command emitted')
+  assertEqual(emitted[0].type, 'build', 'a build command was emitted')
+  assertEqual(findKind(world, KIND_FARM, TEAM_PLAYER), -1, 'deferred: nothing placed locally')
+  assertEqual(input.getSelected().length, 0, 'selection cleared')
+  assertEqual(input.getMode(), 'selection', 'build mode disarmed')
+  assertEqual(input.getPendingBuilding(), null, 'pending building cleared')
+})
+
+suite('build flow fixes: multi-builder crews (powerbuild)')
+
+/** Run a crew of `n` parked builders on a fresh farm for `ticks`; return its progress. */
+function crewProgress(n: number, ticks: number): number {
+  const world = makeWorld()
+  const placed = placeStructure(world, TEAM_PLAYER, 'farm', 100, 100)
+  assert(placed.ok, 'farm placed for crew test')
+  for (let i = 0; i < n; i += 1) {
+    const w = world.spawnUnit('worker', TEAM_PLAYER, 100 + i * 2, 104)
+    // Park the builder on the site: assigned, arrived, not walking.
+    world.targetId[w.id] = placed.id
+    world.state[w.id] = STATE_BUILD
+    world.moving[w.id] = 0
+    world.harvestKind[w.id] = HARVEST_OFF
+  }
+  stepWorld(world, ticks)
+  return world.buildProgress[placed.id]
+}
+
+test('construction crews follow the powerbuild curve 1 + 0.6(n-1), pinned exactly', () => {
+  const rate = FACTIONS.human.worker.buildRate // progress per second, lone builder
+  const eps = 0.03
+  const one = crewProgress(1, 60) // 60 ticks = 1 second
+  const two = crewProgress(2, 60)
+  const three = crewProgress(3, 60)
+  assert(Math.abs(one - rate * 1.0) < eps, `lone builder: ${one} ≈ ${rate} (full rate, unchanged)`)
+  assert(Math.abs(two - rate * 1.6) < eps, `two builders: ${two} ≈ ${rate * 1.6} (1 + 0.6)`)
+  assert(Math.abs(three - rate * 2.2) < eps, `three builders: ${three} ≈ ${rate * 2.2} (1 + 1.2)`)
+})
+
+test('a lone builder completes a farm in the pre-change time and releases to idle', () => {
+  const world = makeWorld()
+  const placed = placeStructure(world, TEAM_PLAYER, 'farm', 100, 100)
+  assert(placed.ok, 'farm placed')
+  const site = placed.id
+  const w = world.spawnUnit('worker', TEAM_PLAYER, 100, 104)
+  world.targetId[w.id] = site
+  world.state[w.id] = STATE_BUILD
+  world.moving[w.id] = 0
+  world.harvestKind[w.id] = HARVEST_OFF
+  const capBefore = world.supplyCap[TEAM_PLAYER]
+  // Farm total 6 at 1.15/s ≈ 313 ticks: not done at 300, done by 330.
+  stepWorld(world, 300)
+  assert(world.buildProgress[site] < world.buildTotal[site], 'not complete before the lone-builder time')
+  stepWorld(world, 30)
+  assert(world.buildProgress[site] >= world.buildTotal[site], 'complete at the lone-builder time (unchanged)')
+  assertEqual(world.state[w.id], STATE_IDLE, 'builder released to idle on completion')
+  assertEqual(world.supplyCap[TEAM_PLAYER], capBefore + 6, 'farm supply granted exactly once')
+})
+
+test('two builders finish faster than one, both release, supply granted once', () => {
+  const world = makeWorld()
+  const placed = placeStructure(world, TEAM_PLAYER, 'farm', 100, 100)
+  assert(placed.ok, 'farm placed')
+  const site = placed.id
+  const crew: number[] = []
+  for (let i = 0; i < 2; i += 1) {
+    const w = world.spawnUnit('worker', TEAM_PLAYER, 100 + i * 2, 104)
+    world.targetId[w.id] = site
+    world.state[w.id] = STATE_BUILD
+    world.moving[w.id] = 0
+    world.harvestKind[w.id] = HARVEST_OFF
+    crew.push(w.id)
+  }
+  const capBefore = world.supplyCap[TEAM_PLAYER]
+  // Crew rate 1.15 × 1.6 = 1.84/s: 6 progress needs ~196 ticks.
+  stepWorld(world, 150)
+  assert(world.buildProgress[site] < world.buildTotal[site], 'crew not done implausibly early')
+  stepWorld(world, 70)
+  assert(world.buildProgress[site] >= world.buildTotal[site], 'crew finished well ahead of a lone builder')
+  for (const wid of crew) {
+    assertEqual(world.state[wid], STATE_IDLE, 'every builder released on completion')
+  }
+  assertEqual(world.supplyCap[TEAM_PLAYER], capBefore + 6, 'supply granted once, not once per builder')
+})
+
+test('tapping an orphaned 0-progress site with a worker selected re-tasks it; a second tap piles on', () => {
+  const { world, input } = gestureSetup()
+  const bctl = input as unknown as BuildCtl
+  const placed = placeStructure(world, TEAM_PLAYER, 'farm', 100, 100)
+  assert(placed.ok, 'farm placed')
+  const site = placed.id
+  const a = world.spawnUnit('worker', TEAM_PLAYER, 96, 100)
+  orderBuild(world, a.id, site)
+  orderStop(world, a.id) // the known orphan: builder stopped before any progress
+  assertEqual(world.buildProgress[site], 0, 'site orphaned at 0 progress')
+  assertEqual(buildersOnSite(world, site), 0, 'no builders on the orphaned site')
+
+  const b = world.spawnUnit('worker', TEAM_PLAYER, 104, 100)
+  world.harvestKind[b.id] = HARVEST_OFF
+  world.update(STEP) // rebuild spatial hash
+  bctl.selected = [b.id]
+  bctl.tapSelect(100, 100, 0) // tap the site itself, screen == world in the mock
+  assertEqual(world.state[b.id], STATE_BUILD, 'tapped worker joined the orphaned site')
+  assertEqual(world.targetId[b.id], site, 'join targets the orphaned site')
+  assertEqual(buildersOnSite(world, site), 1, 'one builder assigned after the tap')
+
+  const c = world.spawnUnit('worker', TEAM_PLAYER, 108, 100)
+  world.harvestKind[c.id] = HARVEST_OFF
+  world.update(STEP)
+  bctl.selected = [c.id]
+  bctl.tapSelect(100, 100, 0)
+  assertEqual(buildersOnSite(world, site), 2, 'second worker piles onto the same site')
+  stepWorld(world, 30)
+  assert(world.buildProgress[site] > 0, 'the re-tasked crew is making progress')
+})
+
+test('smart order onto an unfinished structure sends workers to build; military escorts by moving', () => {
+  const { world, input } = gestureSetup()
+  const bctl = input as unknown as BuildCtl
+  const placed = placeStructure(world, TEAM_PLAYER, 'farm', 100, 100)
+  assert(placed.ok, 'farm placed')
+  const site = placed.id
+  const w = world.spawnUnit('worker', TEAM_PLAYER, 104, 100)
+  const m = world.spawnUnit('melee', TEAM_PLAYER, 108, 100)
+  world.update(STEP)
+  bctl.selected = [w.id, m.id]
+  bctl.smartOrder(100, 100)
+  assertEqual(world.state[w.id], STATE_BUILD, 'worker joins construction instead of idling beside the site')
+  assertEqual(world.targetId[w.id], site, 'worker targets the site')
+  assertEqual(world.moving[m.id], 1, 'melee unit moves toward the site as escort')
+})
+
+test('deferred join emits a siteId build command; the executor resumes even a tower', () => {
+  const { world, input } = gestureSetup()
+  const bctl = input as unknown as BuildCtl
+  const placed = placeStructure(world, TEAM_PLAYER, 'tower', 100, 100)
+  assert(placed.ok, 'tower placed')
+  const site = placed.id
+  const w = world.spawnUnit('worker', TEAM_PLAYER, 104, 100)
+  world.harvestKind[w.id] = HARVEST_OFF
+  world.update(STEP)
+  const emitted: Command[] = []
+  input.setCommandListener((c) => emitted.push(c))
+  input.setDeferredExecution(true)
+  bctl.selected = [w.id]
+  bctl.tapSelect(100, 100, 0)
+  assertEqual(emitted.length, 1, 'one command emitted for the join')
+  const cmd = emitted[0]
+  assert(cmd.type === 'build' && cmd.siteId === site, 'join command targets the existing tower site')
+  assert(world.targetId[w.id] !== site, 'deferred: the world is not mutated locally')
+
+  // The lockstep executor honors the same command — towers included.
+  const world2 = makeWorld()
+  const placed2 = placeStructure(world2, TEAM_PLAYER, 'tower', 100, 100)
+  assert(placed2.ok, 'tower placed in executor world')
+  const w2 = world2.spawnUnit('worker', TEAM_PLAYER, 104, 100)
+  applyCommand(world2, { type: 'build', step: 0, workerId: w2.id, building: 'tower', x: 0, z: 0, siteId: placed2.id })
+  assertEqual(world2.state[w2.id], STATE_BUILD, 'executor sent the worker to the tower site')
+  assertEqual(world2.targetId[w2.id], placed2.id, 'executor join targets the tower')
+})
+
+test('unfinished structure card shows builders and progress', () => {
+  const { world } = gestureSetup()
+  const placed = placeStructure(world, TEAM_PLAYER, 'farm', 100, 100)
+  assert(placed.ok, 'farm placed')
+  const site = placed.id
+  world.buildProgress[site] = world.buildTotal[site] / 2 // 50%
+  const w1 = world.spawnUnit('worker', TEAM_PLAYER, 96, 100)
+  const w2 = world.spawnUnit('worker', TEAM_PLAYER, 104, 100)
+  orderBuild(world, w1.id, site)
+  orderBuild(world, w2.id, site)
+  withFakeDocument(() => {
+    const el = fakeEl()
+    renderCommandCard(el as never, world, [site], cardCallbacks as never, {})
+    const text = collectText(el)
+    assert(text.includes('2 builders'), 'card names the assigned crew')
+    assert(text.includes('50% built'), 'card shows construction progress')
+  })
+})
+
+suite('build flow fixes: training progress display')
+
+test('training state reads the sim: fraction and countdown match trainLeft/trainTotal', () => {
+  const { world } = gestureSetup()
+  const hall = findKind(world, KIND_HALL, TEAM_PLAYER)
+  assert(hall !== -1, 'player hall exists')
+  assert(enqueueTrain(world, hall, 'worker'), 'worker training started')
+  const total = world.trainTotal[hall]
+  assert(total > 0, 'train total set by the sim')
+  stepWorld(world, 60) // one second in
+  const st = trainingStateFor(world, hall)
+  assert(st !== null, 'accessor reports active training')
+  assertEqual(st!.type, 'worker', 'the training item is the worker')
+  assert(
+    Math.abs(st!.fraction - (1 - world.trainLeft[hall] / total)) < 1e-6,
+    'progress fraction IS the sim ratio, not an estimate',
+  )
+  assert(Math.abs(st!.secondsLeft - world.trainLeft[hall]) < 1e-6, 'countdown IS trainLeft')
+  withFakeDocument(() => {
+    const el = fakeEl()
+    renderCommandCard(el as never, world, [hall], cardCallbacks as never, {})
+    const text = collectText(el)
+    assert(text.includes('Training Peasant'), 'card names the training unit (faction name)')
+    assert(text.includes(`${Math.ceil(world.trainLeft[hall])}s left`), 'card shows the seconds remaining')
+    let fillWidth = -1
+    const walk = (n: FakeEl): void => {
+      if (n.className.includes('cmd-trainfill')) fillWidth = parseFloat(n.style.width ?? '-1')
+      for (const c of n.children) walk(c)
+    }
+    walk(el)
+    assert(fillWidth >= 0, 'progress bar rendered')
+    assert(
+      Math.abs(fillWidth - st!.fraction * 100) < 0.6,
+      `bar width ${fillWidth}% matches the sim fraction ${(st!.fraction * 100).toFixed(1)}%`,
+    )
+  })
+})
+
+test('training display advances: completion frees the slot and the next unit starts fresh', () => {
+  const { world } = gestureSetup()
+  const hall = findKind(world, KIND_HALL, TEAM_PLAYER)
+  const countWorkers = (): number => {
+    let n = 0
+    for (const id of world.entities.keys()) {
+      if (world.kind[id] === KIND_WORKER && world.team[id] === TEAM_PLAYER) n += 1
+    }
+    return n
+  }
+  const before = countWorkers()
+  assert(enqueueTrain(world, hall, 'worker'), 'first worker training started')
+  stepWorld(world, 60 * 6) // worker train time is 5s
+  assertEqual(world.trainKind[hall], NO_TRAINING, 'slot freed on completion')
+  assertEqual(trainingStateFor(world, hall), null, 'accessor reports no active training')
+  assertEqual(countWorkers(), before + 1, 'the trained worker actually spawned')
+  assert(enqueueTrain(world, hall, 'worker'), 'next worker training started')
+  const st = trainingStateFor(world, hall)
+  assert(st !== null && st.fraction < 0.05, 'the next unit starts at the beginning of its bar')
+  assertEqual(trainingQueueFor(world, hall).length, 0, 'the next item went straight to the active slot — nothing waiting')
+})
+
+test('queue runs collapse duplicates in order, with faction names', () => {
+  const { world } = gestureSetup()
+  const s = formatQueueRuns(world, TEAM_PLAYER, ['worker', 'worker', 'melee', 'worker'])
+  assertEqual(s, 'Peasant ×2 · Footman · Peasant', 'runs collapse with ×N, order preserved')
+  assertEqual(formatQueueRuns(world, TEAM_PLAYER, []), '', 'empty queue renders as nothing')
+})
+
+suite('approved design calls: production queue — cap 8, tap-to-cancel refunds')
+
+test('the queue accepts 8 items total (1 active + 7 waiting) and refuses the 9th', () => {
+  const { world } = gestureSetup()
+  const hall = findKind(world, KIND_HALL, TEAM_PLAYER)
+  assert(hall !== -1, 'player hall exists')
+  world.gold[TEAM_PLAYER] = 100000
+  world.wood[TEAM_PLAYER] = 100000
+  world.supplyCap[TEAM_PLAYER] = 100 // isolate the queue cap from the supply cap
+  for (let i = 0; i < 8; i += 1) {
+    assert(enqueueTrain(world, hall, 'worker'), `item ${i + 1} of 8 accepted`)
+  }
+  assertEqual(MAX_TRAIN_QUEUE, 8, 'the approved cap is 8')
+  assertEqual(trainQueueCount(world, hall), 8, 'cap reached')
+  assertEqual(trainingQueueFor(world, hall).length, 7, 'seven wait behind the active item')
+  assert(!enqueueTrain(world, hall, 'worker'), 'the 9th item is refused')
+  assertEqual(trainQueueCount(world, hall), 8, 'the refusal changed nothing')
+})
+
+test('cancelling a waiting item refunds its full cost and the queue closes ranks', () => {
+  const { world } = gestureSetup()
+  const hall = findKind(world, KIND_HALL, TEAM_PLAYER)
+  world.gold[TEAM_PLAYER] = 1000
+  world.wood[TEAM_PLAYER] = 1000
+  assert(enqueueTrain(world, hall, 'worker'), 'active item queued')
+  assert(enqueueTrain(world, hall, 'worker'), 'waiting item 1 queued')
+  assert(enqueueTrain(world, hall, 'worker'), 'waiting item 2 queued')
+  assertEqual(world.gold[TEAM_PLAYER], 850, 'three workers charged at 50g each')
+  assertEqual(trainingQueueFor(world, hall).length, 2, 'two waiting')
+  assert(cancelTrainQueued(world, hall, 0), 'cancel accepted')
+  assertEqual(world.gold[TEAM_PLAYER], 900, 'full 50g refund for the waiting item')
+  assertEqual(trainingQueueFor(world, hall).length, 1, 'queue closed ranks')
+  assert(!cancelTrainQueued(world, hall, 1), 'index past the end refused')
+  assert(!cancelTrainQueued(world, hall, -1), 'negative index refused (active cancels separately)')
+  assertEqual(world.gold[TEAM_PLAYER], 900, 'refused cancels refund nothing')
+})
+
+test('cancelling the active item refunds it in full and the next item starts fresh', () => {
+  const { world } = gestureSetup()
+  const hall = findKind(world, KIND_HALL, TEAM_PLAYER)
+  world.gold[TEAM_PLAYER] = 10000
+  world.wood[TEAM_PLAYER] = 10000
+  assert(enqueueTrain(world, hall, 'worker'), 'first worker training')
+  assert(enqueueTrain(world, hall, 'worker'), 'second worker queued')
+  const total = world.trainTotal[hall]
+  stepWorld(world, 120) // 2s into the 5s train
+  assert(world.trainLeft[hall] < total - 1.9, 'active item well underway')
+  const goldBefore = world.gold[TEAM_PLAYER]
+  assert(cancelTrainActive(world, hall), 'cancel accepted')
+  assertEqual(world.gold[TEAM_PLAYER], goldBefore + 50, 'full 50g refund for the active item')
+  assertEqual(world.trainKind[hall], KIND_WORKER, 'the queued worker started immediately')
+  assertEqual(world.trainLeft[hall], world.trainTotal[hall], 'the next item starts at its full train time')
+  assertEqual(trainingQueueFor(world, hall).length, 0, 'queue drained by the promotion')
+  assert(cancelTrainActive(world, hall), 'the promoted item can be cancelled too')
+  assertEqual(world.trainKind[hall], NO_TRAINING, 'slot empty after the last cancel')
+  assert(!cancelTrainActive(world, hall), 'nothing left to cancel')
+})
+
+test('a filled queue drains in order: each completion starts the next item', () => {
+  const { world } = gestureSetup()
+  const hall = findKind(world, KIND_HALL, TEAM_PLAYER)
+  world.gold[TEAM_PLAYER] = 10000
+  world.wood[TEAM_PLAYER] = 10000
+  const countWorkers = (): number => {
+    let n = 0
+    for (const id of world.entities.keys()) {
+      if (world.kind[id] === KIND_WORKER && world.team[id] === TEAM_PLAYER) n += 1
+    }
+    return n
+  }
+  const before = countWorkers()
+  assert(enqueueTrain(world, hall, 'worker'), 'one')
+  assert(enqueueTrain(world, hall, 'worker'), 'two')
+  assert(enqueueTrain(world, hall, 'worker'), 'three')
+  stepWorld(world, 60 * 5 + 2) // one full train time
+  assertEqual(countWorkers(), before + 1, 'first queued worker spawned')
+  const st = trainingStateFor(world, hall)
+  assert(st !== null && st.type === 'worker', 'second item now active')
+  assert(st!.fraction < 0.1, 'second item just started')
+  assertEqual(trainingQueueFor(world, hall).length, 1, 'one still waiting')
+  stepWorld(world, 60 * 5 + 2)
+  assertEqual(countWorkers(), before + 2, 'second spawned')
+  stepWorld(world, 60 * 5 + 2)
+  assertEqual(countWorkers(), before + 3, 'third spawned')
+  assertEqual(trainingStateFor(world, hall), null, 'queue fully drained')
+})
+
+test('training card renders tappable cancel targets: active button + collapsed queue chips', () => {
+  const { world } = gestureSetup()
+  const hall = findKind(world, KIND_HALL, TEAM_PLAYER)
+  world.gold[TEAM_PLAYER] = 10000
+  assert(enqueueTrain(world, hall, 'worker'), 'active')
+  assert(enqueueTrain(world, hall, 'worker'), 'waiting 1')
+  assert(enqueueTrain(world, hall, 'worker'), 'waiting 2')
+  // Click handlers are DOM-bound and can't fire through the fake
+  // document; the cancel BEHAVIOR is pinned by the sim tests above.
+  // This test pins the render: a cancel button for the active item and
+  // one collapsed chip for the two identical waiting workers.
+  const cb = { ...cardCallbacks, onCancelTrain: (_i: number) => {} }
+  withFakeDocument(() => {
+    const el = fakeEl()
+    renderCommandCard(el as never, world, [hall], cb as never, {})
+    const text = collectText(el)
+    assert(text.includes('Training Peasant'), 'active item labelled')
+    assert(text.includes('Queued:'), 'queue labelled')
+    assert(text.includes('Peasant ×2'), 'waiting workers collapsed on the chip')
+    const chips: FakeEl[] = []
+    let activeBtn: FakeEl | null = null
+    const walk = (n: FakeEl): void => {
+      if (n.className.split(' ').includes('cmd-train-chip')) chips.push(n)
+      if (n.className.split(' ').includes('cmd-train-cancel')) activeBtn = n
+      for (const c of n.children) walk(c)
+    }
+    walk(el)
+    assert(activeBtn !== null, 'active item renders as a cancel button')
+    assertEqual(chips.length, 1, 'one chip for the collapsed run')
+    assertEqual(chips[0].textContent, 'Peasant ×2', 'chip label is the collapsed run')
+  })
+  // Without the callback the same state renders read-only (text row).
+  withFakeDocument(() => {
+    const el = fakeEl()
+    renderCommandCard(el as never, world, [hall], cardCallbacks as never, {})
+    assert(collectText(el).includes('Queued: Peasant ×2'), 'read-only queue row still renders')
+  })
+})
+
+suite('approved design calls: powerbuild surcharge (+15% per extra builder)')
+
+test('each additional builder pays exactly 15% — ceil per resource — and the first is free', () => {
+  const world = makeWorld()
+  const placed = placeStructure(world, TEAM_PLAYER, 'farm', 100, 100)
+  assert(placed.ok, 'farm placed')
+  const site = placed.id
+  world.gold[TEAM_PLAYER] = 500
+  world.wood[TEAM_PLAYER] = 500
+  const a = world.spawnUnit('worker', TEAM_PLAYER, 96, 100)
+  const b = world.spawnUnit('worker', TEAM_PLAYER, 104, 100)
+  const c = world.spawnUnit('worker', TEAM_PLAYER, 100, 106)
+  assert(orderBuild(world, a.id, site), 'first builder joins')
+  assertEqual(world.gold[TEAM_PLAYER], 500, 'first builder free (gold)')
+  assertEqual(world.wood[TEAM_PLAYER], 500, 'first builder free (wood)')
+  assert(orderBuild(world, b.id, site), 'second builder joins')
+  // Farm base cost 50g / 80w: ceil(50 × .15) = 8g, ceil(80 × .15) = 12w.
+  assertEqual(world.gold[TEAM_PLAYER], 492, 'second builder paid exactly 8g')
+  assertEqual(world.wood[TEAM_PLAYER], 488, 'second builder paid exactly 12w')
+  assert(orderBuild(world, c.id, site), 'third builder joins')
+  assertEqual(world.gold[TEAM_PLAYER], 484, 'third builder paid another 8g')
+  assertEqual(world.wood[TEAM_PLAYER], 476, 'third builder paid another 12w')
+  assert(orderBuild(world, b.id, site), 're-issuing the order to the same builder is accepted')
+  assertEqual(world.gold[TEAM_PLAYER], 484, 'no double charge for a builder already on the site')
+  const amount = buildSurchargeAmount(world, site)
+  assertEqual(amount.gold, 8, 'surcharge amount: 8g for a farm')
+  assertEqual(amount.wood, 12, 'surcharge amount: 12w for a farm')
+  assertEqual(BUILDINGS.farm.cost.gold, 50, 'farm base gold (surcharge basis)')
+})
+
+test('an unaffordable join is refused cleanly; an orphaned site re-tasks for free', () => {
+  const world = makeWorld()
+  const placed = placeStructure(world, TEAM_PLAYER, 'farm', 100, 100)
+  assert(placed.ok, 'farm placed')
+  const site = placed.id
+  const a = world.spawnUnit('worker', TEAM_PLAYER, 96, 100)
+  assert(orderBuild(world, a.id, site), 'first builder joins free')
+  world.gold[TEAM_PLAYER] = 7 // one gold short of the 8g surcharge
+  world.wood[TEAM_PLAYER] = 500
+  const b = world.spawnUnit('worker', TEAM_PLAYER, 104, 100)
+  assert(!orderBuild(world, b.id, site), 'join refused when the surcharge is unaffordable')
+  assert(world.state[b.id] !== STATE_BUILD, 'refused worker keeps its current orders')
+  assertEqual(world.gold[TEAM_PLAYER], 7, 'the refusal charged nothing')
+  assertEqual(buildersOnSite(world, site), 1, 'crew unchanged by the refusal')
+  // Orphan the site (builder stopped): with nobody on it, the next
+  // builder is the FIRST builder again — free even with empty coffers.
+  orderStop(world, a.id)
+  assertEqual(buildersOnSite(world, site), 0, 'site orphaned')
+  world.gold[TEAM_PLAYER] = 0
+  world.wood[TEAM_PLAYER] = 0
+  assert(orderBuild(world, b.id, site), 'orphaned site re-tasks for free')
+  assertEqual(world.state[b.id], STATE_BUILD, 'replacement builder is building')
+})
+
+test('paying the surcharge does not change the crew rate: still 1 + 0.6(n-1)', () => {
+  const world = makeWorld()
+  const placed = placeStructure(world, TEAM_PLAYER, 'farm', 100, 100)
+  assert(placed.ok, 'farm placed')
+  const site = placed.id
+  world.gold[TEAM_PLAYER] = 10000
+  world.wood[TEAM_PLAYER] = 10000
+  for (let i = 0; i < 3; i += 1) {
+    const w = world.spawnUnit('worker', TEAM_PLAYER, 100 + i * 2, 104)
+    assert(orderBuild(world, w.id, site), 'builder joined through the surcharge path')
+    world.moving[w.id] = 0 // parked on the site: pure rate measurement
+  }
+  stepWorld(world, 60) // one second of crew work
+  const rate = FACTIONS.human.worker.buildRate
+  assert(
+    Math.abs(world.buildProgress[site] - rate * 2.2) < 0.03,
+    `crew progress ${world.buildProgress[site]} ≈ ${rate * 2.2} (powerbuild 1 + 0.6·2)`,
+  )
+})
+
+test('the tap path refuses an unaffordable join too (no silent assignment)', () => {
+  const { world, input } = gestureSetup()
+  const bctl = input as unknown as BuildCtl
+  const placed = placeStructure(world, TEAM_PLAYER, 'farm', 100, 100)
+  assert(placed.ok, 'farm placed')
+  const site = placed.id
+  const a = world.spawnUnit('worker', TEAM_PLAYER, 96, 100)
+  assert(orderBuild(world, a.id, site), 'first builder on site')
+  world.gold[TEAM_PLAYER] = 0
+  world.wood[TEAM_PLAYER] = 0
+  const b = world.spawnUnit('worker', TEAM_PLAYER, 104, 100)
+  world.harvestKind[b.id] = HARVEST_OFF
+  world.update(STEP)
+  bctl.selected = [b.id]
+  bctl.tapSelect(100, 100, 0)
+  assert(world.state[b.id] !== STATE_BUILD, 'unaffordable tap-join refused')
+  assertEqual(buildersOnSite(world, site), 1, 'crew unchanged')
+})
+
+suite('fix D supply accounting: queued units count against the cap')
+
+test('in-production units are committed supply: the queue cannot promise past the cap', () => {
+  const { world } = gestureSetup()
+  const hall = findKind(world, KIND_HALL, TEAM_PLAYER)
+  assert(hall !== -1, 'player hall exists')
+  world.gold[TEAM_PLAYER] = 100000
+  world.wood[TEAM_PLAYER] = 100000
+  const used = world.supplyUsed[TEAM_PLAYER]
+  const cap = world.supplyCap[TEAM_PLAYER]
+  const room = cap - used
+  assert(room >= 2, `scenario leaves supply room (used ${used}/${cap})`)
+  assertEqual(productionCommittedSupply(world, TEAM_PLAYER), 0, 'nothing committed yet')
+  for (let i = 0; i < room; i += 1) {
+    assert(enqueueTrain(world, hall, 'worker'), `item ${i + 1} fits the cap`)
+  }
+  assertEqual(world.supplyUsed[TEAM_PLAYER], used, 'nothing has spawned — supplyUsed is unchanged')
+  assertEqual(
+    productionCommittedSupply(world, TEAM_PLAYER),
+    room,
+    'every queued worker is committed supply',
+  )
+  assert(
+    !enqueueTrain(world, hall, 'worker'),
+    'the next item is refused: used + committed + 1 would pass the cap',
+  )
+  // Cancelling a waiting item frees its commitment for a new item.
+  assert(cancelTrainQueued(world, hall, 0), 'cancel a waiting item')
+  assertEqual(productionCommittedSupply(world, TEAM_PLAYER), room - 1, 'commitment freed')
+  assert(enqueueTrain(world, hall, 'worker'), 'the freed slot can be queued again')
 })

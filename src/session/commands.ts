@@ -25,6 +25,8 @@ export type Command =
       siteId: number
     }
   | { type: 'train'; step: number; buildingId: number; unit: UnitType }
+  /** Cancel production: index -1 = active item, >= 0 = queue index. */
+  | { type: 'cancelTrain'; step: number; buildingId: number; index: number }
   | { type: 'rally'; step: number; buildingId: number; x: number; z: number }
   | { type: 'patrol'; step: number; unitIds: number[]; x: number; z: number }
   | { type: 'stop'; step: number; unitIds: number[] }

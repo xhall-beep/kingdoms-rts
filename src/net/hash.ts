@@ -114,6 +114,8 @@ export function hashWorldState(world: World): bigint {
   h = mixInt8Array(h, world.trainKind)
   h = mixFloatArray(h, world.trainLeft)
   h = mixFloatArray(h, world.trainTotal)
+  h = mixInt8Array(h, world.trainQueueKind)
+  h = mixUint8Array(h, world.trainQueueLen)
   h = mixFloatArray(h, world.rallyX)
   h = mixFloatArray(h, world.rallyZ)
   h = mixUint8Array(h, world.harvestKind)

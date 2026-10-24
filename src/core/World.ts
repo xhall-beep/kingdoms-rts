@@ -43,6 +43,9 @@ export const TEAM_NEUTRAL = 2
 
 export const NO_TARGET = -1
 export const NO_TRAINING = -1
+/** Waiting slots behind a building's active training slot. The queue
+ *  cap is MAX_TRAIN_QUEUE (production.ts): 1 active + 7 waiting = 8. */
+export const TRAIN_QUEUE_WAITING = 7
 
 /** Carry kinds carried by workers: 0 = none, 1 = wood, 2 = gold. */
 export const CARRY_NONE = 0
@@ -73,7 +76,13 @@ const UNIT_BY_KIND: UnitType[] = ['worker', 'melee', 'ranged']
 
 const BUILDING_BY_KIND: BuildingType[] = [
   'hall', 'hall', 'hall', // 0-2: units, unused
-  'hall', 'barracks', 'archery', 'farm',
+  'hall', 'barracks', 'archery', 'farm', // 3-6: buildings
+  'hall', 'hall', // 7-8: tree / gold mine, unused (resource nodes grant no supply)
+  'tower', // 9: KIND_TOWER — player-buildable and attackable. Omitting it
+  // made buildingSupply(undefined) throw inside removeEntity, so ANY
+  // destroyed Guard Tower crashed the sim (audit fix E). The tower's
+  // supply is 0 in the data tables, so its completion grant and its
+  // destruction refund agree: zero.
 ]
 
 export interface Entity {
@@ -179,10 +188,16 @@ export class World {
   /** Seed-warp sites (undead): the structure pulls itself up with no worker present. */
   readonly buildAuto: Uint8Array
 
-  // ---- production (single active training slot per building) ----
+  // ---- production (one active training slot + a waiting queue) ----
   readonly trainKind: Int8Array
   readonly trainLeft: Float32Array
   readonly trainTotal: Float32Array
+  /** Waiting queue behind the active slot: unit kinds, indexed
+   *  [buildingId * TRAIN_QUEUE_WAITING + slot]; slots past trainQueueLen
+   *  hold NO_TRAINING. Sim state — hashed and saved like the slot. */
+  readonly trainQueueKind: Int8Array
+  /** Waiting items queued for this building (0..TRAIN_QUEUE_WAITING). */
+  readonly trainQueueLen: Uint8Array
   readonly rallyX: Float32Array
   readonly rallyZ: Float32Array
 
@@ -322,6 +337,8 @@ export class World {
     this.trainKind = new Int8Array(length).fill(NO_TRAINING)
     this.trainLeft = new Float32Array(length)
     this.trainTotal = new Float32Array(length)
+    this.trainQueueKind = new Int8Array(length * TRAIN_QUEUE_WAITING).fill(NO_TRAINING)
+    this.trainQueueLen = new Uint8Array(length)
     this.rallyX = new Float32Array(length)
     this.rallyZ = new Float32Array(length)
     this.fog = [new FogGrid(), new FogGrid()]
@@ -395,6 +412,11 @@ export class World {
       if (other !== id && this.targetId[other] === id) {
         this.targetId[other] = NO_TARGET
       }
+    }
+    // A recycled id must not inherit the dead building's production queue.
+    this.trainQueueLen[id] = 0
+    for (let s = 0; s < TRAIN_QUEUE_WAITING; s += 1) {
+      this.trainQueueKind[id * TRAIN_QUEUE_WAITING + s] = NO_TRAINING
     }
     this.entities.delete(id)
     this.freeIds.push(id)

@@ -2,7 +2,7 @@
  * Core simulation regression tests — headless, deterministic.
  * Covers: construction, production, combat, movement, gathering, victory.
  */
-import { World, TEAM_PLAYER, TEAM_ENEMY, KIND_WORKER } from '../core/World.ts'
+import { World, TEAM_PLAYER, TEAM_ENEMY, KIND_WORKER, KIND_TOWER } from '../core/World.ts'
 import { placeStructure, canAfford } from '../world/construction.ts'
 import { orderMove } from '../systems/movement.ts'
 import { orderAttack, orderAttackMove } from '../systems/combat.ts'
@@ -266,4 +266,46 @@ test('workers spread across resource nodes (no thundering herd)', () => {
     if (t !== -1) targets.add(t)
   }
   assert(targets.size > 1, `workers split across nodes (targets: ${[...targets]})`)
+})
+
+suite('audit fix E: tower destruction must not crash the sim')
+
+test('destroying a completed tower refunds its supply (zero) instead of throwing', () => {
+  const world = makeWorld()
+  const placed = placeStructure(world, TEAM_PLAYER, 'tower', 100, 100)
+  assert(placed.ok, 'tower placed')
+  const site = placed.id
+  assertEqual(world.kind[site], KIND_TOWER, 'the placed structure is a tower (the missing table index)')
+  const builder = world.spawnUnit('worker', TEAM_PLAYER, 96, 100)
+  assert(orderBuild(world, builder.id, site), 'builder sent to the tower')
+  stepWorld(world, 60 * 12) // tower: 8 progress at 1.15/s + the walk
+  assert(world.buildProgress[site] >= world.buildTotal[site], 'tower completed')
+  const capBefore = world.supplyCap[TEAM_PLAYER]
+  // The crash site: removeEntity looks the tower up in BUILDING_BY_KIND,
+  // which had no index 9 — buildingSupply(undefined) threw a TypeError
+  // and killed the game loop whenever a finished tower fell.
+  world.removeEntityById(site)
+  assert(!world.entities.has(site), 'tower removed')
+  assertEqual(
+    world.supplyCap[TEAM_PLAYER],
+    capBefore,
+    'the tower grants 0 supply in the data tables, so its refund is 0 and the cap is unchanged',
+  )
+})
+
+test('control: destroying a completed farm refunds exactly its granted supply', () => {
+  const world = makeWorld()
+  world.gold[TEAM_PLAYER] = 1000
+  world.wood[TEAM_PLAYER] = 1000
+  const placed = placeStructure(world, TEAM_PLAYER, 'farm', 100, 100)
+  assert(placed.ok, 'farm placed')
+  const site = placed.id
+  const capAtPlacement = world.supplyCap[TEAM_PLAYER]
+  const builder = world.spawnUnit('worker', TEAM_PLAYER, 96, 100)
+  assert(orderBuild(world, builder.id, site), 'builder sent to the farm')
+  stepWorld(world, 60 * 9) // farm: 6 progress at 1.15/s + the walk
+  assert(world.buildProgress[site] >= world.buildTotal[site], 'farm completed')
+  assertEqual(world.supplyCap[TEAM_PLAYER], capAtPlacement + 6, 'completion granted the farm supply')
+  world.removeEntityById(site)
+  assertEqual(world.supplyCap[TEAM_PLAYER], capAtPlacement, 'destruction refunded exactly the grant')
 })

@@ -276,6 +276,12 @@ export class CombatSystemImpl implements System {
     // Skip if this was already a reanimated unit (no chain reanimation)
     if (world.reanimateTicks[deadId] !== 0) return
 
+    // Only fallen UNITS rise: a destroyed building is rubble, not a
+    // corpse. Without this gate undead structures reanimated skeletons
+    // at the same rate as unit deaths (audit fix F).
+    const deadKind = world.kind[deadId]
+    if (deadKind !== KIND_WORKER && deadKind !== KIND_MELEE && deadKind !== KIND_RANGED) return
+
     // Deterministic roll: hash of entity id and tick
     const hash = ((deadId * 2654435761) ^ (world.tick * 40503)) >>> 0
     const roll = (hash % 10000) / 10000

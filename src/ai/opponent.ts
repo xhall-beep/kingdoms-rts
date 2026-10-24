@@ -506,7 +506,9 @@ export class OpponentAI implements System {
   }
 
   private trainWorkers(world: World, hall: number, workerCount: number): void {
-    const queued = world.trainKind[hall] !== NO_TRAINING ? 1 : 0 // Single training slot.
+    // In production = the active slot + the waiting queue behind it.
+    const queued =
+      (world.trainKind[hall] !== NO_TRAINING ? 1 : 0) + world.trainQueueLen[hall]
     let target = this.tuning.workerTarget
     if (world.factionOfTeam[this.team] === 'undead') {
       // No farms: never let workers consume the entire supply cap (see
@@ -516,7 +518,16 @@ export class OpponentAI implements System {
         Math.max(0, world.supplyCap[this.team] - UNDEAD_ARMY_SUPPLY_RESERVE),
       )
     }
-    if (workerCount + queued < target) this.emitTrain(world, hall, 'worker')
+    // One-at-a-time pacing, unchanged from the single-slot era: start a
+    // worker only when the slot is free. Emits while busy used to be
+    // refused outright; now they would land in the queue and
+    // pre-commit gold the build plan expects to spend elsewhere.
+    if (
+      world.trainKind[hall] === NO_TRAINING &&
+      workerCount + queued < target
+    ) {
+      this.emitTrain(world, hall, 'worker')
+    }
   }
 
   /**

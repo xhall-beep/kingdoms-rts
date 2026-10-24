@@ -17,7 +17,8 @@ import { WarHornSystemImpl, soundWarHorn } from './systems/warhorn'
 import { ShrineSystemImpl } from './systems/shrines'
 import { MovementSystemImpl } from './systems/movement'
 import { ProductionSystemImpl } from './systems/production'
-import { enqueueTrain, researchUpgrade, upgradeBuilding } from './systems/production'
+import { cancelTrainActive, cancelTrainQueued, enqueueTrain, researchUpgrade, upgradeBuilding } from './systems/production'
+import { sfx } from './ui/feedback.ts'
 import type { UpgradeType } from './data/upgrades.ts'
 import { VictorySystemImpl } from './systems/victory'
 import { VisionSystemImpl } from './systems/vision'
@@ -386,6 +387,27 @@ export function initializeGame(): GameComposition {
           step: composition.engine.getSimulationSteps(),
           buildingId,
           unit: type,
+        })
+      } else {
+        // Refused (queue full at the cap of 8, unaffordable, supply):
+        // audible feedback — a silent no-op reads as an ignored tap.
+        sfx.error()
+      }
+    },
+    onCancelTrain: (index) => {
+      const selected = composition.inputController.getSelected()
+      if (selected.length !== 1) return
+      const buildingId = selected[0]
+      const world = composition.engine.world
+      const ok = index < 0
+        ? cancelTrainActive(world, buildingId)
+        : cancelTrainQueued(world, buildingId, index)
+      if (ok) {
+        commandLog.record({
+          type: 'cancelTrain',
+          step: composition.engine.getSimulationSteps(),
+          buildingId,
+          index,
         })
       }
     },

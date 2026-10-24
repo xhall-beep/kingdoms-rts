@@ -11,7 +11,9 @@ import {
   KIND_MELEE,
   KIND_RANGED,
   KIND_TREE,
+  KIND_TOWER,
   KIND_WORKER,
+  STATE_BUILD,
   STATE_IDLE,
   TEAM_PLAYER,
 } from '../core/World'
@@ -20,9 +22,9 @@ import type { BuildingType } from '../data/buildings.ts'
 import type { Command } from '../session/commands.ts'
 import type { Renderer } from '../render/renderer'
 import { sfx } from '../ui/feedback.ts'
-import { canPlaceStructure, placeStructure } from '../world/construction.ts'
+import { canPlaceStructure, placeStructure, BUILDING_TYPE_BY_KIND } from '../world/construction.ts'
 import { orderAttack, orderAttackMove } from '../systems/combat'
-import { orderBuild, orderGather } from '../systems/gather'
+import { buildersOnSite, buildSurchargeAmount, orderBuild, orderGather } from '../systems/gather'
 import { setRally } from '../systems/production.ts'
 import { orderMove, orderHold, orderPatrol } from '../systems/movement'
 
@@ -765,6 +767,28 @@ export class InputControllerImpl implements InputController {
 
     const isOwn = world.team[hit] === this.localTeam
     if (isOwn) {
+      // Order selected workers onto our own unfinished structure and
+      // they JOIN its construction crew (multi-builder) — this is also
+      // how an orphaned site whose builder was stopped gets re-tasked.
+      // With no worker selected, the tap selects the structure for
+      // info, exactly as before. The selection is kept after joining:
+      // the player may add more builders, or Stop them from here.
+      if (this.isJoinableSite(world, hit)) {
+        const workers = this.selectedWorkers(world)
+        if (workers.length > 0) {
+          if (now > 0) this.lastTap = null
+          const joined = this.orderWorkersToBuild(world, hit, workers)
+          if (joined > 0) {
+            this.renderer?.pingMove(world.positionX[hit], world.positionZ[hit])
+            sfx.move()
+          } else {
+            // Every join refused (powerbuild surcharge unaffordable):
+            // audible refusal instead of a silent no-op.
+            sfx.error()
+          }
+          return
+        }
+      }
       // Double-tap on a unit: select every unit of that kind on screen.
       // It deliberately replaces the tap-again-to-deselect toggle, but
       // only inside the double-tap window — a slower second tap still
@@ -950,18 +974,103 @@ export class InputControllerImpl implements InputController {
     if (this.deferred) {
       // Lockstep PvP: the turn executor places the structure deterministically.
       this.emit({ type: 'build', step: 0, workerId: worker, building: type, x, z, siteId: -1 })
+      this.endBuildInteraction()
       return
     }
     const placed = placeStructure(world, this.localTeam, type, x, z)
     if (placed.ok) {
       orderBuild(world, worker, placed.id)
       this.emit({ type: 'build', step: 0, workerId: worker, building: type, x, z, siteId: placed.id })
-      // Stay in build mode for placing more; the HUD can cancel.
+      // Placement ENDS the interaction (Montz's playtest): the worker
+      // goes and works on the site on its own — nothing stays selected,
+      // and the build mode disarms so the next tap is a fresh decision,
+      // not a second farm placed by accident. There is no shift-queue
+      // flow to preserve: re-arm Build for each additional placement.
+      this.endBuildInteraction()
     } else {
       // Blocked footprint / can't afford / faction rule: say so audibly —
-      // a silent no-op here reads as "the game ignored my tap".
+      // a silent no-op here reads as "the game ignored my tap". The mode
+      // stays armed so the player can pick another spot.
       sfx.error()
     }
+  }
+
+  /**
+   * End a completed placement: clear the selection entirely and disarm
+   * build mode (pending building + ghost). Issues no order — the worker
+   * was already sent by orderBuild / the emitted build command.
+   */
+  private endBuildInteraction(): void {
+    this.selected = []
+    this.pendingBuilding = null
+    this.ghostPos = null
+    this.renderer?.setSelection(this.selected)
+    this.setMode('selection')
+  }
+
+  /**
+   * An unfinished structure of the local team that workers can be sent
+   * to build — the join target for multi-builder construction. Progress
+   * belongs to the structure, so this also covers re-tasking an
+   * orphaned site whose original builder was stopped or lost.
+   */
+  private isJoinableSite(world: World, id: number): boolean {
+    if (id < 0 || !world.entities.has(id)) return false
+    if (world.team[id] !== this.localTeam) return false
+    const k = world.kind[id]
+    const isBuilding = (k >= KIND_HALL && k <= KIND_FARM) || k === KIND_TOWER
+    return isBuilding && world.buildProgress[id] < world.buildTotal[id]
+  }
+
+  /**
+   * Send workers onto an existing unfinished structure — the natural
+   * extension of the existing build order: same order type, targetId =
+   * the structure. In deferred (lockstep) mode the emitted build
+   * command carries siteId, which the turn executor's existing resume
+   * branch turns into orderBuild on that site. Returns how many workers
+   * actually joined, so callers can give refusal feedback (a join past
+   * the first builder costs the powerbuild surcharge; an unaffordable
+   * join is refused).
+   */
+  private orderWorkersToBuild(world: World, site: number, workers: number[]): number {
+    if (workers.length === 0) return 0
+    if (this.deferred) {
+      const type = BUILDING_TYPE_BY_KIND[world.kind[site]]
+      // Pre-check each join against the surcharge, simulating the
+      // crew and the treasury in selection order, so a join the
+      // executor would refuse is never emitted (the executor re-checks
+      // deterministically when the command lands).
+      const amount = buildSurchargeAmount(world, site)
+      let crew = buildersOnSite(world, site)
+      let gold = world.gold[this.localTeam]
+      let wood = world.wood[this.localTeam]
+      let sent = 0
+      for (const w of workers) {
+        const already = world.state[w] === STATE_BUILD && world.targetId[w] === site
+        if (!already && crew > 0) {
+          if (gold < amount.gold || wood < amount.wood) continue
+          gold -= amount.gold
+          wood -= amount.wood
+        }
+        this.emit({
+          type: 'build', step: 0, workerId: w, building: type,
+          x: world.positionX[site], z: world.positionZ[site], siteId: site,
+        })
+        if (!already) crew += 1
+        sent += 1
+      }
+      return sent
+    }
+    let joined = 0
+    for (const w of workers) if (orderBuild(world, w, site)) joined += 1
+    return joined
+  }
+
+  /** Selected own workers (the subset of the selection that can build). */
+  private selectedWorkers(world: World): number[] {
+    return this.selected.filter(
+      (id) => world.team[id] === this.localTeam && world.kind[id] === KIND_WORKER,
+    )
   }
 
   /** Would the pending building place at the current ghost position? */
@@ -987,6 +1096,30 @@ export class InputControllerImpl implements InputController {
     if (target !== -1 && (world.kind[target] === KIND_TREE || world.kind[target] === KIND_GOLDMINE)) {
       this.assignGather(world, target)
       return
+    }
+    // Own unfinished structure: selected workers JOIN its construction
+    // crew instead of walking to it and idling next to it; other
+    // selected units still move to it as an escort.
+    if (target !== -1 && this.isJoinableSite(world, target)) {
+      const workers = this.selectedWorkers(world)
+      if (workers.length > 0) {
+        const joined = this.orderWorkersToBuild(world, target, workers)
+        const others = this.selected.filter(
+          (id) => world.kind[id] <= KIND_RANGED && world.kind[id] !== KIND_WORKER,
+        )
+        if (!this.deferred) for (const id of others) orderMove(world, id, p.x, p.z)
+        if (others.length > 0) {
+          this.emit({ type: 'move', step: 0, unitIds: others, x: p.x, z: p.z })
+        }
+        if (joined > 0 || others.length > 0) {
+          this.renderer?.pingMove(world.positionX[target], world.positionZ[target])
+          sfx.move()
+        } else {
+          // Every join refused (powerbuild surcharge unaffordable).
+          sfx.error()
+        }
+        return
+      }
     }
     const movers = this.selected.filter((id) => world.kind[id] <= KIND_RANGED)
     if (!this.deferred) for (const id of movers) orderMove(world, id, p.x, p.z)

@@ -1,4 +1,5 @@
 import type { World } from '../core/World'
+import { NO_TRAINING } from '../core/World'
 import type { FactionId } from '../data/factions.ts'
 import type { Command } from './commands.ts'
 
@@ -16,6 +17,10 @@ const ARRAY_FIELDS = [
   'carryKind', 'carryAmount', 'carryMax', 'gatherTimer', 'amount',
   'buildProgress', 'buildTotal', 'buildAuto',
   'trainKind', 'trainLeft', 'trainTotal', 'rallyX', 'rallyZ',
+  // The waiting queue rides along per-entity (length only — the queue
+  // kind slots are indexed by buildingId * TRAIN_QUEUE_WAITING, not by
+  // entity id, so serializeWorld/deserializeWorld handle them below).
+  'trainQueueLen',
   'harvestKind', 'bellsRung', 'militiaUntil', 'tier', 'upgradeLeft', 'shrineHeld',
 ] as const
 
@@ -65,6 +70,9 @@ export function serializeWorld(world: World, step: number, commands: readonly Co
     for (let i = 0; i <= maxId; i += 1) out[i] = arr[i]
     arrays[name] = out
   }
+  // Queue kind slots are indexed past maxId (buildingId * 7 + slot), so
+  // they serialize in full rather than through the per-entity window.
+  arrays['trainQueueKind'] = Array.from(world.trainQueueKind)
   return {
     version: SAVE_VERSION,
     step,
@@ -108,6 +116,14 @@ export function deserializeWorld(world: World, save: WorldSave): void {
     if (!data) continue
     const n = Math.min(data.length, maxId + 1)
     for (let i = 0; i < n; i += 1) arr[i] = data[i]
+  }
+  // Queue kind slots: reset first (older saves predate the queue and
+  // restore as empty), then copy the saved slots in full.
+  world.trainQueueKind.fill(NO_TRAINING)
+  const queueData = save.arrays['trainQueueKind']
+  if (queueData) {
+    const n = Math.min(queueData.length, world.trainQueueKind.length)
+    for (let i = 0; i < n; i += 1) world.trainQueueKind[i] = queueData[i]
   }
   world.entities.clear()
   for (const id of save.entities) world.entities.set(id, { id })
