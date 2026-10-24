@@ -32,6 +32,7 @@ import {
   scalarOf,
 } from '../core/state-registry.ts'
 import { VictorySystemImpl } from '../systems/victory.ts'
+import { ShrineSystemImpl } from '../systems/shrines.ts'
 
 const FNV_OFFSET = 0xcbf29ce484222325n
 const FNV_PRIME = 0x100000001b3n
@@ -120,6 +121,15 @@ export function hashWorldState(world: World): bigint {
   // VictorySystem check timer (internal sim state).
   for (const s of world.systems) {
     if (s instanceof VictorySystemImpl) {
+      h = mixFloat(h, s.getTimer())
+      break
+    }
+  }
+
+  // ShrineSystem check timer (internal sim state, same treatment — it
+  // phases when capture checks and VP drains fire).
+  for (const s of world.systems) {
+    if (s instanceof ShrineSystemImpl) {
       h = mixFloat(h, s.getTimer())
       break
     }

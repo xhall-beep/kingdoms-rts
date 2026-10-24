@@ -116,8 +116,10 @@ export function composeGame(canvas: HTMLCanvasElement): GameComposition {
  * Match-end modal: Victory/Defeat, rating change when known, rematch button.
  * Called twice: immediately (rating pending) and again once the server
  * responds with the updated rating. Idempotent — reuses the same element.
+ * Practice passes hideRating: there is no server and no rating at stake,
+ * so the rating line is hidden instead of pending forever.
  */
-function showMatchEndModal(won: boolean, ratingBefore: number | null, ratingAfter: number | null, opponentName: string): void {
+function showMatchEndModal(won: boolean, ratingBefore: number | null, ratingAfter: number | null, opponentName: string, hideRating = false): void {
   let modal = document.getElementById('pvp-end-modal')
   if (!modal) {
     modal = document.createElement('div')
@@ -148,12 +150,16 @@ function showMatchEndModal(won: boolean, ratingBefore: number | null, ratingAfte
   title.textContent = won ? 'Victory!' : 'Defeat'
   ;(title as HTMLElement).style.color = won ? '#f5c542' : '#e06c6c'
   sub.textContent = `vs ${opponentName}`
-  if (ratingBefore !== null && ratingAfter !== null) {
+  if (hideRating) {
+    ;(ratingEl as HTMLElement).style.display = 'none'
+  } else if (ratingBefore !== null && ratingAfter !== null) {
+    ;(ratingEl as HTMLElement).style.display = ''
     const delta = ratingAfter - ratingBefore
     const sign = delta >= 0 ? '+' : ''
     const color = delta >= 0 ? '#7dd87d' : '#e06c6c'
     ratingEl.innerHTML = `Rating: ${ratingBefore} → <b style="color:${color}">${ratingAfter} (${sign}${delta})</b>`
   } else {
+    ;(ratingEl as HTMLElement).style.display = ''
     ratingEl.textContent = 'Updating rating…'
   }
 }
@@ -564,7 +570,7 @@ export function initializeGame(): GameComposition {
           composition.hud.setPvpActive(false)
           refreshPauseUi()
           try { recordGameResult('practice', won) } catch { /* profile unavailable */ }
-          showMatchEndModal(won, null, null, pvpAiGame.tierLabel)
+          showMatchEndModal(won, null, null, pvpAiGame.tierLabel, true)
           console.log(`Practice match over: ${won ? 'victory' : 'defeat'}`)
         },
       })

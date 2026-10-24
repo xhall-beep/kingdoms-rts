@@ -4,10 +4,10 @@
  *
  * Layout: magic + version, id counter + free-id stack, entity id list,
  * then every registered entity array raw (core/state-registry.ts order),
- * fog cells + visibleNow, victory timer, per-team arrays as f64, scalars,
- * faction strings. Floats are copied bit-exact (no rounding), so restore
- * is deterministic and hash-exact (state-coverage.test.ts proves it on
- * non-default state).
+ * fog cells + visibleNow, victory timer, shrine timer, per-team arrays
+ * as f64, scalars, faction strings. Floats are copied bit-exact (no
+ * rounding), so restore is deterministic and hash-exact
+ * (state-coverage.test.ts proves it on non-default state).
  *
  * Version history:
  * - v2: + fog visibleNow + victory timer.
@@ -20,6 +20,14 @@
  *   Soul-Ash, War Horn, militia cooldown, upgrade levels), tick /
  *   matchTime, and the free-id stack (allocation order after a resync
  *   diverged from the sender's). v3 carries all of it.
+ * - v4 (PvP-readiness, audit follow-up 2026-10-24): + the ShrineSystem
+ *   check timer next to the victory timer. v3 carried NO system timer
+ *   besides victory's, so a rejoin could land on a misaligned shrine
+ *   check phase — a desync the (v3+) hash detects but restore could not
+ *   repair. The timer is a float accumulator reset to exactly 0 on each
+ *   check and reset independently of world.tick by the PvP reset path,
+ *   so it cannot be re-derived from tick on restore; it is carried
+ *   bit-exact, like the victory timer.
  */
 import { World } from '../core/World.ts'
 import type { FactionId } from '../data/factions.ts'
@@ -33,9 +41,10 @@ import {
   setScalar,
 } from '../core/state-registry.ts'
 import { VictorySystemImpl } from '../systems/victory.ts'
+import { ShrineSystemImpl } from '../systems/shrines.ts'
 
 const SNAP_MAGIC = 0x534e4150 // 'SNAP'
-const SNAP_VERSION = 3
+const SNAP_VERSION = 4
 
 function victoryTimerOf(world: World): number {
   for (const s of world.systems) {
@@ -47,6 +56,22 @@ function victoryTimerOf(world: World): number {
 function setVictoryTimer(world: World, t: number): void {
   for (const s of world.systems) {
     if (s instanceof VictorySystemImpl) {
+      s.setTimer(t)
+      return
+    }
+  }
+}
+
+function shrineTimerOf(world: World): number {
+  for (const s of world.systems) {
+    if (s instanceof ShrineSystemImpl) return s.getTimer()
+  }
+  return 0
+}
+
+function setShrineTimer(world: World, t: number): void {
+  for (const s of world.systems) {
+    if (s instanceof ShrineSystemImpl) {
       s.setTimer(t)
       return
     }
@@ -65,7 +90,7 @@ function byteLengthOf(world: World): number {
   n += world.fog[1].snapshotCells().length
   n += 4 + world.fog[0].snapshotVisibleNow().length * 4
   n += 4 + world.fog[1].snapshotVisibleNow().length * 4
-  n += 8 // victory timer f64
+  n += 16 // victory + shrine check timers, f64 each
   n += WORLD_TEAM_ARRAYS.length * 2 * 8 // per-team arrays × 2 teams × f64
   n += WORLD_SCALARS.length * 8 // scalars, one f64 slot each
   n += 2 + world.factionOfTeam[0].length // faction strings (u16 len + ascii)
@@ -112,6 +137,7 @@ export function snapshotWorld(world: World): Uint8Array {
     for (const i of vn) putU32(i)
   }
   view.setFloat64(o, victoryTimerOf(world), true); o += 8
+  view.setFloat64(o, shrineTimerOf(world), true); o += 8
 
   for (const name of WORLD_TEAM_ARRAYS) putF64Arr(teamArrayOf(world, name))
   for (const spec of WORLD_SCALARS) {
@@ -171,6 +197,7 @@ export function restoreWorld(world: World, data: Uint8Array): void {
     fog.restoreVisibleNow(vn)
   }
   setVictoryTimer(world, view.getFloat64(o, true)); o += 8
+  setShrineTimer(world, view.getFloat64(o, true)); o += 8
 
   const getF64Arr = (dst: number[]): void => {
     for (let i = 0; i < dst.length; i += 1) {

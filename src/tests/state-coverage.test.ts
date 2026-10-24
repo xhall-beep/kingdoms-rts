@@ -25,6 +25,9 @@ import {
 import { makeWorld, stepWorld } from './setup.ts'
 import { hashWorldState } from '../net/hash.ts'
 import { snapshotWorld, restoreWorld } from '../net/snapshot.ts'
+import { ShrineSystemImpl } from '../systems/shrines.ts'
+import { VictorySystemImpl } from '../systems/victory.ts'
+import { TEAM_PLAYER, TEAM_ENEMY } from '../core/World.ts'
 import {
   serializeWorld,
   deserializeWorld,
@@ -177,6 +180,15 @@ test('hash sees every field the pre-registry hash missed', () => {
   num('tick', () => w.tick, (v) => { w.tick = v }, 1)
   num('matchTime', () => w.matchTime, (v) => { w.matchTime = v }, 12.25)
   num('season', () => w.season, (v) => { w.season = v }, 1)
+  // System-internal check timers, carried beside the registry fields.
+  // The victory timer was carried even pre-registry; the shrine timer
+  // was carried by NO consumer until the PvP-readiness slice — a rejoin
+  // could land on a misaligned shrine-check phase the hash (once VP was
+  // hashed) would flag but restore could never repair.
+  const victorySys = w.systems.find((s) => s instanceof VictorySystemImpl) as VictorySystemImpl
+  const shrineSys = w.systems.find((s) => s instanceof ShrineSystemImpl) as ShrineSystemImpl
+  num('victoryCheckTimer', () => victorySys.getTimer(), (v) => victorySys.setTimer(v), 0.25)
+  num('shrineCheckTimer', () => shrineSys.getTimer(), (v) => shrineSys.setTimer(v), 0.375)
 
   for (const [label, perturb, restore] of cases) {
     perturb()
@@ -229,6 +241,9 @@ test('snapshot/restore is hash-exact on non-default state', () => {
   a.upgradeLeft[live] = 4.5
   a.bellsRung[0] = 1
   a.bellsRung[1] = 1
+  // Shrine check phase mid-cycle (snapshot v4 carries it; v3 did not).
+  const shrineSysA = a.systems.find((s) => s instanceof ShrineSystemImpl) as ShrineSystemImpl
+  shrineSysA.setTimer(0.5)
 
   const before = hashWorldState(a)
   const bytes = snapshotWorld(a)
@@ -244,12 +259,61 @@ test('snapshot/restore is hash-exact on non-default state', () => {
   assertEqual(b.reanimateTicks[live], 400, 'reanimate timer restored')
   assertEqual(b.shrineHeld[shrine!], 1, 'shrine holder restored')
   assertEqual(b.bellsRung[1], 1, 'bells restored')
+  const shrineSysB = b.systems.find((s) => s instanceof ShrineSystemImpl) as ShrineSystemImpl
+  assertEqual(shrineSysB.getTimer(), 0.5, 'shrine check phase restored')
   assertEqual(b.getFreeIdCount(), a.getFreeIdCount(), 'free-id stack restored')
   // Resync drill: 120 further ticks on both must stay bit-identical —
   // the pre-fix snapshot re-diverged here (season/wild/VP went stale).
   stepWorld(a, 120)
   stepWorld(b, 120)
   assertEqual(hashWorldState(b), hashWorldState(a), 'post-resync ticks stay identical')
+})
+
+test('snapshot restores shrine phase — capture and drain land on the same ticks', () => {
+  // Minimal shrine world (mirrors shrines.test.ts): one shrine, a hall
+  // per team so victory stays undecided, one player melee in the radius.
+  const build = (): World => {
+    const w = new World()
+    w.registerSystem(new ShrineSystemImpl())
+    w.registerSystem(new VictorySystemImpl())
+    w.spawnShrine(0, 0)
+    w.spawnBuilding('hall', TEAM_PLAYER, -40, -40, true)
+    w.spawnBuilding('hall', TEAM_ENEMY, 40, 40, true)
+    w.spawnUnit('melee', TEAM_PLAYER, 2, 0)
+    return w
+  }
+  const shrineTimer = (w: World): number =>
+    (w.systems.find((s) => s instanceof ShrineSystemImpl) as ShrineSystemImpl).getTimer()
+  const shrineId = (w: World): number => {
+    for (const id of w.entities.keys()) if (w.kind[id] === KIND_SHRINE) return id
+    throw new Error('no shrine')
+  }
+
+  const a = build()
+  // Mid-phase: the next capture check fires in ~0.5s, not ~1s. A restore
+  // that dropped the phase (snapshot v3) would delay b's capture by half
+  // a second of sim and desync every drain after it.
+  ;(a.systems.find((s) => s instanceof ShrineSystemImpl) as ShrineSystemImpl).setTimer(0.5)
+  const bytes = snapshotWorld(a)
+  const b = build() // identical world, but its phase sits at 0
+  restoreWorld(b, bytes)
+  assertEqual(shrineTimer(b), 0.5, 'shrine phase carried by the snapshot')
+
+  for (let i = 0; i < 13; i += 1) {
+    stepWorld(a, 10)
+    stepWorld(b, 10)
+    assertEqual(
+      hashWorldState(b),
+      hashWorldState(a),
+      `restored world stays identical at +${(i + 1) * 10} ticks`,
+    )
+  }
+  const sid = shrineId(a)
+  assertEqual(a.shrineHeld[sid], TEAM_PLAYER, 'original captured the shrine')
+  assertEqual(b.shrineHeld[sid], TEAM_PLAYER, 'restored world captured on the same phase')
+  assert(a.victoryPoints[TEAM_ENEMY] < 1000, 'drain actually happened in the original')
+  assertEqual(b.victoryPoints[TEAM_ENEMY], a.victoryPoints[TEAM_ENEMY], 'drain identical')
+  assertEqual(shrineTimer(b), shrineTimer(a), 'phases still aligned after the run')
 })
 
 // ---------------------------------------------------------------------------

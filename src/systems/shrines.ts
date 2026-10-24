@@ -31,6 +31,22 @@ export class ShrineSystemImpl implements System {
   private timer = 0
 
   /**
+   * Internal check timer is sim state (lockstep snapshot/hash), carried
+   * exactly like the victory check timer: a rejoin that lands on a
+   * different check phase would fire capture/drain on different ticks.
+   * It is a float accumulator (reset to exactly 0 on each check, and
+   * reset independently of world.tick by the PvP reset path), so its
+   * value is NOT derivable from world.tick — it must be carried.
+   */
+  getTimer(): number {
+    return this.timer
+  }
+
+  setTimer(t: number): void {
+    this.timer = t
+  }
+
+  /**
    * Reset the internal check accumulator. It drives when shrine capture and
    * Victory Point drain tick, so a stale pre-match value would desync peers;
    * reset alongside the world when a match (re)starts from a clean state.

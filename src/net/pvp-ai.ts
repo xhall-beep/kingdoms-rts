@@ -69,6 +69,17 @@ export class PvpAiGame {
   private transport: LoopbackTransport
   private ai: OpponentAI
   private aiBuffer: Command[] = []
+  /**
+   * Next turn the AI injector will emit a player-1 bundle for. Sequential
+   * from 0, one bundle per thinkAi() — mirroring a real remote peer's
+   * send loop (a bundle for EVERY turn, in order, at the pump cadence).
+   * Targeting peer.getNextSendTurn() instead starved the match: pump()'s
+   * send loop races sentUpTo inputDelay turns ahead, so the turns in
+   * between were never injected and never backfilled, and lockstep —
+   * which executes strictly in order — stalled at turn 1 forever.
+   */
+  private aiNextInjectTurn = 0
+  private stallShown = false
   private running = false
   private turnTimer: number | null = null
   private matchEnded = false
@@ -106,6 +117,12 @@ export class PvpAiGame {
       },
       onStall: (turn: number, waitedMs: number) => {
         console.warn(`Practice stall at turn ${turn} (${waitedMs}ms)`)
+        // Surface it like PvPGame does: a stalled match must tell the
+        // player something is wrong instead of sitting silent. Cleared
+        // in executeTurn when turns flow again (PvPGame clears its
+        // status the same way when the condition resolves).
+        this.stallShown = true
+        this.composition.hud.setPvpStatus('Practice stalled — waiting for the AI opponent…')
       },
     }
 
@@ -158,15 +175,15 @@ export class PvpAiGame {
     // timer throttles actual decisions to its difficulty cadence.
     this.ai.update(world, 0.25)
 
-    if (this.aiBuffer.length > 0) {
-      const turn = this.peer.getNextSendTurn()
-      this.transport.injectRemote(turn, [...this.aiBuffer])
-      this.aiBuffer.length = 0
-    } else {
-      // Inject an empty bundle so the peer never stalls waiting for player 1.
-      const turn = this.peer.getNextSendTurn()
-      this.transport.injectRemote(turn, [])
-    }
+    // Inject this think's commands (possibly none) as player 1's bundle
+    // for the next sequential turn — see aiNextInjectTurn. The accumulated
+    // buffer lands whole in that one bundle, exactly as it did before;
+    // only the TARGETING changed (sequential, never skipped, never ahead
+    // of the pump cadence a real peer would send at).
+    const commands = [...this.aiBuffer]
+    this.aiBuffer.length = 0
+    this.transport.injectRemote(this.aiNextInjectTurn, commands)
+    this.aiNextInjectTurn += 1
   }
 
   /** Forfeit: surrender through lockstep so the sim ends identically. */
@@ -204,6 +221,12 @@ export class PvpAiGame {
     }
     for (let i = 0; i < STEPS_PER_TURN; i++) {
       world.update(1 / 60)
+    }
+    // Turns are flowing again: clear any stall notice (matches PvPGame's
+    // clear-on-resolution use of the same surface).
+    if (this.stallShown) {
+      this.stallShown = false
+      this.composition.hud.setPvpStatus(null)
     }
     if (!this.matchEnded && world.winner !== -1) {
       this.endMatch(world.winner === 0)

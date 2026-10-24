@@ -144,11 +144,12 @@ export const WORLD_EXCLUDED_FIELDS: Readonly<Record<string, string>> = {
   // Derived index, rebuilt from positions at the top of every update();
   // never authoritative state (World.ts says so explicitly).
   spatialHash: 'derived state, rebuilt every tick',
-  // System instances are behavior, not state. The one piece of internal
-  // system state that IS sim state (the victory check timer) is carried
-  // explicitly by hash and snapshot; the shrine timer is reset-only in
-  // the PvP reset path and never serialized anywhere.
-  systems: 'behavior, not state (victory timer carried explicitly by hash/snapshot)',
+  // System instances are behavior, not state. The two pieces of internal
+  // system state that ARE sim state — the victory check timer and the
+  // shrine check timer — are carried explicitly by hash and snapshot
+  // (each beside the other, via getTimer/setTimer); no other system
+  // keeps sim state outside the World fields above.
+  systems: 'behavior, not state (victory + shrine check timers carried explicitly by hash/snapshot)',
   // Config, not state: fixed at construction, identical on all peers.
   capacity: 'construction-time config',
   // Private id-allocation internals. The counter is covered through
