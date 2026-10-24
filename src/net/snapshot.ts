@@ -2,16 +2,40 @@
  * Full world snapshot → bytes → world. Used for lockstep desync resync
  * (phase 1: the session harness; phase 2+: over the wire via SnapshotMsg).
  *
- * Layout: magic + version, then every typed array raw, then entity id list,
- * id counter, economy, factions, winner, fog cells. Floats are copied
- * bit-exact (no rounding), so restore is deterministic.
+ * Layout: magic + version, id counter + free-id stack, entity id list,
+ * then every registered entity array raw (core/state-registry.ts order),
+ * fog cells + visibleNow, victory timer, per-team arrays as f64, scalars,
+ * faction strings. Floats are copied bit-exact (no rounding), so restore
+ * is deterministic and hash-exact (state-coverage.test.ts proves it on
+ * non-default state).
+ *
+ * Version history:
+ * - v2: + fog visibleNow + victory timer.
+ * - v3 (registry unification, audit 2026-10-24): the array set comes from
+ *   the registry — v2 silently omitted 10 entity arrays (bellsRung,
+ *   buildAuto, carryMax, lastCombatTick, militiaUntil, momentumTicks,
+ *   reanimateTicks, shrineHeld, tier, upgradeLeft), season + the Living
+ *   Wild set (which the hash DID cover — a resync could therefore never
+ *   repair a season/wild desync), the per-team endgame arrays (VP,
+ *   Soul-Ash, War Horn, militia cooldown, upgrade levels), tick /
+ *   matchTime, and the free-id stack (allocation order after a resync
+ *   diverged from the sender's). v3 carries all of it.
  */
 import { World } from '../core/World.ts'
 import type { FactionId } from '../data/factions.ts'
+import {
+  WORLD_ENTITY_ARRAYS,
+  WORLD_TEAM_ARRAYS,
+  WORLD_SCALARS,
+  entityArrayOf,
+  teamArrayOf,
+  scalarOf,
+  setScalar,
+} from '../core/state-registry.ts'
 import { VictorySystemImpl } from '../systems/victory.ts'
 
 const SNAP_MAGIC = 0x534e4150 // 'SNAP'
-const SNAP_VERSION = 2 // v2: + fog visibleNow + victory timer
+const SNAP_VERSION = 3
 
 function victoryTimerOf(world: World): number {
   for (const s of world.systems) {
@@ -32,56 +56,20 @@ function setVictoryTimer(world: World, t: number): void {
 function byteLengthOf(world: World): number {
   let n = 4 + 4 // magic + version
   n += 4 // nextEntityId
-  n += 4 // entity count
-  n += world.entities.size * 4 // entity ids
-  n += world.positionX.byteLength
-  n += world.positionY.byteLength
-  n += world.positionZ.byteLength
-  n += world.velocityX.byteLength
-  n += world.velocityY.byteLength
-  n += world.velocityZ.byteLength
-  n += world.kind.byteLength
-  n += world.team.byteLength
-  n += world.state.byteLength
-  n += world.health.byteLength
-  n += world.maxHealth.byteLength
-  n += world.damage.byteLength
-  n += world.attackRange.byteLength
-  n += world.sight.byteLength
-  n += world.cooldown.byteLength
-  n += world.cooldownTotal.byteLength
-  n += world.moving.byteLength
-  n += world.moveSpeed.byteLength
-  n += world.targetX.byteLength
-  n += world.targetZ.byteLength
-  n += world.stopDist.byteLength
-  n += world.radius.byteLength
-  n += world.targetId.byteLength
-  n += world.carryKind.byteLength
-  n += world.carryAmount.byteLength
-  n += world.gatherTimer.byteLength
-  n += world.amount.byteLength
-  n += world.buildProgress.byteLength
-  n += world.buildTotal.byteLength
-  n += world.trainKind.byteLength
-  n += world.trainLeft.byteLength
-  n += world.trainTotal.byteLength
-  n += world.trainQueueKind.byteLength
-  n += world.trainQueueLen.byteLength
-  n += world.rallyX.byteLength
-  n += world.rallyZ.byteLength
-  n += world.harvestKind.byteLength
-  n += world.resumeX.byteLength
-  n += world.resumeZ.byteLength
+  n += 4 + world.getFreeIdCount() * 4 // free-id stack
+  n += 4 + world.entities.size * 4 // entity count + ids
+  for (const spec of WORLD_ENTITY_ARRAYS) {
+    n += entityArrayOf(world, spec.name).byteLength
+  }
   n += world.fog[0].snapshotCells().length
   n += world.fog[1].snapshotCells().length
   n += 4 + world.fog[0].snapshotVisibleNow().length * 4
   n += 4 + world.fog[1].snapshotVisibleNow().length * 4
   n += 8 // victory timer f64
-  n += 7 * 2 * 8 // 7 economy arrays × 2 teams × f64
+  n += WORLD_TEAM_ARRAYS.length * 2 * 8 // per-team arrays × 2 teams × f64
+  n += WORLD_SCALARS.length * 8 // scalars, one f64 slot each
   n += 2 + world.factionOfTeam[0].length // faction strings (u16 len + ascii)
   n += 2 + world.factionOfTeam[1].length
-  n += 4 // winner
   return n
 }
 
@@ -93,11 +81,10 @@ export function snapshotWorld(world: World): Uint8Array {
     view.setUint32(o, v >>> 0, true)
     o += 4
   }
-  const putBytes = (a: Uint8Array): void => {
-    buf.set(a, o)
+  const putArray = (a: ArrayBufferView): void => {
+    buf.set(new Uint8Array(a.buffer, a.byteOffset, a.byteLength), o)
     o += a.byteLength
   }
-  const putF32 = (a: Float32Array): void => putBytes(new Uint8Array(a.buffer, a.byteOffset, a.byteLength))
   const putF64Arr = (a: number[]): void => {
     for (const v of a) {
       view.setFloat64(o, v, true)
@@ -108,33 +95,17 @@ export function snapshotWorld(world: World): Uint8Array {
   view.setUint32(o, SNAP_MAGIC, true); o += 4
   view.setUint32(o, SNAP_VERSION, true); o += 4
   putU32(world.getNextEntityId())
+  const freeIds = world.getFreeIds()
+  putU32(freeIds.length)
+  for (const id of freeIds) putU32(id)
   const ids = [...world.entities.keys()]
   putU32(ids.length)
   for (const id of ids) putU32(id)
 
-  putF32(world.positionX); putF32(world.positionY); putF32(world.positionZ)
-  putF32(world.velocityX); putF32(world.velocityY); putF32(world.velocityZ)
-  putBytes(world.kind); putBytes(world.team); putBytes(world.state)
-  putF32(world.health); putF32(world.maxHealth); putF32(world.damage)
-  putF32(world.attackRange); putF32(world.sight)
-  putF32(world.cooldown); putF32(world.cooldownTotal)
-  putBytes(world.moving)
-  putF32(world.moveSpeed); putF32(world.targetX); putF32(world.targetZ)
-  putF32(world.stopDist); putF32(world.radius)
-  putBytes(new Uint8Array(world.targetId.buffer, world.targetId.byteOffset, world.targetId.byteLength))
-  putBytes(world.carryKind)
-  putF32(world.carryAmount); putF32(world.gatherTimer); putF32(world.amount)
-  putF32(world.buildProgress); putF32(world.buildTotal)
-  putBytes(new Uint8Array(world.trainKind.buffer, world.trainKind.byteOffset, world.trainKind.byteLength))
-  putF32(world.trainLeft); putF32(world.trainTotal)
-  putBytes(new Uint8Array(world.trainQueueKind.buffer, world.trainQueueKind.byteOffset, world.trainQueueKind.byteLength))
-  putBytes(world.trainQueueLen)
-  putF32(world.rallyX); putF32(world.rallyZ)
-  putBytes(world.harvestKind)
-  putF32(world.resumeX); putF32(world.resumeZ)
+  for (const spec of WORLD_ENTITY_ARRAYS) putArray(entityArrayOf(world, spec.name))
 
-  putBytes(new Uint8Array(world.fog[0].snapshotCells()))
-  putBytes(new Uint8Array(world.fog[1].snapshotCells()))
+  putArray(new Uint8Array(world.fog[0].snapshotCells()))
+  putArray(new Uint8Array(world.fog[1].snapshotCells()))
   for (const fog of world.fog) {
     const vn = fog.snapshotVisibleNow()
     putU32(vn.length)
@@ -142,14 +113,15 @@ export function snapshotWorld(world: World): Uint8Array {
   }
   view.setFloat64(o, victoryTimerOf(world), true); o += 8
 
-  putF64Arr(world.gold); putF64Arr(world.wood)
-  putF64Arr(world.meleeDmgLvl); putF64Arr(world.meleeHpLvl); putF64Arr(world.rangedDmgLvl)
-  putF64Arr(world.supplyUsed); putF64Arr(world.supplyCap)
+  for (const name of WORLD_TEAM_ARRAYS) putF64Arr(teamArrayOf(world, name))
+  for (const spec of WORLD_SCALARS) {
+    view.setFloat64(o, scalarOf(world, spec.name), true)
+    o += 8
+  }
   for (const f of world.factionOfTeam) {
     view.setUint16(o, f.length, true); o += 2
     for (let i = 0; i < f.length; i += 1) buf[o++] = f.charCodeAt(i) & 0x7f
   }
-  view.setInt32(o, world.winner, true); o += 4
 
   if (o !== buf.length) throw new Error(`snapshot size mismatch ${o} != ${buf.length}`)
   return buf
@@ -163,19 +135,19 @@ export function restoreWorld(world: World, data: Uint8Array): void {
     o += 4
     return v
   }
-  const getBytes = (n: number): Uint8Array => {
-    const s = data.slice(o, o + n)
-    o += n
-    return s
-  }
-  const getF32 = (dst: Float32Array): void => {
-    dst.set(new Float32Array(data.buffer, data.byteOffset + o, dst.length))
+  const getArray = (dst: ArrayBufferView & { set(a: ArrayLike<number>): void }): void => {
+    const src = new Uint8Array(data.buffer, data.byteOffset + o, dst.byteLength)
+    new Uint8Array(dst.buffer, dst.byteOffset, dst.byteLength).set(src)
     o += dst.byteLength
   }
 
   if (getU32() !== SNAP_MAGIC) throw new Error('bad snapshot magic')
   if (getU32() !== SNAP_VERSION) throw new Error('snapshot version mismatch')
   world.setNextEntityId(getU32())
+  const freeCount = getU32()
+  const freeIds: number[] = []
+  for (let i = 0; i < freeCount; i += 1) freeIds.push(getU32())
+  world.restoreFreeIds(freeIds)
   const count = getU32()
   world.entities.clear()
   for (let i = 0; i < count; i += 1) {
@@ -183,32 +155,15 @@ export function restoreWorld(world: World, data: Uint8Array): void {
     world.entities.set(id, { id })
   }
 
-  getF32(world.positionX); getF32(world.positionY); getF32(world.positionZ)
-  getF32(world.velocityX); getF32(world.velocityY); getF32(world.velocityZ)
-  world.kind.set(getBytes(world.kind.byteLength))
-  world.team.set(getBytes(world.team.byteLength))
-  world.state.set(getBytes(world.state.byteLength))
-  getF32(world.health); getF32(world.maxHealth); getF32(world.damage)
-  getF32(world.attackRange); getF32(world.sight)
-  getF32(world.cooldown); getF32(world.cooldownTotal)
-  world.moving.set(getBytes(world.moving.byteLength))
-  getF32(world.moveSpeed); getF32(world.targetX); getF32(world.targetZ)
-  getF32(world.stopDist); getF32(world.radius)
-  world.targetId.set(new Int32Array(getBytes(world.targetId.byteLength).buffer))
-  world.carryKind.set(getBytes(world.carryKind.byteLength))
-  getF32(world.carryAmount); getF32(world.gatherTimer); getF32(world.amount)
-  getF32(world.buildProgress); getF32(world.buildTotal)
-  world.trainKind.set(new Int8Array(getBytes(world.trainKind.byteLength).buffer))
-  getF32(world.trainLeft); getF32(world.trainTotal)
-  world.trainQueueKind.set(new Int8Array(getBytes(world.trainQueueKind.byteLength).buffer))
-  world.trainQueueLen.set(getBytes(world.trainQueueLen.byteLength))
-  getF32(world.rallyX); getF32(world.rallyZ)
-  world.harvestKind.set(getBytes(world.harvestKind.byteLength))
-  getF32(world.resumeX); getF32(world.resumeZ)
+  for (const spec of WORLD_ENTITY_ARRAYS) {
+    getArray(entityArrayOf(world, spec.name) as ArrayBufferView & { set(a: ArrayLike<number>): void })
+  }
 
   const fogLen = world.fog[0].snapshotCells().length
-  world.fog[0].restoreCells(Array.from(getBytes(fogLen)))
-  world.fog[1].restoreCells(Array.from(getBytes(fogLen)))
+  world.fog[0].restoreCells(Array.from(data.slice(o, o + fogLen)))
+  o += fogLen
+  world.fog[1].restoreCells(Array.from(data.slice(o, o + fogLen)))
+  o += fogLen
   for (const fog of world.fog) {
     const n = getU32()
     const vn: number[] = []
@@ -223,9 +178,11 @@ export function restoreWorld(world: World, data: Uint8Array): void {
       o += 8
     }
   }
-  getF64Arr(world.gold); getF64Arr(world.wood)
-  getF64Arr(world.meleeDmgLvl); getF64Arr(world.meleeHpLvl); getF64Arr(world.rangedDmgLvl)
-  getF64Arr(world.supplyUsed); getF64Arr(world.supplyCap)
+  for (const name of WORLD_TEAM_ARRAYS) getF64Arr(teamArrayOf(world, name))
+  for (const spec of WORLD_SCALARS) {
+    setScalar(world, spec.name, view.getFloat64(o, true))
+    o += 8
+  }
   const factions: string[] = []
   for (let f = 0; f < 2; f += 1) {
     const len = view.getUint16(o, true); o += 2
@@ -234,7 +191,6 @@ export function restoreWorld(world: World, data: Uint8Array): void {
     factions.push(s)
   }
   world.factionOfTeam = [factions[0] as FactionId, factions[1] as FactionId]
-  world.winner = view.getInt32(o, true) as -1 | 0 | 1; o += 4
 
   if (o !== data.length) throw new Error(`snapshot restore size mismatch ${o} != ${data.length}`)
 }

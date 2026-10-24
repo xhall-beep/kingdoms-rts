@@ -394,6 +394,23 @@ export class World {
     return this.freeIds.length
   }
 
+  /**
+   * Copy of the recycled-ID stack, bottom-to-top (pop order is the
+   * reverse). The snapshot serializer carries it verbatim: allocation
+   * order after a resync must match the sender's exactly, and the stack
+   * cannot be reconstructed from the entity set — rebuildFreeIds yields
+   * a different pop order than a live removal history does.
+   */
+  getFreeIds(): number[] {
+    return [...this.freeIds]
+  }
+
+  /** Restore the recycled-ID stack verbatim (snapshot resync path). */
+  restoreFreeIds(ids: readonly number[]): void {
+    this.freeIds.length = 0
+    for (const id of ids) this.freeIds.push(id)
+  }
+
   removeEntity(entity: Entity): void {
     const id = entity.id
     const kind = this.kind[id]

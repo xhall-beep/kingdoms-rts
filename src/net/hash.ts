@@ -6,16 +6,31 @@
  * state — produces a different hash.
  *
  * Rules:
- * - Covers every typed array in World plus entity ids, the id counter,
- *   economy, factions, winner, and both fog grids.
+ * - Covers every registered sim field (see core/state-registry.ts: entity
+ *   arrays, per-team arrays, scalars) plus entity ids, the id counter and
+ *   free-id count, factions, and both fog grids (cells + visibleNow).
  * - Excludes visual-only state (damageNumbers, hitFlashes, deathPops,
  *   completionFlashes — explicitly not sim state).
  * - NaN is canonicalized to a fixed constant: two NaNs with different bit
  *   patterns (possible via different float ops) still hash identically.
  *   (In a correct deterministic sim this never triggers, but it removes a
  *   whole class of false-positive desyncs.)
+ *
+ * History: before the 2026-10-24 registry unification this file hand-listed
+ * 37 of the World's 49 typed arrays and none of the per-team endgame state
+ * (victoryPoints, soulAsh, warCharge…) — desyncs in those fields were
+ * invisible. The field list now comes from the registry, and
+ * state-coverage.test.ts fails if a World field is unregistered.
  */
 import type { World } from '../core/World.ts'
+import {
+  WORLD_ENTITY_ARRAYS,
+  WORLD_TEAM_ARRAYS,
+  WORLD_SCALARS,
+  entityArrayOf,
+  teamArrayOf,
+  scalarOf,
+} from '../core/state-registry.ts'
 import { VictorySystemImpl } from '../systems/victory.ts'
 
 const FNV_OFFSET = 0xcbf29ce484222325n
@@ -74,53 +89,23 @@ function mixString(h: bigint, s: string): bigint {
 export function hashWorldState(world: World): bigint {
   let h = FNV_OFFSET
 
-  // Entity identity: count + sorted ids + id counter (future ids depend on it).
+  // Entity identity: count + sorted ids + id counter + free-id count
+  // (future ids depend on both).
   h = mixWord(h, world.entities.size)
   const ids = [...world.entities.keys()].sort((a, b) => a - b)
   for (const id of ids) h = mixWord(h, id)
   h = mixWord(h, world.getNextEntityId())
   h = mixWord(h, world.getFreeIdCount())
 
-  // Struct-of-arrays state.
-  h = mixFloatArray(h, world.positionX)
-  h = mixFloatArray(h, world.positionY)
-  h = mixFloatArray(h, world.positionZ)
-  h = mixFloatArray(h, world.velocityX)
-  h = mixFloatArray(h, world.velocityY)
-  h = mixFloatArray(h, world.velocityZ)
-  h = mixUint8Array(h, world.kind)
-  h = mixUint8Array(h, world.team)
-  h = mixUint8Array(h, world.state)
-  h = mixFloatArray(h, world.health)
-  h = mixFloatArray(h, world.maxHealth)
-  h = mixFloatArray(h, world.damage)
-  h = mixFloatArray(h, world.attackRange)
-  h = mixFloatArray(h, world.sight)
-  h = mixFloatArray(h, world.cooldown)
-  h = mixFloatArray(h, world.cooldownTotal)
-  h = mixUint8Array(h, world.moving)
-  h = mixFloatArray(h, world.moveSpeed)
-  h = mixFloatArray(h, world.targetX)
-  h = mixFloatArray(h, world.targetZ)
-  h = mixFloatArray(h, world.stopDist)
-  h = mixFloatArray(h, world.radius)
-  h = mixInt32Array(h, world.targetId)
-  h = mixUint8Array(h, world.carryKind)
-  h = mixFloatArray(h, world.carryAmount)
-  h = mixFloatArray(h, world.gatherTimer)
-  h = mixFloatArray(h, world.amount)
-  h = mixFloatArray(h, world.buildProgress)
-  h = mixFloatArray(h, world.buildTotal)
-  h = mixInt8Array(h, world.trainKind)
-  h = mixFloatArray(h, world.trainLeft)
-  h = mixFloatArray(h, world.trainTotal)
-  h = mixInt8Array(h, world.trainQueueKind)
-  h = mixUint8Array(h, world.trainQueueLen)
-  h = mixFloatArray(h, world.rallyX)
-  h = mixFloatArray(h, world.rallyZ)
-  h = mixUint8Array(h, world.harvestKind)
-  h = mixFloatArray(h, world.resumeX)
-  h = mixFloatArray(h, world.resumeZ)
+  // Struct-of-arrays state — every registered entity array, mixed with
+  // the per-kind mixer the pre-registry list used for that array type.
+  for (const spec of WORLD_ENTITY_ARRAYS) {
+    const a = entityArrayOf(world, spec.name)
+    if (spec.kind === 'f32') h = mixFloatArray(h, a as Float32Array)
+    else if (spec.kind === 'u8') h = mixUint8Array(h, a as Uint8Array)
+    else if (spec.kind === 'i8') h = mixInt8Array(h, a as Int8Array)
+    else h = mixInt32Array(h, a as Int32Array)
+  }
 
   // Fog grids (both teams): cells + pending demotions (visibleNow).
   // visibleNow is NOT covered by snapshotCells — omitting it causes
@@ -140,30 +125,23 @@ export function hashWorldState(world: World): bigint {
     }
   }
 
-  // Economy / meta.
-  for (const arr of [
-    world.gold,
-    world.wood,
-    world.meleeDmgLvl,
-    world.meleeHpLvl,
-    world.rangedDmgLvl,
-    world.supplyUsed,
-    world.supplyCap,
-  ]) {
-    for (const v of arr) h = mixFloat(h, v)
+  // Per-team arrays (economy, upgrade levels, Living Wild, Militia,
+  // Soul-Ash, War Horn, Victory Points) — mixed element-wise as floats.
+  for (const name of WORLD_TEAM_ARRAYS) {
+    for (const v of teamArrayOf(world, name)) h = mixFloat(h, v)
   }
+
+  // Factions (strings).
   h = mixString(h, world.factionOfTeam[0])
   h = mixString(h, world.factionOfTeam[1])
-  h = mixWord(h, (world.winner + 1) >>> 0)
-  // Season Wheel state (turns at the Second Bell; drives movement speed).
-  h = mixWord(h, world.season)
-  // Living Wild state: harvest pressure, last harvest site, and the
-  // offending worker per team — all steer future treant spawns.
-  for (const t of [0, 1] as const) {
-    h = mixFloat(h, world.wildHeat[t])
-    h = mixFloat(h, world.wildSiteX[t])
-    h = mixFloat(h, world.wildSiteZ[t])
-    h = mixWord(h, (world.wildWorker[t] + 1) >>> 0)
+
+  // Scalars: tick / matchTime / season / winner. tick drives the
+  // deterministic combat rolls and matchTime drives the Bells, militia
+  // windows and rally expiries — both joined the hash with the registry
+  // unification (the pre-registry hash omitted them).
+  for (const spec of WORLD_SCALARS) {
+    const v = scalarOf(world, spec.name)
+    h = spec.kind === 'float' ? mixFloat(h, v) : mixWord(h, v >>> 0)
   }
 
   return h

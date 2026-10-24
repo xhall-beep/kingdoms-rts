@@ -14,6 +14,7 @@
  * from bit-identical state — no shared-settings assumption required.
  */
 import { World } from '../core/World.ts'
+import { WORLD_ENTITY_ARRAYS } from '../core/state-registry.ts'
 import type { FactionId } from '../data/factions.ts'
 import { FACTION_IDS } from '../data/factions.ts'
 import { seedScenario } from '../scenario.ts'
@@ -23,28 +24,17 @@ import { VictorySystemImpl } from '../systems/victory.ts'
 import { ShrineSystemImpl } from '../systems/shrines.ts'
 
 /**
- * Every per-entity typed-array field on World. The desync hash covers the
- * FULL arrays (whole capacity, not just live slots), so the reset must
- * restore all of them — stale data in a dead slot would hash differently
- * per peer. If World gains a new typed-array field, add it here (the
- * coverage test in pvp-setup.test.ts fails until you do).
+ * Every per-entity typed-array field on World — derived from the state
+ * registry (core/state-registry.ts), the same list the hash, snapshot,
+ * and save/load consume. The desync hash covers the FULL arrays (whole
+ * capacity, not just live slots), so the reset must restore all of
+ * them — stale data in a dead slot would hash differently per peer.
+ * If World gains a new typed-array field, register it in the registry
+ * (the coverage tests in pvp-setup.test.ts and state-coverage.test.ts
+ * fail until you do) and it lands here automatically.
  */
-export const PVP_SETUP_ENTITY_ARRAYS = [
-  'positionX', 'positionY', 'positionZ',
-  'velocityX', 'velocityY', 'velocityZ',
-  'kind', 'team', 'state',
-  'health', 'maxHealth', 'damage', 'attackRange', 'sight',
-  'cooldown', 'cooldownTotal',
-  'moving', 'moveSpeed', 'targetX', 'targetZ', 'stopDist', 'radius',
-  'targetId',
-  'carryKind', 'carryAmount', 'carryMax', 'gatherTimer', 'amount',
-  'buildProgress', 'buildTotal', 'buildAuto',
-  'trainKind', 'trainLeft', 'trainTotal', 'rallyX', 'rallyZ',
-  'trainQueueKind', 'trainQueueLen',
-  'harvestKind', 'resumeX', 'resumeZ',
-  'bellsRung', 'militiaUntil', 'tier', 'upgradeLeft', 'shrineHeld',
-  'reanimateTicks', 'momentumTicks', 'lastCombatTick',
-] as const
+export const PVP_SETUP_ENTITY_ARRAYS: readonly string[] =
+  WORLD_ENTITY_ARRAYS.map((s) => s.name)
 
 /**
  * Reset the world to a pristine, deterministic match start.
@@ -72,8 +62,8 @@ export function resetWorldForMatch(
   // fresh World so they track the constructor automatically.
   const pristine = new World()
   for (const name of PVP_SETUP_ENTITY_ARRAYS) {
-    const arr = world[name] as unknown as { fill(v: number): void }
-    const ref = pristine[name] as unknown as ArrayLike<number>
+    const arr = world[name as keyof World] as unknown as { fill(v: number): void }
+    const ref = pristine[name as keyof World] as unknown as ArrayLike<number>
     arr.fill(ref[0])
   }
   // Fog's pending-visibility set is hashed but not part of the save payload;
