@@ -2,7 +2,7 @@
  * Core simulation regression tests — headless, deterministic.
  * Covers: construction, production, combat, movement, gathering, victory.
  */
-import { World, TEAM_PLAYER, TEAM_ENEMY, KIND_WORKER, KIND_TOWER } from '../core/World.ts'
+import { World, TEAM_PLAYER, TEAM_ENEMY, CARRY_WOOD, KIND_HALL, KIND_WORKER, KIND_TOWER } from '../core/World.ts'
 import { placeStructure, canAfford } from '../world/construction.ts'
 import { orderMove } from '../systems/movement.ts'
 import { orderAttack, orderAttackMove } from '../systems/combat.ts'
@@ -11,7 +11,7 @@ import { enqueueTrain, setRally } from '../systems/production.ts'
 import { BUILDINGS } from '../data/buildings.ts'
 import { UNITS } from '../data/units.ts'
 import { suite, test, assert, assertEqual, assertClose } from './harness.ts'
-import { makeWorld, stepWorld } from './setup.ts'
+import { makeWorld, stepWorld, STEP } from './setup.ts'
 
 function freshWorld(): World {
   return makeWorld()
@@ -308,4 +308,73 @@ test('control: destroying a completed farm refunds exactly its granted supply', 
   assertEqual(world.supplyCap[TEAM_PLAYER], capAtPlacement + 6, 'completion granted the farm supply')
   world.removeEntityById(site)
   assertEqual(world.supplyCap[TEAM_PLAYER], capAtPlacement, 'destruction refunded exactly the grant')
+})
+
+suite('audit: loaded workers stranded by hall loss deposit at any finished building')
+
+test('loaded worker deposits at a finished farm when the hall is gone', () => {
+  const world = makeWorld()
+  world.gold[TEAM_PLAYER] = 1000
+  world.wood[TEAM_PLAYER] = 1000
+  // A finished fallback building: build a farm next to the hall first.
+  const placed = placeStructure(world, TEAM_PLAYER, 'farm', 0, -40)
+  assert(placed.ok, 'farm placed')
+  const builder = world.spawnUnit('worker', TEAM_PLAYER, -2, -40)
+  assert(orderBuild(world, builder.id, placed.id), 'builder sent to the farm')
+  stepWorld(world, 60 * 12)
+  assert(world.buildProgress[placed.id] >= world.buildTotal[placed.id], 'farm completed')
+  // Lose the hall — the audit's stranded case.
+  const hall = playerBuildings(world).find((id) => world.kind[id] === KIND_HALL)
+  assert(hall !== undefined, 'seed world has a player hall')
+  world.removeEntityById(hall!)
+  // A loaded worker standing near the farm.
+  const worker = world.spawnUnit('worker', TEAM_PLAYER, -2, -40)
+  world.carryAmount[worker.id] = 10
+  world.carryKind[worker.id] = CARRY_WOOD
+  const woodBefore = world.wood[TEAM_PLAYER]
+  let deposited = false
+  for (let i = 0; i < 60 * 30; i++) {
+    world.update(STEP)
+    if (world.carryAmount[worker.id] === 0) {
+      deposited = true
+      break
+    }
+  }
+  assert(deposited, 'worker must deposit at the farm instead of parking with a full load')
+  assertEqual(world.wood[TEAM_PLAYER], woodBefore + 10, 'the full load lands in the stockpile')
+})
+
+test('loaded worker keeps its cargo with no finished building, then deposits once one finishes', () => {
+  const world = makeWorld()
+  const hall = playerBuildings(world).find((id) => world.kind[id] === KIND_HALL)
+  assert(hall !== undefined, 'seed world has a player hall')
+  world.removeEntityById(hall!)
+  const worker = world.spawnUnit('worker', TEAM_PLAYER, -34, -38)
+  world.carryAmount[worker.id] = 10
+  world.carryKind[worker.id] = CARRY_WOOD
+  // The audit probe: 60 s of sim with nowhere to deposit.
+  stepWorld(world, 60 * 5)
+  assertEqual(
+    world.carryAmount[worker.id],
+    10,
+    'cargo is not lost or dropped while stranded — it waits for a dropoff',
+  )
+  // A farm finishes: the stranded worker must recover on its own.
+  world.gold[TEAM_PLAYER] = 1000
+  world.wood[TEAM_PLAYER] = 1000
+  const placed = placeStructure(world, TEAM_PLAYER, 'farm', 0, -40)
+  assert(placed.ok, 'farm placed')
+  const builder = world.spawnUnit('worker', TEAM_PLAYER, -2, -40)
+  assert(orderBuild(world, builder.id, placed.id), 'builder sent to the farm')
+  const woodBefore = world.wood[TEAM_PLAYER]
+  let deposited = false
+  for (let i = 0; i < 60 * 60; i++) {
+    world.update(STEP)
+    if (world.carryAmount[worker.id] === 0) {
+      deposited = true
+      break
+    }
+  }
+  assert(deposited, 'worker recovers and deposits once a finished building exists')
+  assertEqual(world.wood[TEAM_PLAYER], woodBefore + 10, 'the held load lands in the stockpile')
 })

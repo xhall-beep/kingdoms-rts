@@ -86,7 +86,8 @@ function nearFinishedFarm(world: World, id: number): boolean {
 /**
  * Worker FSM, adapted from the sim's workerStates:
  *   IDLE -> GATHER (walk to node, swing until full or node spent)
- *        -> RETURN (walk to hall, deposit, back to IDLE)
+ *        -> RETURN (walk to hall — or any finished own building when
+ *                   the hall is gone — deposit, back to IDLE)
  *        -> BUILD  (walk to a construction site, add progress until done)
  * Idle workers gather on their own, so the economy runs headlessly.
  */
@@ -376,12 +377,53 @@ function nearestBuiltHall(world: World, id: number): number {
 
 function sendToHall(world: World, id: number): void {
   const hall = nearestBuiltHall(world, id)
-  if (hall === NO_TARGET) {
+  // Hall gone (audit 2026-10-24, systems §1): a loaded worker with no
+  // hall used to park forever — sendToHall set it back to IDLE with its
+  // carry intact, and IDLE re-entered RETURN every tick without ever
+  // moving. Fall back to the nearest finished own building of any kind
+  // so the cargo still lands; the RETURN deposit on arrival is
+  // target-agnostic, so no other path changes. When a hall exists this
+  // fallback never runs and behaviour is byte-identical to before.
+  const target = hall === NO_TARGET ? nearestFinishedOwnBuilding(world, id) : hall
+  if (target === NO_TARGET) {
     world.state[id] = STATE_IDLE
     return
   }
-  world.targetId[id] = hall
-  walkTo(world, id, hall, ARRIVE_MARGIN)
+  world.targetId[id] = target
+  walkTo(world, id, target, ARRIVE_MARGIN)
+}
+
+/**
+ * Nearest finished own building of any kind (hall, barracks, archery,
+ * farm, tower — the World.ts building predicate), or NO_TARGET. Same
+ * deterministic tie-break as nearestBuiltHall: nearest, then lowest
+ * spatial-hash sequence. Only used as the no-hall dropoff fallback.
+ */
+function nearestFinishedOwnBuilding(world: World, id: number): number {
+  const team = world.team[id]
+  const px = world.positionX[id]
+  const pz = world.positionZ[id]
+  const hash = world.spatialHash
+  let best = NO_TARGET
+  let bestDist = Infinity
+  let bestSeq = Number.MAX_SAFE_INTEGER
+  const consider = (other: number) => {
+    const kind = world.kind[other]
+    if (!((kind >= KIND_HALL && kind <= KIND_FARM) || kind === KIND_TOWER)) return
+    if (world.team[other] !== team) return
+    if (world.buildProgress[other] < world.buildTotal[other]) return
+    const d = Math.hypot(world.positionX[other] - px, world.positionZ[other] - pz)
+    const seq = hash.sequenceOf(other)
+    if (d < bestDist || (d === bestDist && seq < bestSeq)) {
+      bestDist = d
+      bestSeq = seq
+      best = other
+    }
+  }
+  hash.forEachNear(px, pz, consider)
+  if (best !== NO_TARGET) return best
+  for (const other of world.entities.keys()) consider(other)
+  return best
 }
 
 /** Order a worker to (re)start gathering. Carried resources are kept and delivered. */
