@@ -367,6 +367,47 @@ code {
   border-bottom: 1px solid rgba(255, 243, 212, 0.12);
 }
 
+/* Living Wild wrath meter (spec §3.2): a 5px segmented sliver directly
+ * under the top strip, in flow so it sits flush beneath it. It is the
+ * fallback form from the feel research (2026-10-26, Q1): the strip's
+ * stats wrapper has ~18px of slack at worst-case digit widths and VP
+ * is the ellipsizable element, so an in-strip cell would truncate
+ * "VP 1000" late-game. Always rendered (fixed-cell invariant — it
+ * exists at wrath 0); only segment fills and the band change. It is
+ * state, never an event signal. #hud-root is pointer-events:none and
+ * the sliver never opts back in, so it can never eat a tap. */
+.hud-wild {
+  flex: 0 0 auto;
+  height: 5px;
+  display: flex;
+  gap: 2px;
+  padding: 0 2px;
+  background: rgba(10, 26, 26, 0.55);
+}
+
+.hud-wild-seg {
+  flex: 1 1 0;
+  height: 100%;
+  border-radius: 1px;
+  background: rgba(255, 243, 212, 0.10);
+}
+
+.hud-wild-quiet .hud-wild-seg-on { background: rgba(125, 208, 138, 0.55); }
+.hud-wild-amber .hud-wild-seg-on { background: #f5b942; }
+.hud-wild-hot .hud-wild-seg-on {
+  background: #ef4444;
+  animation: hud-wild-pulse 0.9s ease-in-out infinite;
+}
+
+@keyframes hud-wild-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-wild-hot .hud-wild-seg-on { animation: none; }
+}
+
 /* Stats live in a shrinkable wrapper: if readouts ever run wide, the
  * info segment ellipsizes — the corner buttons are flex-pinned and can
  * NEVER be pushed off-screen by stat text. */

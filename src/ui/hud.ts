@@ -19,10 +19,53 @@ import {
   TRAIN_QUEUE_WAITING,
 } from '../core/World'
 import { buildersOnSite } from '../systems/gather.ts'
+import { WILD_HEAT_THRESHOLD } from '../systems/living-wild.ts'
 import { BUILDING_TYPE_BY_KIND } from '../world/construction.ts'
 import { renderCommandCard } from './command-card.ts'
 import { BUILD_STAMP_LABEL } from '../build-stamp.ts'
 import { isHeldWorker } from '../render/renderer.ts'
+
+export type WildWrathBand = 'quiet' | 'amber' | 'hot'
+
+export interface WildWrathDisplay {
+  /** Player wild heat as a fraction of the retaliation threshold, 0..1. */
+  fraction: number
+  /** Lit segments of five, one per fifth of the threshold. */
+  segments: number
+  band: WildWrathBand
+}
+
+/**
+ * Living Wild wrath, mapped sim → display. Spec §3.2 puts the wrath
+ * meter on the HUD; until this slice the mechanic was invisible — heat
+ * accumulated silently and the treant read as a random punishment.
+ *
+ * The meter reads the PLAYER team's heat against WILD_HEAT_THRESHOLD:
+ * the operative quantity is distance-to-threshold, so it is a fill,
+ * never a number. Bands: quiet below 60% (segments 1–3), amber from
+ * 60% (the fourth segment — the forest is close to answering), red
+ * pulse only at 85%+. STATE only: a treant spawning is an event, not
+ * meter state, and is deliberately not signalled here.
+ *
+ * Form (feel-research 2026-10-26, Q1): a reserved fixed cell was the
+ * first choice, but the strip's stats wrapper has ~18px of slack at
+ * worst-case digit widths (Gold/Wood 4-digit, VP 1000) and VP is the
+ * ellipsizable element — any cell ≥15px wide truncates "VP 1000"
+ * late-game. So the meter ships as the prescribed fallback: a 5px
+ * segmented sliver directly under the strip, always rendered (the
+ * fixed-cell invariant: it exists at wrath 0 and never appears or
+ * disappears; only segment fills and the band change).
+ */
+export function wildWrathDisplay(world: World): WildWrathDisplay {
+  const fraction = Math.min(
+    1,
+    Math.max(0, world.wildHeat[TEAM_PLAYER] / WILD_HEAT_THRESHOLD),
+  )
+  const segments = fraction <= 0 ? 0 : Math.min(5, Math.ceil(fraction * 5))
+  const band: WildWrathBand =
+    fraction >= 0.85 ? 'hot' : fraction >= 0.6 ? 'amber' : 'quiet'
+  return { fraction, segments, band }
+}
 
 export interface Hud {
   render(world: World): void
@@ -91,6 +134,10 @@ export class HudImpl implements Hud {
   private goldEl: HTMLElement | null = null
   private woodEl: HTMLElement | null = null
   private supplyEl: HTMLElement | null = null
+  private wildEl: HTMLElement | null = null
+  private wildSegs: HTMLElement[] = []
+  /** Last rendered wrath state ("segments:band") — DOM writes only on change. */
+  private lastWildKey = ''
   private infoEl: HTMLElement | null = null
   private armyEl: HTMLElement | null = null
   private dashEl: HTMLElement | null = null
@@ -127,6 +174,7 @@ export class HudImpl implements Hud {
         <button class="hud-strip-btn" id="hud-help" title="Show the How to Play help">❓</button>
         <button class="hud-strip-btn" id="hud-menu-btn" title="Menu">☰</button>
       </div>
+      <div class="hud-wild hud-wild-quiet" id="hud-wild" role="img" aria-label="Living Wild wrath — the forest answers when the bar fills" title="Living Wild wrath — the forest answers when the bar fills"><span class="hud-wild-seg"></span><span class="hud-wild-seg"></span><span class="hud-wild-seg"></span><span class="hud-wild-seg"></span><span class="hud-wild-seg"></span></div>
 
       <div class="hud-menu" id="hud-menu" hidden>
         <div class="hud-bar">
@@ -193,6 +241,10 @@ export class HudImpl implements Hud {
     this.goldEl = parent.querySelector('#hud-gold')
     this.woodEl = parent.querySelector('#hud-wood')
     this.supplyEl = parent.querySelector('#hud-supply')
+    this.wildEl = parent.querySelector('#hud-wild')
+    this.wildSegs = this.wildEl
+      ? [...this.wildEl.querySelectorAll('.hud-wild-seg')] as HTMLElement[]
+      : []
     this.infoEl = parent.querySelector('#hud-info')
     this.armyEl = parent.querySelector('#hud-info-army')
     this.dashEl = parent.querySelector('#hud-dash')
@@ -510,6 +562,20 @@ export class HudImpl implements Hud {
     if (this.woodEl) this.woodEl.textContent = String(Math.floor(world.wood[TEAM_PLAYER]))
     if (this.supplyEl) {
       this.supplyEl.textContent = `${world.supplyUsed[TEAM_PLAYER]}/${world.supplyCap[TEAM_PLAYER]}`
+    }
+    // Living Wild wrath sliver: fixed cell, always rendered; only the
+    // segment fills and the band class change, and only when the
+    // mapped display state actually changed.
+    if (this.wildEl && this.wildSegs.length === 5) {
+      const wrath = wildWrathDisplay(world)
+      const key = `${wrath.segments}:${wrath.band}`
+      if (key !== this.lastWildKey) {
+        this.lastWildKey = key
+        this.wildEl.className = `hud-wild hud-wild-${wrath.band}`
+        for (let i = 0; i < 5; i += 1) {
+          this.wildSegs[i].classList.toggle('hud-wild-seg-on', i < wrath.segments)
+        }
+      }
     }
     this.announceBells(world)
     // Counts are computed once and split across the two readouts: the top

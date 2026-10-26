@@ -101,8 +101,12 @@ export class ProductionSystemImpl implements System {
 /** Orc tier names for the in-place upgrade path. */
 export const ORC_TIER_NAMES = ["Iron-Bound", "Blood-Forged", "Warlord's Anvil"] as const
 
-/** Upgrade costs and build time per step (index = current tier). */
-const TIER_UPGRADES = [
+/**
+ * Upgrade costs and build time per step (index = current tier).
+ * Exported so the command card prices the tier button from the same
+ * table upgradeBuilding charges — no duplicated literals to drift.
+ */
+export const TIER_UPGRADES = [
   { gold: 0, wood: 0, time: 0 }, // tier 1: base
   { gold: 150, wood: 100, time: 20 }, // 1 -> 2
   { gold: 300, wood: 200, time: 30 }, // 2 -> 3
@@ -157,8 +161,16 @@ const TYPE_BY_KIND: Record<number, UnitType> = {
   [KIND_RANGED]: 'ranged',
 }
 
-/** The charged price of one training item (faction cost modifier applied). */
-function trainCostFor(world: World, team: number, type: UnitType): { gold: number; wood: number } {
+/**
+ * The charged price of one training item (faction cost modifier
+ * applied). Single source of truth: enqueueTrain charges exactly this,
+ * and the command card prices its train buttons and unit stat line
+ * with it — the card used to print the un-modified base cost, which
+ * lied to every faction with a cost modifier (undead melee showed
+ * 100g/30w, charged 85g/26w) and kept buttons disabled past the real
+ * price.
+ */
+export function trainCostFor(world: World, team: number, type: UnitType): { gold: number; wood: number } {
   const mods = FACTIONS[world.factionOfTeam[team]].mods
   const def = getUnits()[type]
   return {

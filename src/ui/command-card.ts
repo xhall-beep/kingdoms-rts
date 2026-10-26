@@ -14,7 +14,9 @@ import {
 } from '../core/World'
 import { getUnits } from '../data/stats.ts'
 import type { UnitType } from '../data/units.ts'
-import { ORC_TIER_NAMES, trainingStateFor, trainingQueueFor } from '../systems/production.ts'
+import { ORC_TIER_NAMES, TIER_UPGRADES, researchCost, trainCostFor, trainingStateFor, trainingQueueFor } from '../systems/production.ts'
+import { UPGRADES } from '../data/upgrades.ts'
+import type { UpgradeType } from '../data/upgrades.ts'
 import { buildersOnSite } from '../systems/gather.ts'
 import { BUILDINGS } from '../data/buildings.ts'
 import { PLAYER_BUILDABLE, canAfford } from '../world/construction.ts'
@@ -239,20 +241,29 @@ export function renderCommandCard(
     const utype: UnitType =
       kind === KIND_WORKER ? 'worker' : kind === KIND_MELEE ? 'melee' : 'ranged'
     const def = getUnits()[utype]
+    // The cost shown is the price the unit's OWN team actually pays —
+    // trainCostFor (faction cost modifier applied), the same helper
+    // production charges. The raw table cost lied to every faction
+    // with a cost modifier (undead, elf, orc, ...).
+    const price = trainCostFor(world, world.team[id] as 0 | 1, utype)
     parts.push(
       `Dmg ${def.damage}`,
       `Rng ${def.range}`,
       `Sight ${def.sight}`,
       `Spd ${def.speed ?? '—'}`,
       `Arm ${(def as { armor?: number }).armor ?? 0}`,
-      `${def.cost.gold}g ${def.cost.wood}w`,
+      `${price.gold}g ${price.wood}w`,
     )
   } else if (isBuilding) {
     const btype = kind === KIND_HALL ? 'hall' : kind === KIND_BARRACKS ? 'barracks' : kind === KIND_ARCHERY ? 'archery' : 'farm'
     const bdef = BUILDINGS[btype as keyof typeof BUILDINGS]
     if (bdef) {
       parts.push(`HP ${Math.floor(world.health[id])}/${Math.floor(world.maxHealth[id])}`)
-      if (kind === KIND_FARM) parts.push('Supply +6')
+      // Derived from the building data, never a literal: the farm card
+      // read 'Supply +8' for a +6 farm until the label was fixed by
+      // hand (2026-10-26); deriving it makes that class of lie
+      // impossible to reintroduce.
+      if (kind === KIND_FARM) parts.push(`Supply +${bdef.supply}`)
       // Trainable units
       const trainable = kind === KIND_HALL ? ['worker'] : kind === KIND_BARRACKS ? ['melee'] : kind === KIND_ARCHERY ? ['ranged'] : []
       if (trainable.length > 0) parts.push(`Trains ${trainable.map((t) => factionUnitName(world, TEAM_PLAYER, t as UnitType)).join(', ')}`)
@@ -415,30 +426,42 @@ export function renderCommandCard(
       const trainable: UnitType[] =
         kind === KIND_HALL ? ['worker'] : kind === KIND_BARRACKS ? ['melee'] : kind === KIND_ARCHERY ? ['ranged'] : []
       for (const utype of trainable) {
-        const udef = getUnits()[utype]
+        // Price + affordability from trainCostFor — the exact price
+        // enqueueTrain charges this team (faction modifier applied).
+        const price = trainCostFor(world, TEAM_PLAYER, utype)
         const afford =
-          world.gold[TEAM_PLAYER] >= udef.cost.gold &&
-          world.wood[TEAM_PLAYER] >= udef.cost.wood
-        cmd(factionUnitName(world, TEAM_PLAYER, utype), () => cb.onTrain(utype), !afford, `${udef.cost.gold}g ${udef.cost.wood}w`)
+          world.gold[TEAM_PLAYER] >= price.gold &&
+          world.wood[TEAM_PLAYER] >= price.wood
+        cmd(factionUnitName(world, TEAM_PLAYER, utype), () => cb.onTrain(utype), !afford, `${price.gold}g ${price.wood}w`)
       }
-      // Upgrade buttons
+      // Upgrade buttons. Prices come from researchCost — the helper
+      // researchUpgrade charges and the AI's research gate floors on.
+      // The card used to hardcode the base '100g 50w': for human (the
+      // default faction) the Adaptable signature charges 80g/40w, so
+      // the label overstated the price AND the button stayed disabled
+      // until the player held the full base cost.
       if (kind === KIND_BARRACKS) {
-        const dmgLvl = world.meleeDmgLvl[TEAM_PLAYER]
-        const hpLvl = world.meleeHpLvl[TEAM_PLAYER]
-        if (dmgLvl < 3) {
-          const afford = world.gold[TEAM_PLAYER] >= 100 && world.wood[TEAM_PLAYER] >= 50
-          cmd(`Weapon +${dmgLvl + 1}`, () => cb.onResearch('meleeDmg'), !afford, '100g 50w')
-        }
-        if (hpLvl < 3) {
-          const afford = world.gold[TEAM_PLAYER] >= 100 && world.wood[TEAM_PLAYER] >= 50
-          cmd(`Armor +${hpLvl + 1}`, () => cb.onResearch('meleeHp'), !afford, '100g 50w')
+        const ladders: Array<{ type: UpgradeType; lvl: number; label: string }> = [
+          { type: 'meleeDmg', lvl: world.meleeDmgLvl[TEAM_PLAYER], label: 'Weapon' },
+          { type: 'meleeHp', lvl: world.meleeHpLvl[TEAM_PLAYER], label: 'Armor' },
+        ]
+        for (const { type, lvl, label } of ladders) {
+          if (lvl >= UPGRADES[type].maxLevel) continue
+          const price = researchCost(world, TEAM_PLAYER, type)
+          const afford =
+            world.gold[TEAM_PLAYER] >= price.gold &&
+            world.wood[TEAM_PLAYER] >= price.wood
+          cmd(`${label} +${lvl + 1}`, () => cb.onResearch(type), !afford, `${price.gold}g ${price.wood}w`)
         }
       }
       if (kind === KIND_ARCHERY) {
-        const dmgLvl = world.rangedDmgLvl[TEAM_PLAYER]
-        if (dmgLvl < 3) {
-          const afford = world.gold[TEAM_PLAYER] >= 100 && world.wood[TEAM_PLAYER] >= 50
-          cmd(`Ranged +${dmgLvl + 1}`, () => cb.onResearch('rangedDmg'), !afford, '100g 50w')
+        const lvl = world.rangedDmgLvl[TEAM_PLAYER]
+        if (lvl < UPGRADES.rangedDmg.maxLevel) {
+          const price = researchCost(world, TEAM_PLAYER, 'rangedDmg')
+          const afford =
+            world.gold[TEAM_PLAYER] >= price.gold &&
+            world.wood[TEAM_PLAYER] >= price.wood
+          cmd(`Ranged +${lvl + 1}`, () => cb.onResearch('rangedDmg'), !afford, `${price.gold}g ${price.wood}w`)
         }
       }
       // Militia Bell (human racial): muster nearby peasants as Levy Pikemen.
@@ -456,8 +479,9 @@ export function renderCommandCard(
       if ((kind === KIND_HALL || kind === KIND_BARRACKS) && world.factionOfTeam[TEAM_PLAYER] === 'orc') {
         const tier = world.tier[id]
         if (tier < 3) {
-          const costs = [{ gold: 0, wood: 0 }, { gold: 150, wood: 100 }, { gold: 300, wood: 200 }]
-          const cost = costs[tier]
+          // Cost read from production's TIER_UPGRADES (the table
+          // upgradeBuilding charges) — no duplicated literals.
+          const cost = TIER_UPGRADES[tier]
           const afford = world.gold[TEAM_PLAYER] >= cost.gold && world.wood[TEAM_PLAYER] >= cost.wood
           const upgrading = world.upgradeLeft[id] > 0
           const label = upgrading
