@@ -252,7 +252,7 @@ export function renderCommandCard(
     const bdef = BUILDINGS[btype as keyof typeof BUILDINGS]
     if (bdef) {
       parts.push(`HP ${Math.floor(world.health[id])}/${Math.floor(world.maxHealth[id])}`)
-      if (kind === KIND_FARM) parts.push('Supply +8')
+      if (kind === KIND_FARM) parts.push('Supply +6')
       // Trainable units
       const trainable = kind === KIND_HALL ? ['worker'] : kind === KIND_BARRACKS ? ['melee'] : kind === KIND_ARCHERY ? ['ranged'] : []
       if (trainable.length > 0) parts.push(`Trains ${trainable.map((t) => factionUnitName(world, TEAM_PLAYER, t as UnitType)).join(', ')}`)
