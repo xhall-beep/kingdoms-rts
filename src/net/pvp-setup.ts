@@ -86,6 +86,8 @@ export function resetWorldForMatch(
   world.hitFlashes.length = 0
   world.deathPops.length = 0
   world.completionFlashes.length = 0
+  world.alertEvents.length = 0
+  world.lastAttackAlertTick.fill(-1000000)
 
   for (const s of world.systems) {
     if (s instanceof VictorySystemImpl) s.setTimer(0)

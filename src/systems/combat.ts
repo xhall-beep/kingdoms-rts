@@ -192,6 +192,9 @@ export class CombatSystemImpl implements System {
           })
           // Combat feel: white hit-flash on the struck entity.
           world.hitFlashes.push({ id: target })
+          // Alert chip: an own unit/building struck off-screen must
+          // reach its player (visual-only, throttled at the source).
+          world.pushAttackAlert(target)
           if (world.health[target] <= 0 && !dead.includes(target)) dead.push(target)
         }
       } else {
@@ -345,6 +348,8 @@ export class CombatSystemImpl implements System {
       })
       // Combat feel: white hit-flash on the struck entity.
       world.hitFlashes.push({ id: target })
+      // Alert chip: same under-attack signal as the melee path.
+      world.pushAttackAlert(target)
       // Mark combatants for momentum tracking
       world.lastCombatTick[id] = world.tick
       world.lastCombatTick[target] = world.tick

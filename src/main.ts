@@ -1,5 +1,5 @@
 import { OpponentAI } from './ai/opponent'
-import { Engine } from './core/Engine'
+import { Engine, MAX_FRAME_TIME_SECONDS } from './core/Engine'
 import { TEAM_ENEMY, TEAM_PLAYER, type World } from './core/World'
 import { InputControllerImpl } from './input/input-controller'
 import { Renderer } from './render/renderer'
@@ -74,9 +74,10 @@ export function composeGame(canvas: HTMLCanvasElement): GameComposition {
     // Catch-up clamp: the Engine default allows a full second of frame
     // time (60 fixed steps) to replay in a single frame after a stall
     // (tab switch, GC pause) — a visible fast-forward hitch and a long
-    // main-thread block on mid-tier phones. 0.1s caps the replay at 6
-    // steps; the sim simply runs a beat behind instead of lurching.
-    maxFrameTimeSeconds: 0.1,
+    // main-thread block on mid-tier phones. MAX_FRAME_TIME_SECONDS
+    // caps the replay at 6 steps; the sim simply runs a beat behind
+    // instead of lurching.
+    maxFrameTimeSeconds: MAX_FRAME_TIME_SECONDS,
     stepHandler: () => {
       tdTick.fn?.(engine.world)
     },
@@ -375,6 +376,7 @@ export function initializeGame(): GameComposition {
     onSelectBuilding: (kind) => composition.inputController.selectBuilding(kind),
     onSelectIdleWorkers: () => composition.inputController.selectIdleWorkers(),
     onLocateBase: () => composition.inputController.centerOnBase(),
+    onAlertJump: (x, z) => composition.renderer.centerOn(x, z),
     onStop: () => composition.inputController.stopSelected(),
     onHold: () => composition.inputController.holdSelected(),
     onGestureMode: (mode) => {
@@ -595,6 +597,9 @@ export function initializeGame(): GameComposition {
     },
   }
   composition.hud.mount(hudRoot, hudCallbacks)
+  // Alert chip: the renderer owns camera truth — wire its off-screen
+  // probe so the chip only fires for events the player cannot see.
+  composition.hud.setAlertViewportProbe((x, z) => composition.renderer.isWorldPointOnScreen(x, z))
   // Every armed-mode change (card buttons, placement, auto-reset after an
   // order) syncs the toolbar's Cancel button through this listener.
   composition.inputController.setModeListener((mode) => composition.hud.setInputMode(mode))

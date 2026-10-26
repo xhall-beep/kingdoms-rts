@@ -408,6 +408,62 @@ code {
   .hud-wild-hot .hud-wild-seg-on { animation: none; }
 }
 
+/* Event alert chip (feel research 2026-10-26, Q4): a transient
+ * tap-to-jump announcement for OFF-SCREEN events — under attack,
+ * treant spawn, completion. Centered in the toast lane directly
+ * under the strip + wrath sliver, like the banner: it reads as a
+ * system announcement, not a stat, and its center placement never
+ * collides with the left-aligned strip stats or the corner buttons.
+ * TRANSIENT by design — it is not part of the persistent occupancy
+ * budget: it reserves no layout (absolute, display:none while
+ * hidden) and hides itself on expiry, on tap, or when the player
+ * pans the event on screen. #hud-root is pointer-events:none; the
+ * chip opts back in because tapping it IS the interaction. The
+ * banner lane (top:52px) is victory/defeat-only, so the two never
+ * contend in live play. */
+.hud-alert {
+  position: absolute;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  color: #fff3d4;
+  background: rgba(20, 24, 34, 0.92);
+  border: 1px solid rgba(255, 243, 212, 0.35);
+  border-radius: 999px;
+  padding: 8px 18px;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: pointer;
+  z-index: 26;
+}
+
+.hud-alert[hidden] {
+  display: none;
+}
+
+.hud-alert-attack {
+  background: rgba(120, 24, 24, 0.94);
+  border-color: rgba(255, 120, 120, 0.6);
+  animation: hud-alert-pulse 0.9s ease-in-out infinite;
+}
+
+.hud-alert-treant {
+  background: rgba(24, 68, 36, 0.94);
+  border-color: rgba(125, 208, 138, 0.55);
+}
+
+@keyframes hud-alert-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-alert-attack { animation: none; }
+}
+
 /* Stats live in a shrinkable wrapper: if readouts ever run wide, the
  * info segment ellipsizes — the corner buttons are flex-pinned and can
  * NEVER be pushed off-screen by stat text. */

@@ -1,5 +1,16 @@
 import { World } from './World.ts'
 
+/**
+ * The game's catch-up clamp: after a stall (tab switch, GC pause) the
+ * engine replays at most this much frame time in a single frame — 6
+ * fixed steps at the 1/60 step — so the sim runs a beat behind instead
+ * of fast-forwarding through a 1 s jump. composeGame passes this to the
+ * Engine; it is the single source for the value (the composition and
+ * the regression test both read it). The Engine's own default (1 s)
+ * stays untouched for other consumers.
+ */
+export const MAX_FRAME_TIME_SECONDS = 0.1
+
 export interface EngineOptions {
   world?: World
   fixedStepSeconds?: number

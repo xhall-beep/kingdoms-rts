@@ -134,6 +134,10 @@ export const WORLD_EXCLUDED_FIELDS: Readonly<Record<string, string>> = {
   hitFlashes: 'visual-only',
   deathPops: 'visual-only',
   completionFlashes: 'visual-only',
+  // Visual-only HUD alert channel (World.pushAlert): the HUD drains it
+  // per-frame; the throttle stamp beside it only gates visual pushes.
+  alertEvents: 'visual-only',
+  lastAttackAlertTick: 'visual-only',
   // Fog grids are sim state but not typed arrays: all three serializers
   // cover them through FogGrid.snapshotCells/snapshotVisibleNow, and the
   // round-trip tests exercise them. They cannot join a typed-array list.

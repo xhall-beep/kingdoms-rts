@@ -67,6 +67,10 @@ export class LivingWildSystemImpl implements System {
       if (world.wildHeat[team] < WILD_HEAT_THRESHOLD) continue
       world.wildHeat[team] -= WILD_HEAT_THRESHOLD
       const treant = world.spawnTreant(world.wildSiteX[team], world.wildSiteZ[team])
+      // Alert chip: the spawn is an EVENT for the offending team's
+      // player (visual-only) — the wrath meter itself stays quiet
+      // state, the chip announces. Position is the harvest site.
+      world.pushAlert('treant', world.wildSiteX[team], world.wildSiteZ[team], team)
       // First blood: the worker who was cutting at the site, if it still
       // stands. Otherwise the treant acquires by sight like any creature.
       const offender = world.wildWorker[team]

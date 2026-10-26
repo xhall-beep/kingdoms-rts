@@ -7,17 +7,19 @@ import { PLAYER_BUILDABLE, placeStructure } from '../world/construction.ts'
 import {
 setupTowerDefense, updateTowerDefense, TD_BUILD_PHASE_TICKS,
 } from '../modes/tower-defense.ts'
-import { Engine } from '../core/Engine.ts'
+import { Engine, MAX_FRAME_TIME_SECONDS } from '../core/Engine.ts'
 import { MovementSystemImpl } from '../systems/movement.ts'
 import { test, assert, assertEqual } from './harness.ts'
 
 test('Engine catch-up clamp: a long frame advances at most the clamped span', () => {
-  // composeGame composes the Engine with maxFrameTimeSeconds: 0.1, so a
-  // stalled frame (tab switch, GC pause) must replay at most 0.1 s of
-  // fixed steps — never the 1 s default's 60-step fast-forward.
-  const clamped = new Engine({ maxFrameTimeSeconds: 0.1 })
+  // composeGame composes the Engine with MAX_FRAME_TIME_SECONDS (the
+  // single source in Engine.ts — this test imports the same constant,
+  // so composition drift breaks here), so a stalled frame (tab switch,
+  // GC pause) must replay at most that span of fixed steps — never the
+  // 1 s default's 60-step fast-forward.
+  const clamped = new Engine({ maxFrameTimeSeconds: MAX_FRAME_TIME_SECONDS })
   clamped.advance(5)
-  assertEqual(clamped.getSimulationSteps(), 6, 'a 5 s stall replays only 0.1 s of steps')
+  assertEqual(clamped.getSimulationSteps(), 6, 'a 5 s stall replays only the clamped span of steps')
   const unclamped = new Engine()
   unclamped.advance(0.5)
   assertEqual(unclamped.getSimulationSteps(), 30, 'control: the default engine steps the full frame')

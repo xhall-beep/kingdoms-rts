@@ -8,7 +8,7 @@ import { getUnits } from '../data/stats.ts'
 import type { UnitType } from '../data/units.ts'
 import { TREANT } from '../data/units.ts'
 import { SpatialHash } from './spatial-hash.ts'
-import { TICK_RATE } from './time.ts'
+import { TICK_RATE, WORLD_TICKS_PER_SECOND } from './time.ts'
 import { FogGrid } from '../world/fog.ts'
 
 // ---- entity kinds ----
@@ -110,6 +110,29 @@ export interface HitFlash {
   id: number
 }
 
+/** Event classes the HUD alert chip announces (visual-only). */
+export type AlertKind = 'attack' | 'treant' | 'complete'
+
+/**
+ * Attack alerts are throttled at the source: at most one per team per
+ * 10 sim-seconds. A sustained battle must not re-alert every few
+ * seconds — the notification-noise failure (AoE3) is the anti-pattern
+ * the alert chip is designed against.
+ */
+export const ATTACK_ALERT_COOLDOWN_TICKS = 10 * WORLD_TICKS_PER_SECOND
+
+export interface AlertEvent {
+  /** What happened (drives the chip's text, styling, and priority). */
+  kind: AlertKind
+  /** World position, captured at push time — the entity that caused the event may be dead or moved by display time. */
+  x: number
+  z: number
+  /** The team the event concerns; only that team's viewer cues on it. */
+  team: 0 | 1
+  /** Sim tick at push time. */
+  tick: number
+}
+
 export interface CompletionFlash {
   /** Entity id whose construction, training, research, or tier upgrade just finished (visual-only). */
   id: number
@@ -153,6 +176,12 @@ export class World {
 
   /** Visual-only completion events (building finished, unit trained, research/tier done); not sim state. */
   completionFlashes: CompletionFlash[] = []
+
+  /** Visual-only HUD alert events (own unit/building struck, treant spawn, completion); not sim state. */
+  alertEvents: AlertEvent[] = []
+
+  /** Visual-only per-team tick of the last pushed attack alert (the source throttle); not sim state. */
+  lastAttackAlertTick: number[] = [-1000000, -1000000]
 
   // ---- combat ----
   readonly health: Float32Array
@@ -634,6 +663,42 @@ export class World {
     this.state[id] = STATE_IDLE
     this.setPosition(entity, x, 0, z)
     return entity
+  }
+
+  /**
+   * Push a visual-only HUD alert event. The position is captured NOW:
+   * the entity that caused the event may be dead or moved by the time
+   * the chip displays. Like the other visual queues this never enters
+   * sim state (excluded in the state registry); the HUD drains it.
+   */
+  pushAlert(kind: AlertKind, x: number, z: number, team: 0 | 1): void {
+    this.alertEvents.push({ kind, x, z, team, tick: this.tick })
+    // Bound the queue if nobody drains it (menus, headless drivers):
+    // the chip shows one event at a time, so only the newest matter.
+    if (this.alertEvents.length > 64) {
+      this.alertEvents.splice(0, this.alertEvents.length - 64)
+    }
+  }
+
+  /**
+   * Attack alert for a struck entity, throttled at the source (see
+   * ATTACK_ALERT_COOLDOWN_TICKS). Neutral creatures (treants) belong
+   * to no team and raise no alert when struck; a treant striking a
+   * worker alerts the worker's team through this same path.
+   */
+  pushAttackAlert(victimId: number): void {
+    const team = this.team[victimId]
+    if (team !== 0 && team !== 1) return
+    if (this.tick - this.lastAttackAlertTick[team] < ATTACK_ALERT_COOLDOWN_TICKS) return
+    this.lastAttackAlertTick[team] = this.tick
+    this.pushAlert('attack', this.positionX[victimId], this.positionZ[victimId], team as 0 | 1)
+  }
+
+  /** Completion alert for an entity (building finished, unit trained, research/tier done). */
+  pushCompletionAlert(id: number): void {
+    const team = this.team[id]
+    if (team !== 0 && team !== 1) return
+    this.pushAlert('complete', this.positionX[id], this.positionZ[id], team as 0 | 1)
   }
 
   /**

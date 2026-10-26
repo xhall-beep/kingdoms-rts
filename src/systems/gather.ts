@@ -63,6 +63,8 @@ function finishConstruction(world: World, site: number): void {
   }
   // Game-feel: completion cue (visual-only; renderer drains it each frame).
   world.completionFlashes.push({ id: site, unit: false, team: world.team[site] as 0 | 1 })
+  // Alert chip: see production.ts (off-screen gated in the HUD).
+  world.pushCompletionAlert(site)
 }
 
 /**

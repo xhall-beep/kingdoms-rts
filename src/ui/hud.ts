@@ -8,6 +8,8 @@ import type { AIDifficulty, AIPersonality } from '../ai/opponent.ts'
 import type { AiPracticeTier } from '../net/pvp-ai.ts'
 import type { InputMode, GestureMode } from '../input/input-controller'
 import type { World } from '../core/World'
+import type { AlertEvent, AlertKind } from '../core/World'
+import { WORLD_TICKS_PER_SECOND } from '../core/time.ts'
 import {
   KIND_ARCHERY,
   KIND_BARRACKS,
@@ -67,6 +69,82 @@ export function wildWrathDisplay(world: World): WildWrathDisplay {
   return { fraction, segments, band }
 }
 
+/**
+ * Event alert chip (feel research 2026-10-26, Q4 — the slice that
+ * closes the game's biggest feel gap). The camera sees roughly a
+ * third of the 180-unit world; until now NOTHING told the player
+ * about off-screen events — a base could die while they watched
+ * their wood line. The chip is the alert→camera binding (StarCraft's
+ * Space-to-last-alert, two generations running) compressed for a
+ * phone: one transient chip, tap → camera jumps to the event.
+ *
+ * Discipline, all of it deliberate:
+ *  - OFF-SCREEN ONLY. An event whose location is on screen when the
+ *    chip would show raises no chip — the player can already see it;
+ *    flashes and rings cover the moment (decided at DISPLAY time via
+ *    the renderer's camera probe: the camera may have moved since
+ *    the event was pushed).
+ *  - ONE chip at a time, priority attack > treant > complete; a
+ *    higher-priority event preempts a lower one, never the reverse.
+ *  - PER-CLASS COOLDOWN (10 sim-seconds from show time) so a
+ *    sustained battle cannot re-chip every few seconds — the
+ *    notification-noise failure is the anti-pattern (AoE3).
+ *  - AUTO-EXPIRE after 5 sim-seconds, or earlier if the player pans
+ *    the event on screen themselves.
+ */
+export const ALERT_PRIORITY: Record<AlertKind, number> = {
+  attack: 3,
+  treant: 2,
+  complete: 1,
+}
+
+/** Chip text per class. */
+export const ALERT_TEXT: Record<AlertKind, string> = {
+  attack: '⚔ Under attack!',
+  treant: '🌲 The wild stirs…',
+  complete: '✓ Complete',
+}
+
+/** A class that just showed cannot re-chip for 10 sim-seconds. */
+export const ALERT_COOLDOWN_TICKS = 10 * WORLD_TICKS_PER_SECOND
+/** Chip lifetime before it auto-expires. */
+export const ALERT_EXPIRE_TICKS = 5 * WORLD_TICKS_PER_SECOND
+
+/** The chip currently on display. */
+export interface AlertChipState {
+  kind: AlertKind
+  x: number
+  z: number
+  shownTick: number
+}
+
+/**
+ * Pick the alert to display from freshly drained events: the
+ * highest-priority candidate for `team` whose class is off cooldown
+ * and whose location is off screen. A candidate preempts the showing
+ * `current` chip only with STRICTLY higher priority. Returns null
+ * when nothing should show (or preempt).
+ */
+export function pickAlert(
+  events: readonly AlertEvent[],
+  team: 0 | 1,
+  current: AlertChipState | null,
+  lastShownTick: Readonly<Record<AlertKind, number>>,
+  tick: number,
+  isOnScreen: (x: number, z: number) => boolean,
+): AlertEvent | null {
+  let best: AlertEvent | null = null
+  for (const ev of events) {
+    if (ev.team !== team) continue
+    if (tick - lastShownTick[ev.kind] < ALERT_COOLDOWN_TICKS) continue
+    if (isOnScreen(ev.x, ev.z)) continue
+    if (best === null || ALERT_PRIORITY[ev.kind] > ALERT_PRIORITY[best.kind]) best = ev
+  }
+  if (best === null) return null
+  if (current !== null && ALERT_PRIORITY[best.kind] <= ALERT_PRIORITY[current.kind]) return null
+  return best
+}
+
 export interface Hud {
   render(world: World): void
   setPvpActive(active: boolean): void
@@ -88,6 +166,8 @@ export interface HudCallbacks {
   onSelectBuilding(kind: number): void
   onNewGame(): void
   onSelectIdleWorkers(): void
+  /** Alert chip tapped: jump the camera to the event location. */
+  onAlertJump?(x: number, z: number): void
   /** Jump the camera back to the player's base (phone "lost in the dark" recovery). */
   onLocateBase(): void
   onStop(): void
@@ -138,6 +218,19 @@ export class HudImpl implements Hud {
   private wildSegs: HTMLElement[] = []
   /** Last rendered wrath state ("segments:band") — DOM writes only on change. */
   private lastWildKey = ''
+  private alertEl: HTMLElement | null = null
+  /** The alert chip on display, if any (kind + jump target + show tick). */
+  private alertChip: AlertChipState | null = null
+  /** Last rendered chip kind ('' = hidden) — DOM writes only on change. */
+  private lastAlertKey = ''
+  /** Per-class tick the chip last showed (display cooldown source). */
+  private readonly alertLastShownTick: Record<AlertKind, number> = {
+    attack: -1000000,
+    treant: -1000000,
+    complete: -1000000,
+  }
+  /** Camera probe injected by composition (renderer owns camera truth). */
+  private alertOnScreen: ((x: number, z: number) => boolean) | null = null
   private infoEl: HTMLElement | null = null
   private armyEl: HTMLElement | null = null
   private dashEl: HTMLElement | null = null
@@ -175,6 +268,7 @@ export class HudImpl implements Hud {
         <button class="hud-strip-btn" id="hud-menu-btn" title="Menu">☰</button>
       </div>
       <div class="hud-wild hud-wild-quiet" id="hud-wild" role="img" aria-label="Living Wild wrath — the forest answers when the bar fills" title="Living Wild wrath — the forest answers when the bar fills"><span class="hud-wild-seg"></span><span class="hud-wild-seg"></span><span class="hud-wild-seg"></span><span class="hud-wild-seg"></span><span class="hud-wild-seg"></span></div>
+      <button class="hud-alert" id="hud-alert" hidden></button>
 
       <div class="hud-menu" id="hud-menu" hidden>
         <div class="hud-bar">
@@ -245,6 +339,17 @@ export class HudImpl implements Hud {
     this.wildSegs = this.wildEl
       ? [...this.wildEl.querySelectorAll('.hud-wild-seg')] as HTMLElement[]
       : []
+    // Alert chip: tapping it jumps the camera to the event and
+    // dismisses it. The chip is hidden by default; updateAlerts owns
+    // its visibility from sim state.
+    const alertBtn = parent.querySelector('#hud-alert')
+    this.alertEl = alertBtn as HTMLElement | null
+    if (alertBtn) alertBtn.addEventListener('click', () => {
+      const chip = this.alertChip
+      if (!chip) return
+      this.alertChip = null
+      this.callbacks?.onAlertJump?.(chip.x, chip.z)
+    })
     this.infoEl = parent.querySelector('#hud-info')
     this.armyEl = parent.querySelector('#hud-info-army')
     this.dashEl = parent.querySelector('#hud-dash')
@@ -528,6 +633,64 @@ export class HudImpl implements Hud {
   }
 
   /**
+   * Wire the camera probe the alert chip uses for its off-screen test
+   * (composition injects the renderer's isWorldPointOnScreen). Until a
+   * probe is wired, every point reads as off-screen: a HUD without a
+   * camera has no jump target anyway, and alerts must not be silently
+   * swallowed by a missing wire.
+   */
+  setAlertViewportProbe(probe: ((x: number, z: number) => boolean) | null): void {
+    this.alertOnScreen = probe
+  }
+
+  /**
+   * Event alert chip: drain the world's visual-only alert queue and
+   * show at most one chip for the player's team (pickAlert owns the
+   * gating: off-screen only, per-class cooldown, priority preemption).
+   * The HUD is the queue's sole drainer — the frame loop updates the
+   * HUD every frame after the renderer draws. A showing chip retires
+   * on expiry, or early when the player pans the event on screen
+   * themselves. DOM writes only when the display key changes (the
+   * wrath sliver's pattern).
+   */
+  private updateAlerts(world: World): void {
+    const events = world.alertEvents.splice(0, world.alertEvents.length)
+    const onScreen = this.alertOnScreen ?? ((): boolean => false)
+    const pick = pickAlert(
+      events,
+      TEAM_PLAYER,
+      this.alertChip,
+      this.alertLastShownTick,
+      world.tick,
+      onScreen,
+    )
+    if (pick !== null) {
+      this.alertChip = { kind: pick.kind, x: pick.x, z: pick.z, shownTick: world.tick }
+      this.alertLastShownTick[pick.kind] = world.tick
+    } else if (this.alertChip !== null) {
+      if (
+        world.tick - this.alertChip.shownTick >= ALERT_EXPIRE_TICKS ||
+        onScreen(this.alertChip.x, this.alertChip.z)
+      ) {
+        this.alertChip = null
+      }
+    }
+    if (!this.alertEl) return
+    const key = this.alertChip === null ? '' : this.alertChip.kind
+    if (key === this.lastAlertKey) return
+    this.lastAlertKey = key
+    if (this.alertChip === null) {
+      this.alertEl.hidden = true
+      this.alertEl.textContent = ''
+      this.alertEl.className = 'hud-alert'
+    } else {
+      this.alertEl.hidden = false
+      this.alertEl.textContent = ALERT_TEXT[this.alertChip.kind]
+      this.alertEl.className = `hud-alert hud-alert-${this.alertChip.kind}`
+    }
+  }
+
+  /**
    * Fixed-grid toolbar (WC3/SC2 command-card invariant): cells never
    * appear, disappear, or move — state renders INSIDE the cell. ✕ is
    * armed iff a selection exists; Cancel iff an order mode is armed.
@@ -577,6 +740,7 @@ export class HudImpl implements Hud {
         }
       }
     }
+    this.updateAlerts(world)
     this.announceBells(world)
     // Counts are computed once and split across the two readouts: the top
     // strip carries VP + faction extras; the dashboard idle row carries

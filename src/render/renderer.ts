@@ -197,6 +197,19 @@ export class Renderer {
     this.clampCamera()
   }
 
+  /**
+   * True when a world point projects inside the current viewport.
+   * The HUD alert chip decides display on this: an event the player
+   * can already see raises no chip (flashes and rings cover it).
+   * Before the first resize the viewport is unmeasured — report
+   * off-screen so an alert is never silently swallowed.
+   */
+  isWorldPointOnScreen(x: number, z: number): boolean {
+    if (this.cssWidth <= 0 || this.cssHeight <= 0) return false
+    const s = this.toScreen(x, z)
+    return s.x >= 0 && s.x <= this.cssWidth && s.y >= 0 && s.y <= this.cssHeight
+  }
+
   pan(dxPixels: number, dyPixels: number): void {
     this.camX -= dxPixels / this.zoom
     this.camZ -= dyPixels / this.zoom

@@ -91,6 +91,9 @@ export class ProductionSystemImpl implements System {
       world.state[uid] = STATE_MOVE
       // Game-feel: completion cue (visual-only; renderer drains it each frame).
       world.completionFlashes.push({ id, unit: true, team })
+      // Alert chip: completions also enter the alert channel (visual-only);
+      // the HUD raises a chip only when the site is off-screen.
+      world.pushCompletionAlert(id)
       // The queue head starts immediately in the freed slot — its cost
       // was charged when it was queued.
       promoteQueue(world, id)
@@ -141,6 +144,8 @@ function completeUpgrade(world: World, id: number): void {
   // Game-feel: tier upgrades finished silently until now; cue them like any
   // other building completion (visual-only; renderer drains it each frame).
   world.completionFlashes.push({ id, unit: false, team: world.team[id] as 0 | 1 })
+  // Alert chip: see the training-completion site (off-screen gated in the HUD).
+  world.pushCompletionAlert(id)
   // Each tier adds 40% max HP; heal the building by the same proportion.
   const newMax = world.maxHealth[id] * 1.4
   const ratio = world.health[id] / world.maxHealth[id]
@@ -424,5 +429,7 @@ export function researchUpgrade(world: World, buildingId: number, type: UpgradeT
   // all. Push the same visual-only completion flash buildings and trained
   // units already use (renderer drains it; never enters the lockstep hash).
   world.completionFlashes.push({ id: buildingId, unit: false, team })
+  // Alert chip: see the training-completion site (off-screen gated in the HUD).
+  world.pushCompletionAlert(buildingId)
   return true
 }
