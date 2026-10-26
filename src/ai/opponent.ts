@@ -92,6 +92,19 @@ const FLEE_CLEARANCE = 2 // An extended rally sits this far beyond the threat's 
 const MICRO_RADIUS = 18 // Local fight window for the strength comparison.
 const WOUNDED_FRACTION = 0.3 // Below this health fraction a soldier withdraws.
 /**
+ * Ranged kiting: combat.ts notes ranged units "kite melee effectively",
+ * but no code ever did it — an engaged ranged unit stood and traded
+ * against a closing melee at 1.25x damage against it, on 85 HP vs the
+ * melee's 170. A ranged unit therefore steps back when a visible enemy
+ * melee gets inside KITE_TRIGGER, to a point KITE_STANDOFF from that
+ * melee: outside melee reach (2.1) but inside its own weapon range
+ * (11), so after the move order completes it re-engages from range.
+ * Only where the outmatched-retreat above did not already fire — a
+ * losing fight retreats to the hall, a winnable one kites.
+ */
+const KITE_TRIGGER = 6 // A visible enemy melee this close starts a kite step.
+const KITE_STANDOFF = 9 // Kite destination's distance from the closing melee.
+/**
  * Retreat trigger: enemyLocal > ownLocal * ratio orders a pullback.
  * The aggressor fights on until the fight is hopeless; the defender
  * preserves its army first. The aggressor also never withdraws wounded —
@@ -1081,11 +1094,13 @@ export class OpponentAI implements System {
   }
 
   /**
-   * Battle micro — tactical retreat and wounded withdrawal. Runs every think
-   * tick after attack/defend orders. Only soldiers engaged AWAY from the base
-   * (beyond the defense radius) are eligible; the home garrison always holds.
-   * Retreating units rally on the hall, go idle on arrival, and rejoin the
-   * next wave the macro layer sends.
+   * Battle micro — tactical retreat, wounded withdrawal, and ranged
+   * kiting. Runs every think tick after attack/defend orders. Only
+   * soldiers engaged AWAY from the base (beyond the defense radius) are
+   * eligible; the home garrison always holds. Retreating units rally on
+   * the hall, go idle on arrival, and rejoin the next wave the macro
+   * layer sends. Kiting units step back from a closing melee and
+   * re-engage from range once the move order completes.
    */
   private microArmy(world: World, hall: number, soldiers: number[]): void {
     const hx = world.positionX[hall]
@@ -1132,6 +1147,38 @@ export class OpponentAI implements System {
       }
       if (own > 0 && foe > own * retreatRatio) {
         this.emitMove(world, id, hx, hz)
+        continue
+      }
+      // Ranged kiting: a visible enemy melee closing on this archer
+      // gets a step back, not a stand-and-trade. Nearest melee wins;
+      // ties break by lower entity id, like the other micro picks.
+      if (world.kind[id] === KIND_RANGED) {
+        let threat = NO_TARGET
+        let bestD = Infinity
+        for (const e of enemies) {
+          if (world.kind[e] !== KIND_MELEE) continue
+          const d = Math.hypot(world.positionX[e] - ux, world.positionZ[e] - uz)
+          if (d <= KITE_TRIGGER && (d < bestD || (d === bestD && e < threat))) {
+            bestD = d
+            threat = e
+          }
+        }
+        if (threat !== NO_TARGET) {
+          const tx = world.positionX[threat]
+          const tz = world.positionZ[threat]
+          let dx = ux - tx
+          let dz = uz - tz
+          if (Math.hypot(dx, dz) < 1e-6) {
+            dx = 1
+            dz = 0
+          } else {
+            const d = Math.hypot(dx, dz)
+            dx /= d
+            dz /= d
+          }
+          const clamp = (v: number): number => Math.max(-MAP_CLAMP, Math.min(MAP_CLAMP, v))
+          this.emitMove(world, id, clamp(tx + dx * KITE_STANDOFF), clamp(tz + dz * KITE_STANDOFF))
+        }
       }
     }
   }
