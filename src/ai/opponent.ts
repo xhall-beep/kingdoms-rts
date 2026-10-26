@@ -25,6 +25,7 @@ import { orderBuild, orderGather } from '../systems/gather.ts'
 import { BUILD_RING_OFFSETS } from '../core/Math.ts'
 import { orderAttackMove } from '../systems/combat.ts'
 import { orderMove } from '../systems/movement.ts'
+import { HORN_COST, RALLY_NONE, soundWarHorn } from '../systems/warhorn.ts'
 import { CAPTURE_RADIUS } from '../systems/shrines.ts'
 import { enqueueTrain, researchCost, researchUpgrade, upgradeBuilding } from '../systems/production.ts'
 import { UPGRADES, type UpgradeType } from '../data/upgrades.ts'
@@ -105,6 +106,14 @@ const WOUNDED_FRACTION = 0.3 // Below this health fraction a soldier withdraws.
 const KITE_TRIGGER = 6 // A visible enemy melee this close starts a kite step.
 const KITE_STANDOFF = 9 // Kite destination's distance from the closing melee.
 /**
+ * Kite refinement (always-be-shooting): a step back buys survival only
+ * when the threat can actually arrive. A closing melee at or below this
+ * health fraction dies to the local fight before it lands a blow, so
+ * the archer holds and shoots instead. Mirrors the wounded-withdrawal
+ * band's logic from the threat's side.
+ */
+const KITE_DYING_FRACTION = 0.25
+/**
  * Retreat trigger: enemyLocal > ownLocal * ratio orders a pullback.
  * The aggressor fights on until the fight is hopeless; the defender
  * preserves its army first. The aggressor also never withdraws wounded —
@@ -144,6 +153,57 @@ const UNDEAD_ATTACK_ARMY = 3
 
 /** Muster radius of the Militia Bell — mirrors World.ringMilitiaBell. */
 const MILITIA_MUSTER_RADIUS = 25
+
+/**
+ * War Horn discipline. The horn was a player-only instrument: charge
+ * accrues from damage dealt (warhorn.ts), but no AI code ever spent it —
+ * the systems audit's 12-minute AI-vs-AI probe measured both AIs sitting
+ * at the 100 cap for minutes and then losing the whole meter to Coward's
+ * Decay, rallyEver = [false, false]. The step that spends it
+ * (soundWarHornStep) follows the surveyed doctrine for charged army
+ * abilities: never fire on the meter alone — the gate is the meter AND a
+ * counted force in, entering, or about to enter a concrete fight; the
+ * rally is picked by the fight's shape (heal the bleed, buff the clash,
+ * speed the approach); and a meter about to be deleted by decay is
+ * converted rather than wasted. All thresholds live in this one record,
+ * in the RETREAT_RATIO style, so personalities differ by WHEN the horn
+ * sounds and which rally answers:
+ * - aggressor fires at the first 50, in any real fight; it stays in
+ *   fights (it is exempt from wounded withdrawal), so its Wind window
+ *   is the latest — the army must be truly bleeding.
+ * - defender is defense-first: at home it fires from 50 on the Militia
+ *   Bell's terms (base under attack), preferring Second Wind with the
+ *   workers counted in the cluster — Wind is the only rally that heals
+ *   them. Offensively it spends only on a full meter, and only into a
+ *   real clash (the highest clashMin).
+ * - expander fires at 50 like the aggressor, but its Gale March is
+ *   coupled to the shrine: when contestShrine's emergency branch sends
+ *   a sortie, the horn speeds its arrival.
+ */
+interface HornProfile {
+  fireCharge: number // charge floor for offensive firing (defensive fires at HORN_COST)
+  clashMin: number // engaged own soldiers an Ironblood clash requires
+  windHp: number // aggregate engaged health fraction at/below which Second Wind answers
+  defenseFirst: boolean // a home fight pre-empts all offensive firing
+}
+
+const HORN_PROFILE: Record<AIPersonality, HornProfile> = {
+  aggressor: { fireCharge: 50, clashMin: 3, windHp: 0.55, defenseFirst: false },
+  defender: { fireCharge: 100, clashMin: 5, windHp: 0.70, defenseFirst: true },
+  expander: { fireCharge: 50, clashMin: 4, windHp: 0.65, defenseFirst: false },
+}
+/** Second Wind needs this many engaged (or home-cluster) bodies: below
+ * it, a 30% heal is worth less than a buff. */
+const HORN_WIND_MIN_BODIES = 4
+/** Ironblood wants a real fight: visible foe health in the engaged
+ * cluster at least this fraction of the cluster's own health. */
+const HORN_CLASH_FOE_FRACTION = 0.5
+/**
+ * Coward's Decay wipes the horn after 45 s without dealing damage
+ * (warhorn.ts). With this many peace ticks elapsed the meter is ~15 s
+ * from deletion — the anti-decay conversion window.
+ */
+const HORN_DECAY_WARN_TICKS = 30 * 60
 
 /**
  * AI research discipline: the upgrade ladder was only ever driven from
@@ -261,6 +321,10 @@ export class OpponentAI implements System {
   private readonly fleeing = new Set<number>()
   /** gameTime of this AI's last research purchase (RESEARCH_PACE gate). */
   private lastResearchAt = -Infinity
+  /** Set by contestShrine's emergency branch when it dispatches a sortie
+   * this think; consumed by soundWarHornStep in the same think (the
+   * expander's Gale March coupling). Reset at the top of every think. */
+  private shrineSortie = false
   /** When set, AI decisions are emitted as Commands (PvP-vs-AI lockstep mode). */
   private sink: CommandSink | null = null
 
@@ -352,6 +416,7 @@ export class OpponentAI implements System {
     const team = this.team
     const hall = structuresOf(world, team, KIND_HALL, true)[0]
     if (hall === undefined) return // Defeated.
+    this.shrineSortie = false // Fresh each think; contestShrine may set it.
 
     const workers = unitsOf(world, team, KIND_WORKER)
     const soldiers = [...unitsOf(world, team, KIND_MELEE), ...unitsOf(world, team, KIND_RANGED)]
@@ -367,7 +432,9 @@ export class OpponentAI implements System {
     this.researchUpgrades(world)
     this.contestShrine(world, soldiers)
     this.trainSoldiers(world, workers.length, reserveGold)
-    if (!this.defend(world, hall, soldiers)) this.attack(world, hall, soldiers)
+    const defended = this.defend(world, hall, soldiers)
+    if (!defended) this.attack(world, hall, soldiers)
+    this.soundWarHornStep(world, hall, soldiers, defended)
     this.microArmy(world, hall, soldiers)
   }
 
@@ -412,6 +479,9 @@ export class OpponentAI implements System {
       for (const id of party) {
         this.emitAttackMove(world, id, world.positionX[shrine], world.positionZ[shrine])
       }
+      // The horn step reads this in the same think: a sortie is en
+      // route to the game's decisive point (see HORN_PROFILE).
+      this.shrineSortie = true
       return
     }
 
@@ -1044,6 +1114,149 @@ export class OpponentAI implements System {
     }
   }
 
+  /**
+   * Sound the War Horn through the same emission split as the Militia
+   * Bell: lockstep mode emits the 'warhorn' command (applied by
+   * net/apply.ts on both peers); direct mode applies it now.
+   */
+  private emitWarHorn(world: World, rally: 1 | 2 | 3): void {
+    if (this.sink) {
+      this.sink({ type: 'warhorn', step: 0, team: this.team, rally })
+    } else {
+      soundWarHorn(world, this.team, rally)
+    }
+  }
+
+  /**
+   * War Horn step — runs after the defend/attack dispatch, before
+   * microArmy, so it reads the fight the macro layer just committed to:
+   * the wave attack() launched is in STATE_ATTACKMOVE, the defense
+   * defend() converged is closing on the threat. At most one rally per
+   * think. Every input is world state — no RNG, no memory beyond the
+   * shrine-sortie flag set earlier this same think. See HORN_PROFILE
+   * for the doctrine and the per-personality thresholds.
+   *
+   * Engagement is microArmy's aggregation lifted to army level: an own
+   * soldier is engaged when it stands in STATE_ATTACK/STATE_ATTACKMOVE
+   * with at least one visible enemy soldier inside MICRO_RADIUS. A wave
+   * is "advancing" when a soldier attack-moves unengaged beyond the
+   * defense radius — en route to contact, not converging at home.
+   */
+  private soundWarHornStep(world: World, hall: number, soldiers: number[], defended: boolean): void {
+    const team = this.team
+    if (world.warCharge[team] < HORN_COST) return
+    // A buff rally is already sounding: soundWarHorn would refuse, so
+    // don't spend the decision. (Second Wind sets no rallyKind and
+    // never blocks.)
+    if (world.rallyKind[team] !== RALLY_NONE && world.rallyUntil[team] > world.matchTime) return
+    const profile = HORN_PROFILE[this.personality]
+    const enemyTeam = (team === 0 ? 1 : 0) as 0 | 1
+
+    // Visible enemy soldiers — the same fog discipline as microArmy.
+    const enemies: number[] = []
+    for (const id of world.entities.keys()) {
+      if (world.team[id] !== enemyTeam || world.health[id] <= 0) continue
+      const kind = world.kind[id]
+      if (kind !== KIND_MELEE && kind !== KIND_RANGED) continue
+      if (!canSee(world, team, id)) continue
+      enemies.push(id)
+    }
+
+    const hx = world.positionX[hall]
+    const hz = world.positionZ[hall]
+    let engagedCount = 0
+    let ownHp = 0
+    let ownMaxHp = 0
+    const engagedFoes = new Set<number>()
+    let advancing = false
+    for (const id of soldiers) {
+      if (world.health[id] <= 0) continue
+      const st = world.state[id]
+      if (st !== STATE_ATTACK && st !== STATE_ATTACKMOVE) continue
+      const ux = world.positionX[id]
+      const uz = world.positionZ[id]
+      let engaged = false
+      for (const e of enemies) {
+        if (Math.hypot(world.positionX[e] - ux, world.positionZ[e] - uz) <= MICRO_RADIUS) {
+          engaged = true
+          engagedFoes.add(e)
+        }
+      }
+      if (engaged) {
+        engagedCount += 1
+        ownHp += world.health[id]
+        ownMaxHp += world.maxHealth[id]
+      } else if (
+        st === STATE_ATTACKMOVE &&
+        Math.hypot(ux - hx, uz - hz) > this.tuning.defenseRadius
+      ) {
+        advancing = true
+      }
+    }
+    let foeHp = 0
+    for (const e of engagedFoes) foeHp += world.health[e]
+    const ownFrac = ownMaxHp > 0 ? ownHp / ownMaxHp : 1
+
+    // Defensive track (defender): the base is under attack this think,
+    // and defense pre-empts offense — no offensive rule is evaluated.
+    // The Wind cluster counts the workers standing in the threatened
+    // radius alongside the engaged soldiers; Ironblood answers being
+    // outnumbered but holding. A lone scout cannot bait either: it is
+    // not in the military foe sums, and an unhurt cluster fails the
+    // Wind fraction.
+    if (profile.defenseFirst && defended) {
+      let bodies = engagedCount
+      let hp = ownHp
+      let maxHp = ownMaxHp
+      for (const id of unitsOf(world, team, KIND_WORKER)) {
+        if (world.health[id] <= 0) continue
+        if (Math.hypot(world.positionX[id] - hx, world.positionZ[id] - hz) <= this.tuning.defenseRadius) {
+          bodies += 1
+          hp += world.health[id]
+          maxHp += world.maxHealth[id]
+        }
+      }
+      if (bodies >= HORN_WIND_MIN_BODIES && maxHp > 0 && hp / maxHp <= profile.windHp) {
+        this.emitWarHorn(world, 3)
+      } else if (engagedCount >= 1 && foeHp > ownHp) {
+        this.emitWarHorn(world, 2)
+      }
+      return
+    }
+
+    if (world.warCharge[team] >= profile.fireCharge) {
+      // Second Wind: the perishable window — damaged-but-alive bodies,
+      // enough of them that a 30% heal outvalues a buff.
+      if (engagedCount >= HORN_WIND_MIN_BODIES && ownFrac <= profile.windHp) {
+        this.emitWarHorn(world, 3)
+        return
+      }
+      // Ironblood: a real clash, not a mop-up.
+      if (engagedCount >= profile.clashMin && foeHp >= ownHp * HORN_CLASH_FOE_FRACTION) {
+        this.emitWarHorn(world, 2)
+        return
+      }
+      // Gale March: the pre-battle slot — speed for the approach. The
+      // expander's is coupled to the shrine sortie contestShrine
+      // dispatched this think; any personality spends it on a wave
+      // already marching to contact.
+      if ((this.personality === 'expander' && this.shrineSortie) || advancing) {
+        this.emitWarHorn(world, 1)
+        return
+      }
+    }
+
+    // Anti-decay conversion: the meter fighting built is ~15 s from
+    // Coward's Decay deleting it, and a wave is already marching —
+    // convert certain loss into approach speed. Hard veto when no wave
+    // advances (the army home and idle): firing buys nothing there.
+    // This is also the defender's only sub-floor spend — its offensive
+    // floor is a full meter, and decay respects no floors.
+    if (advancing && world.tick - world.warLastTick[team] >= HORN_DECAY_WARN_TICKS) {
+      this.emitWarHorn(world, 1)
+    }
+  }
+
   /** How many soldiers to keep at home as garrison (scales with game time + personality). */
   private getGarrisonSize(): number {
     let base = 0
@@ -1164,20 +1377,33 @@ export class OpponentAI implements System {
           }
         }
         if (threat !== NO_TARGET) {
-          const tx = world.positionX[threat]
-          const tz = world.positionZ[threat]
-          let dx = ux - tx
-          let dz = uz - tz
-          if (Math.hypot(dx, dz) < 1e-6) {
-            dx = 1
-            dz = 0
-          } else {
-            const d = Math.hypot(dx, dz)
-            dx /= d
-            dz /= d
+          // Always-be-shooting refinement: the step back is skipped
+          // when it buys no survival — the closing melee is dying
+          // (at/below KITE_DYING_FRACTION it falls to the local fight
+          // before it arrives) or the local cluster is already won
+          // decisively (the RETREAT_RATIO comparison inverted in our
+          // favor, on the health sums computed above). A skipped kite
+          // keeps the archer's arrows in the fight; every other kite
+          // condition is unchanged.
+          const threatDying =
+            world.health[threat] <= world.maxHealth[threat] * KITE_DYING_FRACTION
+          const clusterWon = foe > 0 && own >= foe * retreatRatio
+          if (!threatDying && !clusterWon) {
+            const tx = world.positionX[threat]
+            const tz = world.positionZ[threat]
+            let dx = ux - tx
+            let dz = uz - tz
+            if (Math.hypot(dx, dz) < 1e-6) {
+              dx = 1
+              dz = 0
+            } else {
+              const d = Math.hypot(dx, dz)
+              dx /= d
+              dz /= d
+            }
+            const clamp = (v: number): number => Math.max(-MAP_CLAMP, Math.min(MAP_CLAMP, v))
+            this.emitMove(world, id, clamp(tx + dx * KITE_STANDOFF), clamp(tz + dz * KITE_STANDOFF))
           }
-          const clamp = (v: number): number => Math.max(-MAP_CLAMP, Math.min(MAP_CLAMP, v))
-          this.emitMove(world, id, clamp(tx + dx * KITE_STANDOFF), clamp(tz + dz * KITE_STANDOFF))
         }
       }
     }

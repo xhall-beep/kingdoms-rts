@@ -11,6 +11,18 @@ import { Engine } from '../core/Engine.ts'
 import { MovementSystemImpl } from '../systems/movement.ts'
 import { test, assert, assertEqual } from './harness.ts'
 
+test('Engine catch-up clamp: a long frame advances at most the clamped span', () => {
+  // composeGame composes the Engine with maxFrameTimeSeconds: 0.1, so a
+  // stalled frame (tab switch, GC pause) must replay at most 0.1 s of
+  // fixed steps — never the 1 s default's 60-step fast-forward.
+  const clamped = new Engine({ maxFrameTimeSeconds: 0.1 })
+  clamped.advance(5)
+  assertEqual(clamped.getSimulationSteps(), 6, 'a 5 s stall replays only 0.1 s of steps')
+  const unclamped = new Engine()
+  unclamped.advance(0.5)
+  assertEqual(unclamped.getSimulationSteps(), 30, 'control: the default engine steps the full frame')
+})
+
 test('Guard Tower is player-buildable', () => {
   assert((PLAYER_BUILDABLE as string[]).includes('tower'), 'tower in PLAYER_BUILDABLE')
 })

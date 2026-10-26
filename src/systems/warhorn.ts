@@ -19,7 +19,7 @@ export const RALLY_GALE = 1
 export const RALLY_IRONBLOOD = 2
 export const RALLY_NAMES = ['', 'Gale March', 'Ironblood'] as const
 
-const HORN_COST = 50
+export const HORN_COST = 50
 const RALLY_DURATION = 20
 const DECAY_PEACE_TICKS = 45 * 60 // 45 seconds of peace empties the horn
 

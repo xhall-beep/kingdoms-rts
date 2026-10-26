@@ -15,6 +15,7 @@ import {
 import { getUnits } from '../data/stats.ts'
 import type { UnitType } from '../data/units.ts'
 import { ORC_TIER_NAMES, TIER_UPGRADES, researchCost, trainCostFor, trainingStateFor, trainingQueueFor } from '../systems/production.ts'
+import { HORN_COST } from '../systems/warhorn.ts'
 import { UPGRADES } from '../data/upgrades.ts'
 import type { UpgradeType } from '../data/upgrades.ts'
 import { buildersOnSite } from '../systems/gather.ts'
@@ -501,7 +502,7 @@ export function renderCommandCard(
         // How to Play and the warhorn system.
         const labels: Record<number, string> = { 1: '🌪 Gale', 2: '🩸 Iron', 3: '💨 Wind' }
         for (const r of [1, 2, 3] as const) {
-          const ready = charge >= 50 && !rallying
+          const ready = charge >= HORN_COST && !rallying
           cmd(
             labels[r],
             () => cb.onWarHorn(r),

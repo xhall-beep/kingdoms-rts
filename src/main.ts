@@ -71,6 +71,12 @@ export function composeGame(canvas: HTMLCanvasElement): GameComposition {
   // Mutable hook so TD mode can attach its per-tick update after the engine exists.
   const tdTick: { fn: ((w: World) => void) | null } = { fn: null }
   const engine = new Engine({
+    // Catch-up clamp: the Engine default allows a full second of frame
+    // time (60 fixed steps) to replay in a single frame after a stall
+    // (tab switch, GC pause) — a visible fast-forward hitch and a long
+    // main-thread block on mid-tier phones. 0.1s caps the replay at 6
+    // steps; the sim simply runs a beat behind instead of lurching.
+    maxFrameTimeSeconds: 0.1,
     stepHandler: () => {
       tdTick.fn?.(engine.world)
     },

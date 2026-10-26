@@ -150,3 +150,67 @@ test('kiting is deterministic', () => {
     'identical skirmishes must pick identical kite destinations',
   )
 })
+
+suite('ai-kiting: always-be-shooting skips (War Horn slice R5)')
+
+/**
+ * One defender archer facing a closing melee (the kite threat, 5 away,
+ * health set to `threatFrac` of max) plus a second melee 12 away at 40%
+ * health. The second melee's health keeps the local sums in the band
+ * where neither the retreat (foe > own x 1.35) nor the cluster-won skip
+ * (own >= foe x 1.35) can fire — so the ONLY thing that can stop the
+ * kite step is the threat's own dying band.
+ * own = 85; foe = 170 x threatFrac + 68: at 25% foe = 110.5, at 26%
+ * foe = 112.2 — both below the 114.75 retreat line, both far above the
+ * cluster-won line.
+ */
+function dyingBandScenario(threatFrac: number): { world: World; archer: number; threat: number } {
+  const { world, enemyHallX, enemyHallZ } = midGameWorld()
+  const defenseRadius = new OpponentAI(TEAM_ENEMY, 'normal', 'defender')
+    .decisionTuning().defenseRadius
+  const d = defenseRadius + 10
+  const bx = enemyHallX - d / Math.SQRT2
+  const bz = enemyHallZ - d / Math.SQRT2
+  const archer = world.spawnUnit('ranged', TEAM_ENEMY, bx, bz).id
+  orderAttackMove(world, archer, bx + 25, bz)
+  const threat = world.spawnUnit('melee', TEAM_PLAYER, bx + 5, bz).id
+  world.health[threat] = world.maxHealth[threat] * threatFrac
+  const bulk = world.spawnUnit('melee', TEAM_PLAYER, bx + 12, bz).id
+  world.health[bulk] = world.maxHealth[bulk] * 0.4
+  world.fog[TEAM_ENEMY].reveal(bx, bz, 30)
+  return { world, archer, threat }
+}
+
+test('ranged holds and shoots when the closing melee is dying (<=25% HP)', () => {
+  const { world, archer } = dyingBandScenario(0.25)
+  new OpponentAI(TEAM_ENEMY, 'normal', 'defender').update(world, 5)
+  assertEqual(
+    world.state[archer],
+    STATE_ATTACKMOVE,
+    'the archer keeps shooting instead of stepping back from a dying melee',
+  )
+})
+
+test('ranged still kites a closing melee just above the dying band (26% HP)', () => {
+  const { world, archer, threat } = dyingBandScenario(0.26)
+  new OpponentAI(TEAM_ENEMY, 'normal', 'defender').update(world, 5)
+  assertEqual(world.state[archer], STATE_MOVE, 'a melee that can still arrive earns the step back')
+  const targetD = Math.hypot(
+    world.targetX[archer] - world.positionX[threat],
+    world.targetZ[archer] - world.positionZ[threat],
+  )
+  assertEqual(targetD, 9, 'the kite destination sits at the 9-unit standoff')
+})
+
+test('ranged holds when the local cluster is already won decisively', () => {
+  // 3 archers (255 HP of local strength) vs 1 full-health melee (170):
+  // own sum >= foe sum x the defender's 1.35 retreat ratio — the
+  // cluster is won, so the threatened archer's arrows outvalue its feet.
+  const { world, soldiers } = kiteScenario('defender', 'ranged', 3, 5)
+  new OpponentAI(TEAM_ENEMY, 'normal', 'defender').update(world, 5)
+  assertEqual(
+    statesOf(world, soldiers).join(','),
+    [STATE_ATTACKMOVE, STATE_ATTACKMOVE, STATE_ATTACKMOVE].join(','),
+    'no archer steps back from a cluster it is already winning',
+  )
+})
