@@ -184,6 +184,9 @@ export function deserializeWorld(world: World, save: WorldSave): void {
   world.fog.forEach((fog, i) => {
     fog.restoreVisibleNow(save.fogVisibleNow?.[i] ?? [])
   })
+  // A legacy save can carry a dead building's production state on a
+  // recycled id (the A3c/F2 defect); scrub what each kind can't hold.
+  world.scrubRestoredState()
 }
 
 /** Persist a save to localStorage. Returns false when storage is unavailable. */

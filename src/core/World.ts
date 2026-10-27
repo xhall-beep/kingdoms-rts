@@ -415,6 +415,7 @@ export class World {
     this.reanimateTicks[id] = 0
     this.momentumTicks[id] = 0
     this.lastCombatTick[id] = -1000000
+    this.clearEntitySlots(id)
     return entity
   }
 
@@ -462,6 +463,111 @@ export class World {
     for (const id of ids) this.freeIds.push(id)
   }
 
+  /**
+   * Reset every per-entity pending-state slot to its born-clean value.
+   * Called from BOTH lifecycle gates — removeEntity (the dead entity's
+   * timers and orders die with it) and createEntity (a recycled id is
+   * born clean even if a future removal path forgets to clear) — so
+   * the two can never drift apart the way the hand-maintained clears
+   * did before the A3c/F2 fix: removeEntity cleared the WAITING train
+   * queue while the ACTIVE slot (trainKind/trainLeft/trainTotal) and
+   * the tier timer (upgradeLeft) survived, and ProductionSystemImpl
+   * ticked them on whatever entity recycled the id — a phantom unit
+   * delivered to the wrong team at the wrong place, a tier upgrade's
+   * x1.4 health landing on a worker. The same class covers the
+   * seed-warp flag (buildAuto — spawnBuilding never initializes it),
+   * militia expiry, cargo, and move-order residue: slots that systems
+   * act on for ANY live entity must not outlive their owner.
+   * Snapshot restore is consistent with this: snapshots serialize
+   * live entities only, so a resynced peer's dead slots sit at these
+   * same fill values.
+   */
+  private clearEntitySlots(id: number): void {
+    // Production: active slot, waiting queue, rally point.
+    this.trainKind[id] = NO_TRAINING
+    this.trainLeft[id] = 0
+    this.trainTotal[id] = 0
+    this.trainQueueLen[id] = 0
+    for (let s = 0; s < TRAIN_QUEUE_WAITING; s += 1) {
+      this.trainQueueKind[id * TRAIN_QUEUE_WAITING + s] = NO_TRAINING
+    }
+    this.rallyX[id] = 0
+    this.rallyZ[id] = 0
+    // Orc in-place tier upgrading.
+    this.upgradeLeft[id] = 0
+    this.tier[id] = 1
+    // Construction (incl. the undead seed-warp flag).
+    this.buildProgress[id] = 0
+    this.buildTotal[id] = 0
+    this.buildAuto[id] = 0
+    // Worker residue: cargo, gather timer, harvest preference, militia.
+    this.carryKind[id] = 0
+    this.carryAmount[id] = 0
+    this.gatherTimer[id] = 0
+    this.harvestKind[id] = 0
+    this.militiaUntil[id] = 0
+    // Objective state and order residue.
+    this.shrineHeld[id] = -1
+    this.targetId[id] = NO_TARGET
+    this.moving[id] = 0
+    this.targetX[id] = 0
+    this.targetZ[id] = 0
+    this.stopDist[id] = 0
+    this.resumeX[id] = NaN
+    this.resumeZ[id] = NaN
+  }
+
+  /**
+   * Load-path scrub — called at the end of save deserialize and
+   * snapshot restore. A save written by a build carrying the A3c/F2
+   * defect holds a dead building's production state on whatever live
+   * entity recycled its id, and registry-faithful restore would
+   * resurrect the phantom. This clears only state an entity's kind
+   * can never legitimately hold, so honest saves pass through
+   * untouched: units keep cargo, orders, and militia (none of which
+   * are production state), and buildings keep any slot their own
+   * menu can produce — an active item their trains list covers, a
+   * tier timer on the two upgradeable kinds.
+   */
+  scrubRestoredState(): void {
+    for (const id of this.entities.keys()) {
+      const kind = this.kind[id]
+      if (!isBuildingKind(kind)) {
+        this.trainKind[id] = NO_TRAINING
+        this.trainLeft[id] = 0
+        this.trainTotal[id] = 0
+        this.trainQueueLen[id] = 0
+        for (let s = 0; s < TRAIN_QUEUE_WAITING; s += 1) {
+          this.trainQueueKind[id * TRAIN_QUEUE_WAITING + s] = NO_TRAINING
+        }
+        this.upgradeLeft[id] = 0
+        this.tier[id] = 1
+        this.buildProgress[id] = 0
+        this.buildTotal[id] = 0
+        this.buildAuto[id] = 0
+        this.rallyX[id] = 0
+        this.rallyZ[id] = 0
+        continue
+      }
+      const def = BUILDINGS[BUILDING_BY_KIND[kind]]
+      const trained = this.trainKind[id]
+      if (trained !== NO_TRAINING) {
+        const type: UnitType =
+          trained === KIND_WORKER ? 'worker' : trained === KIND_MELEE ? 'melee' : 'ranged'
+        if (!def.trains.includes(type)) {
+          this.trainKind[id] = NO_TRAINING
+          this.trainLeft[id] = 0
+          this.trainTotal[id] = 0
+          this.trainQueueLen[id] = 0
+          for (let s = 0; s < TRAIN_QUEUE_WAITING; s += 1) {
+            this.trainQueueKind[id * TRAIN_QUEUE_WAITING + s] = NO_TRAINING
+          }
+        }
+      }
+      if (kind !== KIND_HALL && kind !== KIND_BARRACKS) this.upgradeLeft[id] = 0
+    }
+  }
+
   removeEntity(entity: Entity): void {
     const id = entity.id
     const kind = this.kind[id]
@@ -481,11 +587,9 @@ export class World {
         this.targetId[other] = NO_TARGET
       }
     }
-    // A recycled id must not inherit the dead building's production queue.
-    this.trainQueueLen[id] = 0
-    for (let s = 0; s < TRAIN_QUEUE_WAITING; s += 1) {
-      this.trainQueueKind[id * TRAIN_QUEUE_WAITING + s] = NO_TRAINING
-    }
+    // A recycled id must not inherit the dead entity's pending state:
+    // production timers, construction, cargo, orders (see the helper).
+    this.clearEntitySlots(id)
     this.entities.delete(id)
     this.freeIds.push(id)
   }

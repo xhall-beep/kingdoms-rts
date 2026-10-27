@@ -218,6 +218,9 @@ export function restoreWorld(world: World, data: Uint8Array): void {
     factions.push(s)
   }
   world.factionOfTeam = [factions[0] as FactionId, factions[1] as FactionId]
+  // Same legacy-state scrub as save deserialize (A3c/F2): a snapshot
+  // from a defective build must not resurrect ghost production.
+  world.scrubRestoredState()
 
   if (o !== data.length) throw new Error(`snapshot restore size mismatch ${o} != ${data.length}`)
 }

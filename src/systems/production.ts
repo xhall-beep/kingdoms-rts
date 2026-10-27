@@ -18,6 +18,7 @@ import {
   NO_TRAINING,
   STATE_MOVE,
   TRAIN_QUEUE_WAITING,
+  isBuildingKind,
 } from '../core/World'
 
 /** Building type per kind index (0-2 are units, unused here). */
@@ -57,6 +58,11 @@ const KIND_BY_UNIT: Record<UnitType, number> = {
 export class ProductionSystemImpl implements System {
   update(world: World, dt: number): void {
     for (const id of world.entities.keys()) {
+      // Production state lives on buildings only. This kind gate is
+      // defense-in-depth behind World's lifecycle slot clears: a
+      // non-building must never tick a training or upgrade timer,
+      // whatever its slots happen to contain.
+      if (!isBuildingKind(world.kind[id])) continue
       // Orc in-place upgrading: the building reforges itself, tier by tier.
       if (world.upgradeLeft[id] > 0) {
         world.upgradeLeft[id] -= dt
