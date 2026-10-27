@@ -96,6 +96,7 @@ const sampleCommands: Command[] = [
   { type: 'gather', step: 0, unitIds: [10, 11, 12, 13], nodeId: 500 },
   { type: 'build', step: 0, workerId: 3, building: 'barracks', x: -17.75, z: 33.125, siteId: 42 },
   { type: 'train', step: 0, buildingId: 8, unit: 'ranged' },
+  { type: 'research', step: 0, buildingId: 8, upgrade: 'rangedDmg' },
   { type: 'rally', step: 0, buildingId: 8, x: 100.5, z: -100.5 },
   { type: 'patrol', step: 0, unitIds: [21], x: 1.5, z: 2.5 },
   { type: 'stop', step: 0, unitIds: [21, 22] },

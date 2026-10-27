@@ -158,6 +158,14 @@ export class PvpAiGame {
       this.peer.queueCommand(cmd)
     })
 
+    // HUD-originated commands (train / cancel / research / militia /
+    // tier upgrade / war horn) take the same lockstep path — a direct
+    // local apply would mutate hashed state outside the turn stream
+    // the practice peer hashes against.
+    this.composition.hudCommandTransport = (cmd: Command) => {
+      this.peer.queueCommand(cmd)
+    }
+
     // 4 turns/second. Before each pump, let the AI think and inject its
     // commands as player 1's bundle for the next unsent turn.
     this.running = true
@@ -202,6 +210,8 @@ export class PvpAiGame {
     this.composition.engine.resume()
     setStatsMode('base')
     this.composition.inputController.setDeferredExecution(false)
+    // HUD commands apply locally again (see start()).
+    this.composition.hudCommandTransport = null
     // Restore the standard single-player AI system.
     const world = this.composition.engine.world
     const systems = world.systems as unknown[]

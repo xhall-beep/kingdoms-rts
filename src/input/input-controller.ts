@@ -191,6 +191,10 @@ export class InputControllerImpl implements InputController {
     this.localTeam = team
   }
 
+  getLocalTeam(): 0 | 1 {
+    return this.localTeam
+  }
+
   setDeferredExecution(deferred: boolean): void {
     this.deferred = deferred
   }

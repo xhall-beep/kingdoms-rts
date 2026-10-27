@@ -22,7 +22,7 @@ import { sfx } from './ui/feedback.ts'
 import type { UpgradeType } from './data/upgrades.ts'
 import { VictorySystemImpl } from './systems/victory'
 import { VisionSystemImpl } from './systems/vision'
-import { CommandLog } from './session/commands.ts'
+import { CommandLog, type Command } from './session/commands.ts'
 import { ReplayPlayer } from './session/replay.ts'
 import {
   deserializeWorld,
@@ -65,6 +65,16 @@ export interface GameComposition {
   }
   /** Mutable per-tick hook for mode-specific updates (e.g. Tower Defense). */
   tdTick: { fn: ((w: World) => void) | null }
+  /**
+   * Transport for HUD-originated world commands (train / cancelTrain /
+   * research / militia / upgrade / warhorn). Null in local play: the HUD
+   * applies the command immediately and records it to the CommandLog.
+   * A lockstep match (PvPGame / PvpAiGame) installs its peer queue here
+   * for the match's duration; while set, the HUD must NOT mutate the
+   * world directly — a local-only apply changes this peer's hashed
+   * state alone and desyncs the match at the next hash check.
+   */
+  hudCommandTransport: ((cmd: Command) => void) | null
 }
 
 export function composeGame(canvas: HTMLCanvasElement): GameComposition {
@@ -113,7 +123,7 @@ export function composeGame(canvas: HTMLCanvasElement): GameComposition {
   engine.world.registerSystem(systems.opponent)
   engine.world.registerSystem(systems.movement)
   inputController.attach(canvas, engine.world, renderer)
-  return { engine, renderer, inputController, hud, systems, tdTick }
+  return { engine, renderer, inputController, hud, systems, tdTick, hudCommandTransport: null }
 }
 
 /**
@@ -343,6 +353,30 @@ export function initializeGame(): GameComposition {
   composition.inputController.setCommandListener((cmd) => {
     commandLog.record({ ...cmd, step: composition.engine.getSimulationSteps() })
   })
+  /**
+   * The single path for HUD-originated world commands (train,
+   * cancelTrain, research, militia, upgrade, warhorn). Local play:
+   * apply immediately via applyLocal and record on success — the
+   * recording is what makes replays reproduce the match (research
+   * recorded nothing before this helper existed, so a researched
+   * match replayed as a different one). Lockstep play
+   * (composition.hudCommandTransport installed by PvPGame / PvpAiGame):
+   * queue the command through the peer instead — never mutate the
+   * local world, or this peer's hashed state diverges alone.
+   * Returns true when the command applied (local) or was accepted for
+   * transport; a transported command's accept/refuse verdict is
+   * decided identically on both peers when its turn executes.
+   */
+  const dispatchHudCommand = (cmd: Command, applyLocal: () => boolean): boolean => {
+    const transport = composition.hudCommandTransport
+    if (transport) {
+      transport(cmd)
+      return true
+    }
+    const ok = applyLocal()
+    if (ok) commandLog.record(cmd)
+    return ok
+  }
   // Pristine initial state for replays; live state stashed when entering replay.
   const initialSave = serializeWorld(composition.engine.world, 0, [])
   let liveSave: ReturnType<typeof serializeWorld> | null = null
@@ -389,22 +423,36 @@ export function initializeGame(): GameComposition {
       const selected = composition.inputController.getSelected()
       if (selected.length !== 1) return
       const buildingId = selected[0]
-      researchUpgrade(composition.engine.world, buildingId, type as UpgradeType)
+      const world = composition.engine.world
+      dispatchHudCommand(
+        {
+          type: 'research',
+          step: composition.engine.getSimulationSteps(),
+          buildingId,
+          upgrade: type as UpgradeType,
+        },
+        () => researchUpgrade(world, buildingId, type as UpgradeType),
+      )
     },
     onTrain: (type) => {
       const selected = composition.inputController.getSelected()
       if (selected.length !== 1) return
       const buildingId = selected[0]
-      if (enqueueTrain(composition.engine.world, buildingId, type)) {
-        commandLog.record({
+      const world = composition.engine.world
+      const ok = dispatchHudCommand(
+        {
           type: 'train',
           step: composition.engine.getSimulationSteps(),
           buildingId,
           unit: type,
-        })
-      } else {
+        },
+        () => enqueueTrain(world, buildingId, type),
+      )
+      if (!ok) {
         // Refused (queue full at the cap of 8, unaffordable, supply):
         // audible feedback — a silent no-op reads as an ignored tap.
+        // (In transport mode the tap is always accepted; a refusal is
+        // decided identically on both peers when the turn executes.)
         sfx.error()
       }
     },
@@ -413,49 +461,49 @@ export function initializeGame(): GameComposition {
       if (selected.length !== 1) return
       const buildingId = selected[0]
       const world = composition.engine.world
-      const ok = index < 0
-        ? cancelTrainActive(world, buildingId)
-        : cancelTrainQueued(world, buildingId, index)
-      if (ok) {
-        commandLog.record({
+      dispatchHudCommand(
+        {
           type: 'cancelTrain',
           step: composition.engine.getSimulationSteps(),
           buildingId,
           index,
-        })
-      }
+        },
+        () => (index < 0
+          ? cancelTrainActive(world, buildingId)
+          : cancelTrainQueued(world, buildingId, index)),
+      )
     },
     onMilitia: () => {
-      const mustered = composition.engine.world.ringMilitiaBell(TEAM_PLAYER)
-      if (mustered > 0) {
-        commandLog.record({
-          type: 'militia',
-          step: composition.engine.getSimulationSteps(),
-          team: TEAM_PLAYER,
-        })
-      }
+      // Local team (the PvP slot's team in a match, TEAM_PLAYER in
+      // every local mode — the controller's default and PvP restore).
+      const team = composition.inputController.getLocalTeam()
+      const world = composition.engine.world
+      dispatchHudCommand(
+        { type: 'militia', step: composition.engine.getSimulationSteps(), team },
+        () => world.ringMilitiaBell(team) > 0,
+      )
     },
     onUpgrade: () => {
       const selected = composition.inputController.getSelected()
       if (selected.length !== 1) return
       const buildingId = selected[0]
-      if (upgradeBuilding(composition.engine.world, buildingId)) {
-        commandLog.record({
+      const world = composition.engine.world
+      dispatchHudCommand(
+        {
           type: 'upgrade',
           step: composition.engine.getSimulationSteps(),
           buildingId,
-        })
-      }
+        },
+        () => upgradeBuilding(world, buildingId),
+      )
     },
     onWarHorn: (rally) => {
-      if (soundWarHorn(composition.engine.world, TEAM_PLAYER, rally)) {
-        commandLog.record({
-          type: 'warhorn',
-          step: composition.engine.getSimulationSteps(),
-          team: TEAM_PLAYER,
-          rally,
-        })
-      }
+      const team = composition.inputController.getLocalTeam()
+      const world = composition.engine.world
+      dispatchHudCommand(
+        { type: 'warhorn', step: composition.engine.getSimulationSteps(), team, rally },
+        () => soundWarHorn(world, team, rally),
+      )
     },
     onPause: () => {
       // Gated: no-op in PvP (lockstep must never pause).

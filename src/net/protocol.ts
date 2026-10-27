@@ -11,6 +11,7 @@
  */
 import type { BuildingType } from '../data/buildings.ts'
 import type { UnitType } from '../data/units.ts'
+import type { UpgradeType } from '../data/upgrades.ts'
 import type { FactionId } from '../data/factions.ts'
 import { FACTION_IDS } from '../data/factions.ts'
 import type { Command } from '../session/commands.ts'
@@ -111,6 +112,21 @@ function byteToUnit(b: number): UnitType {
   return t
 }
 
+// Appended at the end so existing indices stay wire-stable.
+const UPGRADE_TYPES: UpgradeType[] = ['meleeDmg', 'meleeHp', 'rangedDmg']
+
+function upgradeToByte(u: UpgradeType): number {
+  const i = UPGRADE_TYPES.indexOf(u)
+  if (i < 0) throw new Error(`unknown upgrade ${u}`)
+  return i
+}
+
+function byteToUpgrade(b: number): UpgradeType {
+  const t = UPGRADE_TYPES[b]
+  if (t === undefined) throw new Error(`bad upgrade byte ${b}`)
+  return t
+}
+
 // ---- varint (unsigned LEB128) ----
 
 export function varintSize(v: number): number {
@@ -167,6 +183,10 @@ const CmdTag = {
   WarHorn: 13,
   PvpSetup: 14,
   CancelTrain: 15,
+  // Appended (existing tags never renumber). Extends the wire format:
+  // both peers must run the same build — an older peer rejects the tag
+  // loudly instead of desyncing silently.
+  Research: 16,
 } as const
 type CmdTag = (typeof CmdTag)[keyof typeof CmdTag]
 
@@ -204,6 +224,8 @@ function cmdSize(cmd: Command): number {
       return 1 + 1
     case 'upgrade':
       return 1 + varintSize(cmd.buildingId)
+    case 'research':
+      return 1 + varintSize(cmd.buildingId) + 1
     case 'warhorn':
       return 1 + 1 + 1
     case 'pvp-setup':
@@ -321,6 +343,11 @@ function writeCommand(view: DataView, o: number, cmd: Command): number {
       view.setUint8(o++, CmdTag.Upgrade)
       o = writeVarint(view, o, cmd.buildingId)
       return o
+    case 'research':
+      view.setUint8(o++, CmdTag.Research)
+      o = writeVarint(view, o, cmd.buildingId)
+      view.setUint8(o++, upgradeToByte(cmd.upgrade))
+      return o
     case 'warhorn':
       view.setUint8(o++, CmdTag.WarHorn)
       view.setUint8(o++, cmd.team)
@@ -408,6 +435,11 @@ function readCommand(view: DataView, o: number): { cmd: Command; next: number } 
     case CmdTag.Upgrade: {
       const b = readVarint(view, o); o = b.next
       return { cmd: { type: 'upgrade', step: 0, buildingId: b.value }, next: o }
+    }
+    case CmdTag.Research: {
+      const b = readVarint(view, o); o = b.next
+      const u = view.getUint8(o++)
+      return { cmd: { type: 'research', step: 0, buildingId: b.value, upgrade: byteToUpgrade(u) }, next: o }
     }
     case CmdTag.WarHorn: {
       const t = view.getUint8(o++)

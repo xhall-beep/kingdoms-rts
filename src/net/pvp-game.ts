@@ -156,6 +156,14 @@ export class PvPGame {
       this.peer.queueCommand(cmd)
     })
 
+    // HUD-originated commands (train / cancel / research / militia /
+    // tier upgrade / war horn) take the same lockstep path. Without
+    // this they applied straight to the local world — a one-peer
+    // mutation of hashed state that desynced the next hash check.
+    this.composition.hudCommandTransport = (cmd: Command) => {
+      this.peer.queueCommand(cmd)
+    }
+
     // Match-opening handshake: declare our faction for our side. The
     // lockstep barrier holds turn 0 until BOTH sides' declarations arrive,
     // at which point executeTurn reseeds both worlds identically. Without
@@ -200,6 +208,8 @@ export class PvPGame {
     // Restore normal single-player input behavior.
     this.composition.inputController.setDeferredExecution(false)
     this.composition.inputController.setLocalTeam(TEAM_PLAYER)
+    // HUD commands apply locally again (see start()).
+    this.composition.hudCommandTransport = null
   }
 
   /** Execute a lockstep turn: apply all commands, step the world. */

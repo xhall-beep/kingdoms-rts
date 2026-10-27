@@ -1,5 +1,6 @@
 import type { BuildingType } from '../data/buildings.ts'
 import type { UnitType } from '../data/units.ts'
+import type { UpgradeType } from '../data/upgrades.ts'
 import type { FactionId } from '../data/factions.ts'
 
 /**
@@ -33,6 +34,15 @@ export type Command =
   | { type: 'hold'; step: number; unitIds: number[] }
   | { type: 'militia'; step: number; team: 0 | 1 }
   | { type: 'upgrade'; step: number; buildingId: number }
+  /**
+   * Research one ladder level at its home building (smithy / archery
+   * range). Validation is centralized in researchUpgrade — the apply
+   * paths call it, never reimplement it, so both peers (and replays)
+   * accept or refuse identically. Research used to be a direct local
+   * call from the HUD: unrecorded (replays silently diverged) and, in
+   * a lockstep match, a one-peer mutation of hashed state (desync).
+   */
+  | { type: 'research'; step: number; buildingId: number; upgrade: UpgradeType }
   | { type: 'warhorn'; step: number; team: 0 | 1; rally: 1 | 2 | 3 }
   | { type: 'surrender'; step: number; player: 0 | 1 }
   /**

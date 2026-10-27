@@ -15,7 +15,7 @@ import {
 import { orderAttack, orderAttackMove } from '../systems/combat.ts'
 import { orderBuild, orderGather } from '../systems/gather.ts'
 import { orderMove, orderPatrol, orderStop, orderHold } from '../systems/movement.ts'
-import { cancelTrainActive, cancelTrainQueued, enqueueTrain, setRally, upgradeBuilding } from '../systems/production.ts'
+import { cancelTrainActive, cancelTrainQueued, enqueueTrain, setRally, upgradeBuilding, researchUpgrade } from '../systems/production.ts'
 import { soundWarHorn } from '../systems/warhorn.ts'
 import { placeStructure } from '../world/construction.ts'
 import type { Command } from '../session/commands.ts'
@@ -118,6 +118,14 @@ export function applyCommand(world: World, cmd: Command): void {
       break
     case 'upgrade':
       if (world.entities.has(cmd.buildingId)) upgradeBuilding(world, cmd.buildingId)
+      break
+    case 'research':
+      // Validation (host building, finished, funds, level cap) lives in
+      // researchUpgrade — never reimplemented here, so both peers
+      // accept or refuse identically.
+      if (world.entities.has(cmd.buildingId)) {
+        researchUpgrade(world, cmd.buildingId, cmd.upgrade)
+      }
       break
     case 'warhorn':
       soundWarHorn(world, cmd.team, cmd.rally)
