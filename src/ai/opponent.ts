@@ -30,7 +30,7 @@ import { orderAttackMove } from '../systems/combat.ts'
 import { orderMove } from '../systems/movement.ts'
 import { HORN_COST, RALLY_NONE, soundWarHorn } from '../systems/warhorn.ts'
 import { CAPTURE_RADIUS } from '../systems/shrines.ts'
-import { enqueueTrain, researchCost, researchUpgrade, upgradeBuilding } from '../systems/production.ts'
+import { enqueueTrain, researchCost, researchUpgrade, trainingQueueFor, upgradeBuilding } from '../systems/production.ts'
 import { UPGRADES, type UpgradeType } from '../data/upgrades.ts'
 import {
   BUILDING_TYPE_BY_KIND,
@@ -251,6 +251,47 @@ const RESEARCH_PACE = 120
 /** Melee first: winners' armies run ~58% melee, so its ladder pays most. */
 const RESEARCH_ORDER: readonly UpgradeType[] = ['meleeDmg', 'meleeHp', 'rangedDmg']
 
+/**
+ * Opening infantry commitment (Balance Slice 1, 2026-10-27). The
+ * measured defect: the barracks finishes ~1:06, but the build plan
+ * reserved every spare gold for the next building in the tech chain,
+ * so the barracks stood idle until the chain completed — the shipped
+ * AI fielded ZERO soldiers before ~2:25 in all 36 persona-bench
+ * matches, its army value at first blood was 0 in 8 of 9 rush cells,
+ * and a pure-melee rush went 9-0 against it (balance series
+ * 2026-10-26). The gate: expand() will not START the second tech
+ * building (the Smithy / Archery Range in personality order — the
+ * Workshop is the first) until this many melee stand committed:
+ * fielded, in a barracks' active training slot, or waiting in its
+ * queue. Suppressing the want also zeroes that think's training
+ * reserve, so the gold the chain would have banked flows into the
+ * barracks instead. Counted from live world state every think, so
+ * production lost with a destroyed barracks re-engages the gate
+ * instead of crediting ghosts. The aggressor commits heaviest (3);
+ * defender and expander commit 2 — the expander's commitment lands
+ * latest through its own economy-first tuning, not a smaller promise.
+ * Everything downstream of the gate is untouched: once the second
+ * tech building starts, the chain, research, and horn run as before.
+ *
+ * The gate is OPENING-ONLY (fix, 2026-10-27). The proving series
+ * staged a mid-game wipe + tech-building loss under live pressure:
+ * the gate re-engaged (it counted from live state), survival spending
+ * never assembled the commitment while the tech want sat nulled, and
+ * the AI never re-teched — a lost fight became a permanent tech
+ * freeze. The lever's measured defect was always the opening (zero
+ * units before ~2:25 at game start), so the gate now retires for the
+ * rest of the match the first time BOTH chain tech buildings have
+ * stood finished (techFirstCompleted / techSecondCompleted, latched
+ * in expand). A tech building destroyed before it ever completes
+ * does not retire anything — the chain never stood, and the opening
+ * gate stays live, which is the correct side of that line.
+ */
+const OPENING_MELEE_COMMITMENT: Record<AIPersonality, number> = {
+  aggressor: 3,
+  defender: 2,
+  expander: 2,
+}
+
 export type AIDifficulty = 'easy' | 'normal' | 'hard'
 
 /** Resolved decision parameters: difficulty base values plus personality mods. */
@@ -324,6 +365,16 @@ export class OpponentAI implements System {
   private readonly fleeing = new Set<number>()
   /** gameTime of this AI's last research purchase (RESEARCH_PACE gate). */
   private lastResearchAt = -Infinity
+  /** Opening-gate retirement (Balance Slice 1 fix, 2026-10-27): latched
+   * the first time expand() sees the chain's first / second tech
+   * building FINISHED. When both have stood, the opening is over and
+   * the melee-commitment gate never engages again — see
+   * OPENING_MELEE_COMMITMENT. Per-instance like every other field here:
+   * AI state lives outside the hashed world state, is rebuilt with the
+   * AI each match, and twin peers run identical instances, so the twin
+   * stays A=B. */
+  private techFirstCompleted = false
+  private techSecondCompleted = false
   /** Set by contestShrine's emergency branch when it dispatches a sortie
    * this think; consumed by soundWarHornStep in the same think (the
    * expander's Gale March coupling). Reset at the top of every think. */
@@ -900,6 +951,23 @@ export class OpponentAI implements System {
     }
   }
 
+  /**
+   * Melee this AI has committed to the field: soldiers standing plus
+   * melee in production at its barracks (the active training slot and
+   * the waiting queue behind it). The opening gate's yardstick — see
+   * OPENING_MELEE_COMMITMENT.
+   */
+  private openingMeleeCommitted(world: World): number {
+    let n = unitsOf(world, this.team, KIND_MELEE).length
+    for (const id of structuresOf(world, this.team, KIND_BARRACKS, false)) {
+      if (world.trainKind[id] === KIND_MELEE) n += 1
+      for (const queued of trainingQueueFor(world, id)) {
+        if (queued === 'melee') n += 1
+      }
+    }
+    return n
+  }
+
   private expand(world: World, hall: number, workers: number[]): number {
     const team = this.team
     const all = (kind: number): number => structuresOf(world, team, kind, false).length
@@ -922,9 +990,27 @@ export class OpponentAI implements System {
     // behind an unfinished root would just burn the think. A destroyed
     // tech building re-enters the chain on its own: its count falls to
     // zero and the chain wants it again (the workshop first of all).
+    // Balance Slice 1 (2026-10-27) inserts the opening infantry
+    // commitment between the Workshop and the rest of the chain:
+    // techFirst/techSecond are not STARTED until the barracks has
+    // committed the personality's opening melee (see
+    // OPENING_MELEE_COMMITMENT and the gate below).
     const workshopReady = structuresOf(world, team, KIND_WORKSHOP, true).length > 0
     const techFirst = this.personality === 'defender' ? KIND_SMITHY : KIND_ARCHERY
     const techSecond = this.personality === 'defender' ? KIND_ARCHERY : KIND_SMITHY
+    // Opening-gate retirement: latch each chain step the first time it
+    // is seen FINISHED. Polled from live state like every other chain
+    // check here, so a building destroyed before completing never
+    // latches (the opening is still the opening), and one destroyed
+    // after completing stays latched (the opening happened — mid-game
+    // re-tech is none of the gate's business anymore).
+    if (!this.techFirstCompleted && structuresOf(world, team, techFirst, true).length > 0) {
+      this.techFirstCompleted = true
+    }
+    if (!this.techSecondCompleted && structuresOf(world, team, techSecond, true).length > 0) {
+      this.techSecondCompleted = true
+    }
+    const openingComplete = this.techFirstCompleted && this.techSecondCompleted
     let want: number | null = null
     if (ready && all(KIND_BARRACKS) === 0) want = KIND_BARRACKS
     else if (ready && all(KIND_WORKSHOP) === 0) want = KIND_WORKSHOP
@@ -934,6 +1020,24 @@ export class OpponentAI implements System {
     else if (ready && workshopReady && all(techSecond) === 0) want = techSecond
     else if (ready && world.gold[team] >= 400 && all(KIND_BARRACKS) < 2 && pending(KIND_BARRACKS) === 0) {
       want = KIND_BARRACKS
+    }
+    // Opening infantry commitment gate: the second tech building
+    // waits until the first barracks has put the personality's melee
+    // into production. Nulling the want also returns a zero reserve
+    // below, so the gold the chain would have banked this think
+    // trains soldiers instead. (The slack<=1 farm branch sits ahead
+    // of techFirst in the chain, so a supply-blocked AI still farms
+    // its way out — the gate cannot deadlock the opening.) Once the
+    // full chain has stood finished the gate is retired (see
+    // OPENING_MELEE_COMMITMENT): a mid-game wipe must re-tech on the
+    // chain's own timing, not wait to re-assemble the opening
+    // commitment under fire.
+    if (
+      !openingComplete &&
+      (want === techFirst || want === techSecond) &&
+      this.openingMeleeCommitted(world) < OPENING_MELEE_COMMITMENT[this.personality]
+    ) {
+      want = null
     }
     if (want === null) return 0
     const type = BUILDING_TYPE_BY_KIND[want]
