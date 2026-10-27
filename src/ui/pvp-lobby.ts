@@ -271,6 +271,13 @@ export class PvPLobby {
     // Hide queue UI
     const qd = this.root?.querySelector<HTMLElement>('#pvp-queue-display')
     if (qd) qd.hidden = true
+    // Close the queue socket: matching ends queue membership, and merely
+    // nulling the reference would orphan an open connection (the server
+    // keeps counting the player as queued). leaveQueue/disconnect already
+    // close; the matched path was the one path that did not.
+    if (this.queueWs) {
+      try { this.queueWs.close() } catch { /* ignore */ }
+    }
     this.queueWs = null
 
     this.setStatus(`Matched vs ${opponentName}! Joining...`)
