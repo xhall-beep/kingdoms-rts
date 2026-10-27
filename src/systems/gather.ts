@@ -14,7 +14,6 @@ import {
   KIND_FARM,
   KIND_GOLDMINE,
   KIND_HALL,
-  KIND_TOWER,
   KIND_TREE,
   KIND_WORKER,
   NO_TARGET,
@@ -23,6 +22,7 @@ import {
   STATE_IDLE,
   STATE_MOVE,
   STATE_RETURN,
+  isBuildingKind,
 } from '../core/World'
 
 const GATHER_TIME = 0.8 // seconds per swing
@@ -57,7 +57,7 @@ const POWERBUILD_SURCHARGE_RATE = 0.15
 function finishConstruction(world: World, site: number): void {
   // Grant supply on completion (not on placement).
   const bkind = world.kind[site]
-  if (bkind >= KIND_HALL && bkind <= KIND_FARM) {
+  if (isBuildingKind(bkind)) {
     const btype = BUILDING_TYPE_BY_KIND[bkind]
     world.supplyCap[world.team[site]] += buildingSupply(btype, world.factionOfTeam[world.team[site]])
   }
@@ -396,8 +396,9 @@ function sendToHall(world: World, id: number): void {
 }
 
 /**
- * Nearest finished own building of any kind (hall, barracks, archery,
- * farm, tower — the World.ts building predicate), or NO_TARGET. Same
+ * Nearest finished own building of any kind (the World.ts building
+ * predicate: hall, barracks, archery, farm, tower, workshop, smithy),
+ * or NO_TARGET. Same
  * deterministic tie-break as nearestBuiltHall: nearest, then lowest
  * spatial-hash sequence. Only used as the no-hall dropoff fallback.
  */
@@ -411,7 +412,7 @@ function nearestFinishedOwnBuilding(world: World, id: number): number {
   let bestSeq = Number.MAX_SAFE_INTEGER
   const consider = (other: number) => {
     const kind = world.kind[other]
-    if (!((kind >= KIND_HALL && kind <= KIND_FARM) || kind === KIND_TOWER)) return
+    if (!isBuildingKind(kind)) return
     if (world.team[other] !== team) return
     if (world.buildProgress[other] < world.buildTotal[other]) return
     const d = Math.hypot(world.positionX[other] - px, world.positionZ[other] - pz)
@@ -447,12 +448,7 @@ export function buildSurchargeAmount(world: World, siteId: number): { gold: numb
   if (!world.entities.has(siteId)) return { gold: 0, wood: 0 }
   if (world.buildProgress[siteId] >= world.buildTotal[siteId]) return { gold: 0, wood: 0 }
   const kind = world.kind[siteId]
-  const btype =
-    kind >= KIND_HALL && kind <= KIND_FARM
-      ? BUILDING_TYPE_BY_KIND[kind]
-      : kind === KIND_TOWER
-        ? 'tower'
-        : undefined
+  const btype = BUILDING_TYPE_BY_KIND[kind]
   if (!btype) return { gold: 0, wood: 0 }
   const cost = BUILDINGS[btype].cost
   return {

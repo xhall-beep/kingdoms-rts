@@ -1,5 +1,5 @@
 import type { System, World } from '../core/World'
-import { KIND_FARM } from '../core/World'
+import { KIND_RANGED, isBuildingKind } from '../core/World'
 
 /**
  * Victory detection. A team is eliminated when it controls no units and no
@@ -47,8 +47,8 @@ export class VictorySystemImpl implements System {
       if (world.team[id] !== team) continue
       if (world.health[id] <= 0) continue
       const kind = world.kind[id]
-      // Units (0-2) and buildings (3-6) count; resources don't.
-      if (kind <= KIND_FARM) return true
+      // Units (0-2) and buildings count; resources don't.
+      if (kind <= KIND_RANGED || isBuildingKind(kind)) return true
     }
     return false
   }

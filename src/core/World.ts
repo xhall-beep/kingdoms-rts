@@ -24,6 +24,24 @@ export const KIND_TREE = 7
 export const KIND_GOLDMINE = 8
 export const KIND_SHRINE = 10
 export const KIND_TREANT = 11
+export const KIND_WORKSHOP = 12
+export const KIND_SMITHY = 13
+
+/**
+ * The building predicate: every player/AI-buildable structure kind.
+ * Building kinds are NOT a contiguous range (tower sits at 9, the tech
+ * buildings at 12-13), so range checks like `kind <= KIND_FARM` silently
+ * exclude them — every "is this a building" question must go through
+ * here (attackability, construction, dropoff, rendering, victory).
+ */
+export function isBuildingKind(kind: number): boolean {
+  return (
+    (kind >= KIND_HALL && kind <= KIND_FARM) ||
+    kind === KIND_TOWER ||
+    kind === KIND_WORKSHOP ||
+    kind === KIND_SMITHY
+  )
+}
 
 // ---- unit states ----
 export const STATE_IDLE = 0
@@ -70,6 +88,8 @@ const KIND_BY_BUILDING: Record<BuildingType, number> = {
   archery: KIND_ARCHERY,
   farm: KIND_FARM,
   tower: KIND_TOWER,
+  workshop: KIND_WORKSHOP,
+  smithy: KIND_SMITHY,
 }
 
 const UNIT_BY_KIND: UnitType[] = ['worker', 'melee', 'ranged']
@@ -83,6 +103,8 @@ const BUILDING_BY_KIND: BuildingType[] = [
   // destroyed Guard Tower crashed the sim (audit fix E). The tower's
   // supply is 0 in the data tables, so its completion grant and its
   // destruction refund agree: zero.
+  'hall', 'hall', // 10-11: shrine / treant, unused
+  'workshop', 'smithy', // 12-13: tech buildings (supply 0, like the tower)
 ]
 
 export interface Entity {
@@ -446,7 +468,7 @@ export class World {
     const team = this.team[id]
     if (kind === KIND_WORKER || kind === KIND_MELEE || kind === KIND_RANGED) {
       this.supplyUsed[team] -= getUnits()[UNIT_BY_KIND[kind]].popCost
-    } else if ((kind >= KIND_HALL && kind <= KIND_FARM) || kind === KIND_TOWER) {
+    } else if (isBuildingKind(kind)) {
       // Only completed buildings granted supply.
       if (this.buildProgress[id] >= this.buildTotal[id]) {
         this.supplyCap[team] -= buildingSupply(BUILDING_BY_KIND[kind], this.factionOfTeam[team])
@@ -545,7 +567,9 @@ export class World {
     return (
       this.kind[id] <= KIND_FARM ||
       this.kind[id] === KIND_TOWER ||
-      this.kind[id] === KIND_TREANT
+      this.kind[id] === KIND_TREANT ||
+      this.kind[id] === KIND_WORKSHOP ||
+      this.kind[id] === KIND_SMITHY
     )
   }
 

@@ -8,8 +8,10 @@ import {
   KIND_HALL,
   KIND_MELEE,
   KIND_RANGED,
+  KIND_SMITHY,
   KIND_TREE,
   KIND_WORKER,
+  KIND_WORKSHOP,
   TEAM_PLAYER,
 } from '../core/World'
 import { getUnits } from '../data/stats.ts'
@@ -20,7 +22,15 @@ import { UPGRADES } from '../data/upgrades.ts'
 import type { UpgradeType } from '../data/upgrades.ts'
 import { buildersOnSite } from '../systems/gather.ts'
 import { BUILDINGS } from '../data/buildings.ts'
-import { PLAYER_BUILDABLE, canAfford } from '../world/construction.ts'
+import type { BuildingType } from '../data/buildings.ts'
+import {
+  BUILDING_REQUIRES,
+  BUILDING_TYPE_BY_KIND,
+  PLAYER_BUILDABLE,
+  buildingPrereqMet,
+  canAfford,
+  teamHasFinishedBuilding,
+} from '../world/construction.ts'
 import { FACTIONS } from '../data/factions.ts'
 import type { FactionId } from '../data/factions.ts'
 
@@ -82,10 +92,12 @@ function buildingLabel(kind: number): string {
   if (kind === KIND_BARRACKS) return 'Barracks'
   if (kind === KIND_ARCHERY) return 'Archery Range'
   if (kind === KIND_FARM) return 'Farm'
+  if (kind === KIND_WORKSHOP) return 'Workshop'
+  if (kind === KIND_SMITHY) return 'Smithy'
   return '?'
 }
 
-type CmdFn = (label: string, fn: () => void, disabled?: boolean, sub?: string) => void
+type CmdFn = (label: string, fn: () => void, disabled?: boolean, sub?: string, note?: string) => void
 
 /**
  * Collapse a production queue into ordered display runs with duplicate
@@ -123,15 +135,35 @@ const BUILD_BUTTON_LABELS: Record<string, string> = {
   barracks: 'Barracks',
   archery: 'Archery',
   tower: 'Tower',
+  workshop: 'Workshop',
+  smithy: 'Smithy',
+}
+
+/**
+ * One build-menu entry, shared by the expander menu and the inline
+ * fallback so the two can never drift apart. Tech-locked entries
+ * (Smithy / Archery Range before a finished Workshop) still render —
+ * the fixed-grid invariant: cells never appear or disappear — greyed,
+ * with the price always visible (players plan around prices) and the
+ * requirement on its own third line. The note line renders for every
+ * build entry (empty when unlocked) so locked and unlocked cells have
+ * identical geometry. placeStructure enforces the same gate in the sim.
+ */
+function appendBuildButton(cmd: CmdFn, world: World, cb: CommandCardCallbacks, btype: BuildingType): void {
+  const bdef = BUILDINGS[btype]
+  const req = BUILDING_REQUIRES[btype]
+  const locked = req !== undefined && !buildingPrereqMet(world, TEAM_PLAYER, btype)
+  const afford = canAfford(world, TEAM_PLAYER, btype)
+  const sub = `${bdef.cost.gold}g ${bdef.cost.wood}w`
+  const note = locked && req !== undefined ? `Requires ${BUILDINGS[req].name}` : ''
+  cmd(BUILD_BUTTON_LABELS[btype] ?? bdef.name, () => cb.onBuildType(btype), locked || !afford, sub, note)
 }
 
 function appendBuildButtons(cmd: CmdFn, world: World, cb: CommandCardCallbacks): void {
   for (const btype of PLAYER_BUILDABLE) {
     // Undead raise no farms — Soul-Ash feeds their supply cap.
     if (btype === 'farm' && world.factionOfTeam[TEAM_PLAYER] === 'undead') continue
-    const bdef = BUILDINGS[btype]
-    const afford = canAfford(world, TEAM_PLAYER, btype)
-    cmd(BUILD_BUTTON_LABELS[btype] ?? bdef.name, () => cb.onBuildType(btype), !afford, `${bdef.cost.gold}g ${bdef.cost.wood}w`)
+    appendBuildButton(cmd, world, cb, btype)
   }
   cmd('◀ Back', () => cb.onToggleBuild?.())
 }
@@ -176,7 +208,8 @@ export function renderCommandCard(
   const isOwn = world.team[id] === TEAM_PLAYER
   const isUnit = kind === KIND_WORKER || kind === KIND_MELEE || kind === KIND_RANGED
   const isBuilding =
-    kind === KIND_HALL || kind === KIND_BARRACKS || kind === KIND_ARCHERY || kind === KIND_FARM
+    kind === KIND_HALL || kind === KIND_BARRACKS || kind === KIND_ARCHERY || kind === KIND_FARM ||
+    kind === KIND_WORKSHOP || kind === KIND_SMITHY
   const isResource = kind === KIND_TREE || kind === KIND_GOLDMINE
 
   const card = document.createElement('div')
@@ -256,8 +289,8 @@ export function renderCommandCard(
       `${price.gold}g ${price.wood}w`,
     )
   } else if (isBuilding) {
-    const btype = kind === KIND_HALL ? 'hall' : kind === KIND_BARRACKS ? 'barracks' : kind === KIND_ARCHERY ? 'archery' : 'farm'
-    const bdef = BUILDINGS[btype as keyof typeof BUILDINGS]
+    const btype = BUILDING_TYPE_BY_KIND[kind]
+    const bdef = btype ? BUILDINGS[btype] : undefined
     if (bdef) {
       parts.push(`HP ${Math.floor(world.health[id])}/${Math.floor(world.maxHealth[id])}`)
       // Derived from the building data, never a literal: the farm card
@@ -265,9 +298,10 @@ export function renderCommandCard(
       // hand (2026-10-26); deriving it makes that class of lie
       // impossible to reintroduce.
       if (kind === KIND_FARM) parts.push(`Supply +${bdef.supply}`)
-      // Trainable units
-      const trainable = kind === KIND_HALL ? ['worker'] : kind === KIND_BARRACKS ? ['melee'] : kind === KIND_ARCHERY ? ['ranged'] : []
-      if (trainable.length > 0) parts.push(`Trains ${trainable.map((t) => factionUnitName(world, TEAM_PLAYER, t as UnitType)).join(', ')}`)
+      // Trainable units, from the data table (the Archery Range trains
+      // nothing since the tech rework — it unlocks and researches).
+      const trainable = bdef.trains
+      if (trainable.length > 0) parts.push(`Trains ${trainable.map((t) => factionUnitName(world, TEAM_PLAYER, t)).join(', ')}`)
     }
   } else if (isResource) {
     const res = kind === KIND_TREE ? 'Wood' : 'Gold'
@@ -377,7 +411,7 @@ export function renderCommandCard(
     const grid = document.createElement('div')
     grid.className = 'cmd-grid'
 
-    const cmd = (label: string, fn: () => void, disabled = false, sub?: string): void => {
+    const cmd = (label: string, fn: () => void, disabled = false, sub?: string, note?: string): void => {
       const btn = document.createElement('button')
       btn.className = 'cmd-btn'
       btn.disabled = disabled
@@ -391,6 +425,12 @@ export function renderCommandCard(
         s.textContent = sub
         btn.appendChild(s)
       }
+      if (note !== undefined) {
+        const n = document.createElement('span')
+        n.className = 'cmd-btn-note'
+        n.textContent = note
+        btn.appendChild(n)
+      }
       btn.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); fn() })
       grid.appendChild(btn)
     }
@@ -398,7 +438,10 @@ export function renderCommandCard(
     if (isUnit) {
       if (kind === KIND_WORKER && opts?.buildOpen && cb.onToggleBuild) {
         // Build sub-menu: the build options replace the command row inside
-        // the same dashboard space (never a second stacked panel).
+        // the same dashboard space (never a second stacked panel). The
+        // build grid wraps to four-across rows so every name, price and
+        // lock note fits its own cell in full (see .cmd-grid-build).
+        grid.className = 'cmd-grid cmd-grid-build'
         appendBuildButtons(cmd, world, cb)
       } else {
         cmd('Move', () => cb.onMode('move'))
@@ -409,12 +452,12 @@ export function renderCommandCard(
           if (cb.onToggleBuild) {
             cmd('Build ▸', () => cb.onToggleBuild?.())
           } else {
-            // No expander wired: list build options inline (legacy shape).
+            // No expander wired: list build options inline (legacy shape,
+            // same wrapped build grid so the entries stay readable).
+            grid.className = 'cmd-grid cmd-grid-build'
             for (const btype of PLAYER_BUILDABLE) {
               if (btype === 'farm' && world.factionOfTeam[TEAM_PLAYER] === 'undead') continue
-              const bdef = BUILDINGS[btype]
-              const afford = canAfford(world, TEAM_PLAYER, btype)
-              cmd(BUILD_BUTTON_LABELS[btype] ?? bdef.name, () => cb.onBuildType(btype), !afford, `${bdef.cost.gold}g ${bdef.cost.wood}w`)
+              appendBuildButton(cmd, world, cb, btype)
             }
           }
         } else {
@@ -423,9 +466,14 @@ export function renderCommandCard(
         }
       }
     } else if (isBuilding) {
-      // Train buttons
-      const trainable: UnitType[] =
-        kind === KIND_HALL ? ['worker'] : kind === KIND_BARRACKS ? ['melee'] : kind === KIND_ARCHERY ? ['ranged'] : []
+      // Train buttons, from the building's data-table roster. The
+      // Barracks hires both melee and ranged since the tech rework —
+      // but the ranged button is the Archery Range's unlock: always
+      // rendered (fixed-grid invariant), greyed with the requirement
+      // until a finished Range stands. enqueueTrain enforces the same
+      // gate in the sim.
+      const btype = BUILDING_TYPE_BY_KIND[kind]
+      const trainable: UnitType[] = btype ? BUILDINGS[btype].trains : []
       for (const utype of trainable) {
         // Price + affordability from trainCostFor — the exact price
         // enqueueTrain charges this team (faction modifier applied).
@@ -433,7 +481,14 @@ export function renderCommandCard(
         const afford =
           world.gold[TEAM_PLAYER] >= price.gold &&
           world.wood[TEAM_PLAYER] >= price.wood
-        cmd(factionUnitName(world, TEAM_PLAYER, utype), () => cb.onTrain(utype), !afford, `${price.gold}g ${price.wood}w`)
+        const rangeLocked =
+          utype === 'ranged' && !teamHasFinishedBuilding(world, TEAM_PLAYER, 'archery')
+        cmd(
+          factionUnitName(world, TEAM_PLAYER, utype),
+          () => cb.onTrain(utype),
+          rangeLocked || !afford,
+          rangeLocked ? 'Requires Archery Range' : `${price.gold}g ${price.wood}w`,
+        )
       }
       // Upgrade buttons. Prices come from researchCost — the helper
       // researchUpgrade charges and the AI's research gate floors on.
@@ -441,7 +496,7 @@ export function renderCommandCard(
       // default faction) the Adaptable signature charges 80g/40w, so
       // the label overstated the price AND the button stayed disabled
       // until the player held the full base cost.
-      if (kind === KIND_BARRACKS) {
+      if (kind === KIND_SMITHY) {
         const ladders: Array<{ type: UpgradeType; lvl: number; label: string }> = [
           { type: 'meleeDmg', lvl: world.meleeDmgLvl[TEAM_PLAYER], label: 'Weapon' },
           { type: 'meleeHp', lvl: world.meleeHpLvl[TEAM_PLAYER], label: 'Armor' },
@@ -611,7 +666,7 @@ function renderGroupCard(
   // --- Command row: the union of the group's class commands ---
   const grid = document.createElement('div')
   grid.className = 'cmd-grid'
-  const cmd: CmdFn = (label, fn, disabled = false, sub) => {
+  const cmd: CmdFn = (label, fn, disabled = false, sub, note) => {
     const btn = document.createElement('button')
     btn.className = 'cmd-btn'
     btn.disabled = disabled
@@ -625,11 +680,18 @@ function renderGroupCard(
       s.textContent = sub
       btn.appendChild(s)
     }
+    if (note !== undefined) {
+      const n = document.createElement('span')
+      n.className = 'cmd-btn-note'
+      n.textContent = note
+      btn.appendChild(n)
+    }
     btn.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); fn() })
     grid.appendChild(btn)
   }
 
   if (allWorkers && opts?.buildOpen && cb.onToggleBuild) {
+    grid.className = 'cmd-grid cmd-grid-build'
     appendBuildButtons(cmd, world, cb)
   } else {
     cmd('Move', () => cb.onMode('move'))

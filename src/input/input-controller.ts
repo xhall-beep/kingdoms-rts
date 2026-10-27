@@ -10,12 +10,14 @@ import {
   KIND_HALL,
   KIND_MELEE,
   KIND_RANGED,
+  KIND_SMITHY,
   KIND_TREE,
-  KIND_TOWER,
   KIND_WORKER,
+  KIND_WORKSHOP,
   STATE_BUILD,
   STATE_IDLE,
   TEAM_PLAYER,
+  isBuildingKind,
 } from '../core/World'
 import { orderStop } from '../systems/movement.ts'
 import type { BuildingType } from '../data/buildings.ts'
@@ -382,12 +384,15 @@ export class InputControllerImpl implements InputController {
     for (const id of world.entities.keys()) {
       if (world.team[id] !== this.localTeam) continue
       const k = world.kind[id]
-      if (k === KIND_HALL || k === KIND_BARRACKS || k === KIND_ARCHERY || k === KIND_FARM) {
+      if (
+        k === KIND_HALL || k === KIND_BARRACKS || k === KIND_ARCHERY || k === KIND_FARM ||
+        k === KIND_WORKSHOP || k === KIND_SMITHY
+      ) {
         counts.set(k, (counts.get(k) ?? 0) + 1)
       }
     }
-    // Fixed order: hall, barracks, archery, farm.
-    const order = [KIND_HALL, KIND_BARRACKS, KIND_ARCHERY, KIND_FARM]
+    // Fixed order: hall, barracks, workshop, smithy, archery, farm.
+    const order = [KIND_HALL, KIND_BARRACKS, KIND_WORKSHOP, KIND_SMITHY, KIND_ARCHERY, KIND_FARM]
     return order
       .filter((k) => counts.has(k))
       .map((k) => ({ kind: k, count: counts.get(k)! }))
@@ -1018,7 +1023,7 @@ export class InputControllerImpl implements InputController {
     if (id < 0 || !world.entities.has(id)) return false
     if (world.team[id] !== this.localTeam) return false
     const k = world.kind[id]
-    const isBuilding = (k >= KIND_HALL && k <= KIND_FARM) || k === KIND_TOWER
+    const isBuilding = isBuildingKind(k)
     return isBuilding && world.buildProgress[id] < world.buildTotal[id]
   }
 

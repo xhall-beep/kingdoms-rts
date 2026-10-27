@@ -10,12 +10,15 @@ import {
   KIND_MELEE,
   KIND_RANGED,
   KIND_SHRINE,
+  KIND_SMITHY,
   KIND_TREE,
   KIND_TREANT,
   KIND_WORKER,
   KIND_TOWER,
+  KIND_WORKSHOP,
   STATE_IDLE,
   HARVEST_OFF,
+  isBuildingKind,
 } from '../core/World'
 import { FOG_UNEXPLORED, FOG_VISIBLE } from '../world/fog.ts'
 import { getSprite } from './sprites.ts'
@@ -46,6 +49,10 @@ const SPRITE_FOR_KIND: Record<number, string | null> = {
   [KIND_FARM]: 'homestead_farm',
   [KIND_BARRACKS]: 'barracks',
   [KIND_TOWER]: 'guard_tower',
+  [KIND_WORKSHOP]: 'workshop',
+  [KIND_SMITHY]: 'smithy',
+  // KIND_ARCHERY has no sprite: it renders the procedural pitched-roof
+  // form, which stays visually distinct from the sprite buildings.
   // KIND_WORKER handled separately (unit rendering below)
 }
 
@@ -423,7 +430,7 @@ export class Renderer {
     const now = typeof performance !== 'undefined' ? performance.now() : 0
     if (now - this.lastLossSfx < 400) return
     this.lastLossSfx = now
-    const isBuilding = (pop.kind >= KIND_HALL && pop.kind <= KIND_FARM) || pop.kind === KIND_TOWER
+    const isBuilding = isBuildingKind(pop.kind)
     if (isBuilding) sfx.buildingLost()
     else sfx.unitLost()
   }
@@ -674,8 +681,13 @@ export class Renderer {
       this.circle(p.x, p.y, r, '#4a4a55')
       this.circle(p.x, p.y, r * 0.7, '#2a2a32')
       this.circle(p.x, p.y, r * 0.35, rune)
-    } else if (kind >= KIND_HALL && kind <= KIND_FARM) {
-      // Building: try sprite first, fall back to procedural.
+    } else if (
+      (kind >= KIND_HALL && kind <= KIND_FARM) ||
+      kind === KIND_WORKSHOP ||
+      kind === KIND_SMITHY
+    ) {
+      // Building: try sprite first, fall back to procedural. (Tower keeps
+      // its pre-existing draw path below — unchanged by the tech slice.)
       let spriteKey = SPRITE_FOR_KIND[kind]
       // Farms wear their faction's face: elves grow a grove farm, not a
       // human homestead with fleur-de-lis banners.
@@ -779,7 +791,7 @@ export class Renderer {
     // red ring so focus-fire is visible at a glance.
     const isUnitOrBuilding =
       kind === KIND_WORKER || kind === KIND_MELEE || kind === KIND_RANGED ||
-      (kind >= KIND_HALL && kind <= KIND_FARM) || kind === KIND_TOWER
+      isBuildingKind(kind)
     if (
       isUnitOrBuilding &&
       world.team[id] === this.viewTeam &&

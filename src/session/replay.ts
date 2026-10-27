@@ -2,11 +2,9 @@ import type { World } from '../core/World'
 import {
   HARVEST_GOLD,
   HARVEST_WOOD,
-  KIND_FARM,
-  KIND_HALL,
-  KIND_TOWER,
   KIND_TREE,
   KIND_WORKER,
+  isBuildingKind,
 } from '../core/World'
 import { orderAttack, orderAttackMove } from '../systems/combat.ts'
 import { orderBuild, orderGather } from '../systems/gather.ts'
@@ -127,13 +125,13 @@ export class ReplayPlayer {
       case 'build': {
         // Resume: a nonzero siteId targets an existing incomplete structure —
         // send the worker back to it instead of placing a new one. (Mirrors
-        // net/apply.ts, including towers outside the HALL..FARM range.)
+        // net/apply.ts; building kinds decided by the World.ts predicate.)
         if (cmd.siteId !== 0 && world.entities.has(cmd.siteId)) {
           const site = cmd.siteId
           const skind = world.kind[site]
           if (
             world.team[site] === 0 &&
-            ((skind >= KIND_HALL && skind <= KIND_FARM) || skind === KIND_TOWER) &&
+            isBuildingKind(skind) &&
             world.buildProgress[site] < world.buildTotal[site] &&
             world.entities.has(cmd.workerId) &&
             world.kind[cmd.workerId] === KIND_WORKER

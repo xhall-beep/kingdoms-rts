@@ -1,5 +1,6 @@
 import { BUILDINGS } from '../data/buildings.ts'
 import type { BuildingType } from '../data/buildings.ts'
+import { teamHasFinishedBuilding } from '../world/construction.ts'
 import { FACTIONS } from '../data/factions.ts'
 import { getUnits } from '../data/stats.ts'
 import { UPGRADES, type UpgradeType } from '../data/upgrades.ts'
@@ -28,6 +29,13 @@ const BUILDING_TYPE_BY_KIND: BuildingType[] = [
   'barracks',
   'archery',
   'farm',
+  'hall', // 7: tree, unused
+  'hall', // 8: gold mine, unused
+  'tower', // 9
+  'hall', // 10: shrine, unused
+  'hall', // 11: treant, unused
+  'workshop', // 12
+  'smithy', // 13
 ]
 
 const KIND_BY_UNIT: Record<UnitType, number> = {
@@ -231,6 +239,16 @@ export function enqueueTrain(world: World, buildingId: number, type: UnitType): 
   if (!def.trains.includes(type)) return false
   if (world.buildProgress[buildingId] < world.buildTotal[buildingId]) return false
   if (world.upgradeLeft[buildingId] > 0) return false // mid-upgrade: no training
+  // Archery Range rework (2026-10-26): ranged units are hired at the
+  // Barracks, but only while a FINISHED Archery Range stands for the
+  // team — the Range is the unlock, not the producer. Enforced here in
+  // the sim, not just greyed in the UI: if the Range falls, new ranged
+  // enqueue locks again. Items already queued or in training are NOT
+  // cancelled — they were legitimately bought while the Range stood
+  // and complete normally (promoteQueue never re-checks the gate).
+  if (type === 'ranged' && !teamHasFinishedBuilding(world, world.team[buildingId] as 0 | 1, 'archery')) {
+    return false
+  }
 
   const team = world.team[buildingId]
   const cost = trainCostFor(world, team, type)
@@ -412,8 +430,15 @@ export function researchCost(
 
 /** Research an upgrade at a building. Returns true if successful. */
 export function researchUpgrade(world: World, buildingId: number, type: UpgradeType): boolean {
+  if (!world.entities.has(buildingId)) return false
   const team = world.team[buildingId] as 0 | 1
   const def = UPGRADES[type]
+  // Research lives at its home building (UPGRADES.building): the melee
+  // ladders at the Smithy, the ranged ladder at the Archery Range. The
+  // Barracks hosts no research since the tech-buildings rework — this
+  // is enforced in the sim, not just by which card renders the button.
+  if (BUILDING_TYPE_BY_KIND[world.kind[buildingId]] !== def.building) return false
+  if (world.buildProgress[buildingId] < world.buildTotal[buildingId]) return false // unfinished
   const currentLvl = type === 'meleeDmg' ? world.meleeDmgLvl[team]
     : type === 'meleeHp' ? world.meleeHpLvl[team]
     : world.rangedDmgLvl[team]

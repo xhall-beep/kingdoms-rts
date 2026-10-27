@@ -83,7 +83,8 @@ export type NetMessage =
 
 // ---- enum <-> byte maps (fixed order = wire-stable) ----
 
-const BUILDINGS: BuildingType[] = ['hall', 'barracks', 'archery', 'farm']
+// Appended at the end so existing indices stay wire-stable.
+const BUILDINGS: BuildingType[] = ['hall', 'barracks', 'archery', 'farm', 'workshop', 'smithy']
 const UNITS: UnitType[] = ['worker', 'melee', 'ranged']
 
 function buildingToByte(b: BuildingType): number {

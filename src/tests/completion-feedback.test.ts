@@ -91,12 +91,14 @@ test('researching an upgrade pushes a completion flash at the building', () => {
     if (world.team[id] === 0 && world.kind[id] === KIND_HALL) { hall = id; break }
   }
   assert(hall !== -1, 'need a team-0 hall')
+  // Melee research lives at the Smithy since the tech-buildings rework.
+  const smithy = world.spawnBuilding('smithy', 0, 20, 20, true)
   world.completionFlashes.length = 0
-  const ok = researchUpgrade(world, hall, 'meleeDmg')
+  const ok = researchUpgrade(world, smithy.id, 'meleeDmg')
   assert(ok, 'research should succeed')
   assert(world.completionFlashes.length === 1, 'expected exactly one completion flash')
   const ev = world.completionFlashes[0]
-  assert(ev.id === hall, 'flash should name the researching building')
+  assert(ev.id === smithy.id, 'flash should name the researching building')
   assert(ev.unit === false, 'research completion is a building event, not a unit event')
   assert(ev.team === 0, 'flash should record the owning team')
 })
@@ -110,8 +112,9 @@ test('a failed research pushes no completion flash', () => {
     if (world.team[id] === 0 && world.kind[id] === KIND_HALL) { hall = id; break }
   }
   assert(hall !== -1, 'need a team-0 hall')
+  const smithy = world.spawnBuilding('smithy', 0, 20, 20, true)
   world.completionFlashes.length = 0
-  const ok = researchUpgrade(world, hall, 'meleeDmg')
+  const ok = researchUpgrade(world, smithy.id, 'meleeDmg')
   assert(!ok, 'broke research should fail')
   assert(world.completionFlashes.length === 0, 'no flash on a failed research')
 })

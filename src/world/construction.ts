@@ -1,7 +1,7 @@
 import { BUILDINGS } from '../data/buildings.ts'
 import type { BuildingType } from '../data/buildings.ts'
 import type { World } from '../core/World'
-import { KIND_ARCHERY, KIND_BARRACKS, KIND_FARM, KIND_HALL, KIND_TOWER, NO_TARGET } from '../core/World'
+import { KIND_ARCHERY, KIND_BARRACKS, KIND_FARM, KIND_HALL, KIND_SMITHY, KIND_TOWER, KIND_WORKSHOP, NO_TARGET } from '../core/World'
 
 /** BuildingType for each building kind constant. */
 export const BUILDING_TYPE_BY_KIND: Record<number, BuildingType> = {
@@ -10,10 +10,41 @@ export const BUILDING_TYPE_BY_KIND: Record<number, BuildingType> = {
   [KIND_ARCHERY]: 'archery',
   [KIND_FARM]: 'farm',
   [KIND_TOWER]: 'tower',
+  [KIND_WORKSHOP]: 'workshop',
+  [KIND_SMITHY]: 'smithy',
 }
 
 /** Buildings the player is allowed to place. Halls are scenario/AI only. */
-export const PLAYER_BUILDABLE: BuildingType[] = ['farm', 'barracks', 'archery', 'tower']
+export const PLAYER_BUILDABLE: BuildingType[] = ['farm', 'barracks', 'workshop', 'smithy', 'archery', 'tower']
+
+/**
+ * Tech-tree prerequisites (Montz directive 2026-10-26): the Workshop is
+ * the tech root. The Smithy and the Archery Range cannot be placed until
+ * the team has a FINISHED workshop standing — an under-construction
+ * workshop unlocks nothing, and losing the workshop afterwards does not
+ * un-place what already stands (it only blocks new placements).
+ */
+export const BUILDING_REQUIRES: Partial<Record<BuildingType, BuildingType>> = {
+  smithy: 'workshop',
+  archery: 'workshop',
+}
+
+/** True when `team` has at least one FINISHED building of `type` standing. */
+export function teamHasFinishedBuilding(world: World, team: 0 | 1, type: BuildingType): boolean {
+  for (const id of world.entities.keys()) {
+    if (world.team[id] !== team) continue
+    if (BUILDING_TYPE_BY_KIND[world.kind[id]] !== type) continue
+    if (world.buildProgress[id] < world.buildTotal[id]) continue
+    return true
+  }
+  return false
+}
+
+/** True when `type`'s tech prerequisite (if any) is met for `team`. */
+export function buildingPrereqMet(world: World, team: 0 | 1, type: BuildingType): boolean {
+  const req = BUILDING_REQUIRES[type]
+  return req === undefined || teamHasFinishedBuilding(world, team, req)
+}
 
 /**
  * Shared construction rules used by both the AI and player input.
@@ -35,6 +66,8 @@ export function canPlaceStructure(
   const def = BUILDINGS[type]
   // Undead raise no farms: Soul-Ash from the fallen feeds their supply cap.
   if (type === 'farm' && world.factionOfTeam[team] === 'undead') return false
+  // Tech tree: Smithy / Archery Range need a finished Workshop first.
+  if (!buildingPrereqMet(world, team, type)) return false
   if (world.gold[team] < def.cost.gold || world.wood[team] < def.cost.wood) return false
   return isAreaFree(world, x, z, def.radius)
 }

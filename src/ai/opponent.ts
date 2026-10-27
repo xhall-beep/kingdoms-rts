@@ -11,7 +11,9 @@ import {
   KIND_HALL,
   KIND_MELEE,
   KIND_RANGED,
+  KIND_SMITHY,
   KIND_WORKER,
+  KIND_WORKSHOP,
   NO_TARGET,
   NO_TRAINING,
   STATE_IDLE,
@@ -20,7 +22,8 @@ import {
   STATE_ATTACKMOVE,
   KIND_GOLDMINE,
   KIND_SHRINE,
-  KIND_TREE} from '../core/World'
+  KIND_TREE,
+  isBuildingKind} from '../core/World'
 import { orderBuild, orderGather } from '../systems/gather.ts'
 import { BUILD_RING_OFFSETS } from '../core/Math.ts'
 import { orderAttackMove } from '../systems/combat.ts'
@@ -537,7 +540,7 @@ export class OpponentAI implements System {
   /**
    * AI research step (all factions). Buys at most one level per
    * purchase, paced by RESEARCH_PACE: the first ladder below max whose
-   * own building (barracks for melee, archery for ranged — per
+   * own building (smithy for melee, archery for ranged — per
    * UPGRADES) stands finished and whose next-level cost — priced for
    * this faction, so human's Adaptable discount (0.8x) is the floor
    * human is gated on — the bank covers, and only once a small
@@ -573,7 +576,7 @@ export class OpponentAI implements System {
             ? world.meleeHpLvl[this.team]
             : world.rangedDmgLvl[this.team]
       if (level >= def.maxLevel) continue
-      const kind = def.building === 'barracks' ? KIND_BARRACKS : KIND_ARCHERY
+      const kind = def.building === 'archery' ? KIND_ARCHERY : KIND_SMITHY
       const building = structuresOf(world, this.team, kind, true)[0]
       if (building === undefined) continue
       // Floor = this ladder's own cost for this faction. If the picked
@@ -908,11 +911,27 @@ export class OpponentAI implements System {
     // otherwise cheap farms would starve the military buildings forever.
     // Undead raise no farms — Soul-Ash from the fallen feeds their supply cap.
     const needsFarms = world.factionOfTeam[team] !== 'undead'
+    // Tech tree (2026-10-26): the Workshop is the tech root — it goes up
+    // right after the first Barracks (the economy opener is the `ready`
+    // gate above), and the Smithy / Archery Range follow in personality
+    // order: the aggressor takes the Range first (archer pressure), the
+    // defender the Smithy first (armor for the turtle), the expander the
+    // Range as part of its boom, its Smithy after the second farm beat.
+    // The wants additionally require a FINISHED workshop — placement is
+    // gated in construction.ts, and an AI that queued a tech building
+    // behind an unfinished root would just burn the think. A destroyed
+    // tech building re-enters the chain on its own: its count falls to
+    // zero and the chain wants it again (the workshop first of all).
+    const workshopReady = structuresOf(world, team, KIND_WORKSHOP, true).length > 0
+    const techFirst = this.personality === 'defender' ? KIND_SMITHY : KIND_ARCHERY
+    const techSecond = this.personality === 'defender' ? KIND_ARCHERY : KIND_SMITHY
     let want: number | null = null
     if (ready && all(KIND_BARRACKS) === 0) want = KIND_BARRACKS
+    else if (ready && all(KIND_WORKSHOP) === 0) want = KIND_WORKSHOP
     else if (needsFarms && slack <= 1 && pending(KIND_FARM) === 0) want = KIND_FARM
-    else if (ready && all(KIND_ARCHERY) === 0) want = KIND_ARCHERY
+    else if (ready && workshopReady && all(techFirst) === 0) want = techFirst
     else if (needsFarms && slack <= 3 && pending(KIND_FARM) === 0) want = KIND_FARM
+    else if (ready && workshopReady && all(techSecond) === 0) want = techSecond
     else if (ready && world.gold[team] >= 400 && all(KIND_BARRACKS) < 2 && pending(KIND_BARRACKS) === 0) {
       want = KIND_BARRACKS
     }
@@ -970,7 +989,7 @@ export class OpponentAI implements System {
     for (const id of world.entities.keys()) {
       if (world.team[id] !== this.team) continue
       const kind = world.kind[id]
-      if (kind < KIND_HALL || kind > KIND_FARM) continue
+      if (!isBuildingKind(kind)) continue
       if (world.buildProgress[id] >= world.buildTotal[id]) continue
       let hasBuilder = false
       for (const w of workers) {
@@ -1008,15 +1027,25 @@ export class OpponentAI implements System {
     const meleeCost = units['melee'].cost.gold
     const rangedCost = units['ranged'].cost.gold
     const meleeReserve = reserveGold * MELEE_RESERVE_FACTOR
-    const gold = world.gold[this.team]
-    const barracksIdle = structuresOf(world, this.team, KIND_BARRACKS, true).some(
+    // Tech rework (2026-10-26): ranged are hired at the BARRACKS, unlocked
+    // by a finished Archery Range — production.ts enforces the same gate
+    // in the sim, so this side only decides the mix. The two-queue dance
+    // (barracks melee / archery ranged in parallel) collapses into one
+    // queue per barracks: each idle barracks hires its favored class
+    // first, and training one class yields the next contested gold to
+    // the other, so the army still mixes instead of sniping.
+    const hasRange = structuresOf(world, this.team, KIND_ARCHERY, true).length > 0
+    const barracksList = structuresOf(world, this.team, KIND_BARRACKS, true)
+    const barracksIdle = barracksList.some(
       (id) => world.trainKind[id] === NO_TRAINING,
     )
     // Starved: an idle barracks while gold covers ranged but not melee. The
     // cheaper ranged would otherwise snipe every 80g increment and the 100g
     // melee would never accumulate (deterministic: world state + think ticks).
+    let gold = world.gold[this.team]
     const starved =
       this.favorMelee &&
+      hasRange &&
       barracksIdle &&
       gold - reserveGold >= rangedCost &&
       gold - meleeReserve < meleeCost
@@ -1029,23 +1058,26 @@ export class OpponentAI implements System {
       if (this.meleeHoldTicks === 0) this.favorMelee = false // expired: yield to ranged
     }
 
-    const jobs: [number, 'melee' | 'ranged'][] = [
-      [KIND_BARRACKS, 'melee'],
-      [KIND_ARCHERY, 'ranged'],
-    ]
-    for (const [kind, unit] of jobs) {
-      // Re-prioritize melee: hold the archery while the barracks is starved
-      // so gold accumulates past the melee cost. Bounded by the hold window —
-      // the archery can be throttled, never stalled.
-      if (unit === 'ranged' && holdRanged) continue
-      for (const id of structuresOf(world, this.team, kind, true)) {
-        if (world.trainKind[id] !== NO_TRAINING) continue
+    for (const id of barracksList) {
+      if (world.trainKind[id] !== NO_TRAINING) continue
+      // Favored class first; the other class is the fallback when the
+      // favored one is unaffordable — except a held ranged (the starve
+      // hold above), which is skipped so the gold can reach melee cost.
+      // The hold is bounded by MELEE_STARVE_HOLD_WINDOW: ranged production
+      // can be throttled, never stalled.
+      const order: ('melee' | 'ranged')[] = this.favorMelee
+        ? ['melee', 'ranged']
+        : ['ranged', 'melee']
+      for (const unit of order) {
+        if (unit === 'ranged' && !hasRange) continue // locked: no finished Range
+        if (unit === 'ranged' && holdRanged) continue
         // Don't spend the gold reserved for the planned building. Melee
         // trains against the softened reserve (see MELEE_RESERVE_FACTOR).
         const reserve = unit === 'melee' ? meleeReserve : reserveGold
         const cost = unit === 'melee' ? meleeCost : rangedCost
         if (gold - reserve < cost) continue
         this.emitTrain(world, id, unit)
+        gold -= cost // local shadow: keeps sink-mode emission honest too
         // Alternation: a trained melee yields the next contested gold to
         // ranged, and vice versa — keeps the army mixed instead of sniped.
         if (unit === 'melee') {
@@ -1054,6 +1086,7 @@ export class OpponentAI implements System {
         } else {
           this.favorMelee = true
         }
+        break // one hire per barracks per think, as before
       }
     }
   }

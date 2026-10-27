@@ -15,7 +15,9 @@ import {
   KIND_BARRACKS,
   KIND_FARM,
   KIND_HALL,
+  KIND_SMITHY,
   KIND_WORKER,
+  KIND_WORKSHOP,
   NO_TRAINING,
   TEAM_PLAYER,
   TRAIN_QUEUE_WAITING,
@@ -795,7 +797,10 @@ export class HudImpl implements Hud {
     for (const id of world.entities.keys()) {
       if (world.team[id] !== TEAM_PLAYER) continue
       const k = world.kind[id]
-      if (k === KIND_HALL || k === KIND_BARRACKS || k === KIND_ARCHERY || k === KIND_FARM) {
+      if (
+        k === KIND_HALL || k === KIND_BARRACKS || k === KIND_ARCHERY || k === KIND_FARM ||
+        k === KIND_WORKSHOP || k === KIND_SMITHY
+      ) {
         counts.set(k, (counts.get(k) ?? 0) + 1)
         const items =
           (world.trainKind[id] !== NO_TRAINING ? 1 : 0) + world.trainQueueLen[id]
@@ -804,7 +809,7 @@ export class HudImpl implements Hud {
         }
       }
     }
-    const order = [KIND_HALL, KIND_BARRACKS, KIND_ARCHERY, KIND_FARM]
+    const order = [KIND_HALL, KIND_BARRACKS, KIND_WORKSHOP, KIND_SMITHY, KIND_ARCHERY, KIND_FARM]
     const key = order.map((k) => `${k}:${counts.get(k) ?? 0}:${training.get(k) ?? 0}`).join(',')
     if (key === this.lastBuildingsKey) return
     this.lastBuildingsKey = key
@@ -848,7 +853,10 @@ export class HudImpl implements Hud {
     if (selected.length === 1) {
       const sid = selected[0]
       const k = world.kind[sid]
-      if (k === KIND_HALL || k === KIND_BARRACKS || k === KIND_ARCHERY || k === KIND_FARM) {
+      if (
+        k === KIND_HALL || k === KIND_BARRACKS || k === KIND_ARCHERY || k === KIND_FARM ||
+        k === KIND_WORKSHOP || k === KIND_SMITHY
+      ) {
         let queueKey = ''
         const qBase = sid * TRAIN_QUEUE_WAITING
         for (let qi = 0; qi < world.trainQueueLen[sid]; qi += 1) {

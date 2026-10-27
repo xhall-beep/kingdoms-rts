@@ -124,7 +124,7 @@ test('empty input bundle is tiny', () => {
 test('fuzz: 500 random commands round-trip bit-exact', () => {
   const rng = new SeededRandom(0xF02)
   const types = ['move', 'attack', 'attackmove', 'gather', 'build', 'train', 'rally', 'patrol'] as const
-  const buildings = ['hall', 'barracks', 'archery', 'farm'] as const
+  const buildings = ['hall', 'barracks', 'archery', 'farm', 'workshop', 'smithy'] as const
   const units = ['worker', 'melee', 'ranged'] as const
   for (let i = 0; i < 500; i += 1) {
     const t = types[rng.integer(0, types.length - 1)]
@@ -139,7 +139,7 @@ test('fuzz: 500 random commands round-trip bit-exact', () => {
       case 'attack': cmd = { type: 'attack', step: 0, unitIds: ids, targetId: rng.integer(1, 2000) }; break
       case 'attackmove': cmd = { type: 'attackmove', step: 0, unitIds: ids, x, z }; break
       case 'gather': cmd = { type: 'gather', step: 0, unitIds: ids, nodeId: rng.integer(1, 2000) }; break
-      case 'build': cmd = { type: 'build', step: 0, workerId: ids[0], building: buildings[rng.integer(0, 3)], x, z, siteId: rng.integer(0, 2000) }; break
+      case 'build': cmd = { type: 'build', step: 0, workerId: ids[0], building: buildings[rng.integer(0, 5)], x, z, siteId: rng.integer(0, 2000) }; break
       case 'train': cmd = { type: 'train', step: 0, buildingId: ids[0], unit: units[rng.integer(0, 2)] }; break
       case 'rally': cmd = { type: 'rally', step: 0, buildingId: ids[0], x, z }; break
       case 'patrol': cmd = { type: 'patrol', step: 0, unitIds: ids, x, z }; break

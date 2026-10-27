@@ -327,8 +327,9 @@ test('human research buttons price at the Adaptable 80g/40w and enable at that p
   const world = new World() // default factions: human player
   world.gold[TEAM_PLAYER] = 85
   world.wood[TEAM_PLAYER] = 45
-  const barracks = world.spawnBuilding('barracks', TEAM_PLAYER, 0, 0, true)
-  const buttons = cardButtons(renderCard(world, barracks.id))
+  // Since the tech-buildings rework the melee ladders live at the Smithy.
+  const smithy = world.spawnBuilding('smithy', TEAM_PLAYER, 0, 0, true)
+  const buttons = cardButtons(renderCard(world, smithy.id))
   const weapon = buttons.find((b) => b.label === 'Weapon +1')
   const armor = buttons.find((b) => b.label === 'Armor +1')
   assert(weapon !== undefined && armor !== undefined, 'both research buttons render')

@@ -8,11 +8,9 @@ import {
   World,
   KIND_TREE,
   KIND_WORKER,
-  KIND_HALL,
-  KIND_FARM,
-  KIND_TOWER,
   HARVEST_WOOD,
   HARVEST_GOLD,
+  isBuildingKind,
 } from '../core/World.ts'
 import { orderAttack, orderAttackMove } from '../systems/combat.ts'
 import { orderBuild, orderGather } from '../systems/gather.ts'
@@ -62,14 +60,14 @@ export function applyCommand(world: World, cmd: Command): void {
       // send the worker back to it instead of placing a new one. (The AI's
       // construction supervisor emits this when a builder is lost mid-build;
       // the player input layer emits it when workers are ordered onto an
-      // unfinished structure to join its crew. Towers sit outside the
-      // HALL..FARM kind range and are included explicitly.)
+      // unfinished structure to join its crew. Building kinds are not a
+      // contiguous range — the World.ts predicate decides.)
       if (cmd.siteId !== 0 && world.entities.has(cmd.siteId)) {
         const site = cmd.siteId
         const skind = world.kind[site]
         if (
           world.team[site] === team &&
-          ((skind >= KIND_HALL && skind <= KIND_FARM) || skind === KIND_TOWER) &&
+          isBuildingKind(skind) &&
           world.buildProgress[site] < world.buildTotal[site] &&
           world.entities.has(cmd.workerId) &&
           world.kind[cmd.workerId] === KIND_WORKER

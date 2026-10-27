@@ -180,6 +180,7 @@ test('AI researches once its bank clears the floor', () => {
   const world = makeAiWorld('human', 'orc')
   world.spawnBuilding('barracks', TEAM_PLAYER, -34, -46, true)
   world.spawnBuilding('archery', TEAM_PLAYER, -46, -34, true)
+  world.spawnBuilding('smithy', TEAM_PLAYER, -40, -54, true)
   // A standing army past the research precondition: research upgrades
   // the army you have — the step stands down while the army is forming.
   for (let i = 0; i < 8; i += 1) world.spawnUnit('melee', TEAM_PLAYER, -38 + i, -30)
@@ -218,7 +219,7 @@ function totalLevels(world: World, team: number): number {
 test('research gate: no fire below the faction-priced ladder cost', () => {
   // Human pays 80g via Adaptable: 79g in the bank must not fire.
   const human = makeAiWorld('human', 'orc', false)
-  human.spawnBuilding('barracks', TEAM_PLAYER, -34, -46, true)
+  human.spawnBuilding('smithy', TEAM_PLAYER, -34, -46, true)
   for (let i = 0; i < 8; i += 1) human.spawnUnit('melee', TEAM_PLAYER, -38 + i, -30)
   human.gold[TEAM_PLAYER] = 79
   human.wood[TEAM_PLAYER] = 500
@@ -226,7 +227,7 @@ test('research gate: no fire below the faction-priced ladder cost', () => {
   assertEqual(totalLevels(human, TEAM_PLAYER), 0, 'human: no research at 79g (below its 80g price)')
   // Elf pays the full 100g: 99g must not fire.
   const elf = makeAiWorld('elf', 'orc', false)
-  elf.spawnBuilding('barracks', TEAM_PLAYER, -34, -46, true)
+  elf.spawnBuilding('smithy', TEAM_PLAYER, -34, -46, true)
   for (let i = 0; i < 8; i += 1) elf.spawnUnit('melee', TEAM_PLAYER, -38 + i, -30)
   elf.gold[TEAM_PLAYER] = 99
   elf.wood[TEAM_PLAYER] = 500
@@ -236,7 +237,7 @@ test('research gate: no fire below the faction-priced ladder cost', () => {
 
 test('research gate: human fires at exactly its discounted cost with 3 soldiers', () => {
   const world = makeAiWorld('human', 'orc', false)
-  world.spawnBuilding('barracks', TEAM_PLAYER, -34, -46, true)
+  world.spawnBuilding('smithy', TEAM_PLAYER, -34, -46, true)
   // Exactly the flat army precondition — no more.
   for (let i = 0; i < 3; i += 1) world.spawnUnit('melee', TEAM_PLAYER, -38 + i, -30)
   world.gold[TEAM_PLAYER] = 80 // Adaptable price of meleeDmg 1: 100 x 0.8.
@@ -249,7 +250,7 @@ test('research gate: human fires at exactly its discounted cost with 3 soldiers'
 
 test('research gate: no fire below 3 standing soldiers', () => {
   const world = makeAiWorld('human', 'orc', false)
-  world.spawnBuilding('barracks', TEAM_PLAYER, -34, -46, true)
+  world.spawnBuilding('smithy', TEAM_PLAYER, -34, -46, true)
   world.spawnBuilding('archery', TEAM_PLAYER, -46, -34, true)
   for (let i = 0; i < 2; i += 1) world.spawnUnit('melee', TEAM_PLAYER, -38 + i, -30)
   world.gold[TEAM_PLAYER] = 5000
@@ -260,20 +261,23 @@ test('research gate: no fire below 3 standing soldiers', () => {
 
 test('AI research fires by mid-game for every faction in scripted sims', () => {
   // Single AI vs an inert enemy base. The bank-dynamics audit's replay
-  // predicts first levels ~2:40-2:55 in contested games; uncontested
-  // economies fire no later. Undead's supply gate pools gold, so it
-  // researches at least as early as human.
+  // predicted first levels ~2:40-2:55 in contested games under the old
+  // barracks-research rules; the tech-buildings rework (2026-10-26)
+  // inserts the workshop + smithy ahead of the first level, and the
+  // measured uncontested first fires are 170-186s across factions.
+  // Undead's supply gate pools gold, so it researches at least as
+  // early as human.
   const firstFire = new Map<string, number>()
   for (const faction of ['human', 'elf', 'orc', 'undead']) {
     const foe = faction === 'orc' ? 'human' : 'orc'
     const world = makeAiWorld(faction, foe)
     let first = -1
-    for (let s = 0; s < 60 * 180 && first < 0; s += 1) {
+    for (let s = 0; s < 60 * 210 && first < 0; s += 1) {
       stepWorld(world, 1)
       if (totalLevels(world, TEAM_PLAYER) > 0) first = world.matchTime
     }
     firstFire.set(faction, first)
-    assert(first > 0, `${faction} researched by 3:00 (first fire ${first.toFixed(0)}s)`)
+    assert(first > 0, `${faction} researched by 3:30 (first fire ${first.toFixed(0)}s)`)
   }
   assert(
     firstFire.get('undead')! <= firstFire.get('human')!,
@@ -283,7 +287,7 @@ test('AI research fires by mid-game for every faction in scripted sims', () => {
 
 test('in sink mode research applies directly, like orc tier upgrades', () => {
   const world = makeAiWorld('human', 'orc', false)
-  world.spawnBuilding('barracks', TEAM_PLAYER, -34, -46, true)
+  world.spawnBuilding('smithy', TEAM_PLAYER, -34, -46, true)
   for (let i = 0; i < 8; i += 1) world.spawnUnit('melee', TEAM_PLAYER, -38 + i, -30)
   world.gold[TEAM_PLAYER] = 1000
   world.wood[TEAM_PLAYER] = 500
