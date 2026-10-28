@@ -292,6 +292,21 @@ const OPENING_MELEE_COMMITMENT: Record<AIPersonality, number> = {
   expander: 2,
 }
 
+/**
+ * Opening advance delay (pacing slice 2026-10-27): the first offensive
+ * wave may not launch before this gameTime (sim seconds), per
+ * personality. Defense, shrine sorties, horn, training and micro are
+ * deliberately NOT gated — the pacing study's measured ecosystem
+ * (rusher row and AI-vs-AI outcomes byte-identical) holds with only
+ * the march held. Values are L1-A; the pre-measured escalation path
+ * is L1-C 240/240/255, then L1-B 255/255/270.
+ */
+const OPENING_ADVANCE_DELAY_SEC: Record<AIPersonality, number> = {
+  aggressor: 225,
+  defender: 225,
+  expander: 240,
+}
+
 export type AIDifficulty = 'easy' | 'normal' | 'hard'
 
 /** Resolved decision parameters: difficulty base values plus personality mods. */
@@ -1418,6 +1433,9 @@ export class OpponentAI implements System {
     // The quiet opening: no AI attacks before the First Bell (3:00).
     // The Warlord personality still hits *at* the bell — see tuning.
     if (world.bellsRung[0] !== 1) return
+    // Opening advance delay (pacing slice): even with the bell rung and
+    // a wave ready, the first march waits for the per-personality floor.
+    if (this.gameTime < OPENING_ADVANCE_DELAY_SEC[this.personality]) return
     // Cold-start desperation: until the first corpse feeds Soul-Ash, an
     // undead garrison guards a cap that cannot grow — every soldier stays
     // home, no combat starts, no ash ever lands. garrisonFor waives it so

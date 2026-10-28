@@ -96,13 +96,16 @@ test('AI attacks after the First Bell', () => {
   }
   world.gold[TEAM_ENEMY] = 1000
   world.wood[TEAM_ENEMY] = 1000
-  // Fast-forward past the bell, then let the AI think.
+  // Fast-forward past the bell, then let the AI think. The loop runs
+  // 240 thinks (240 AI-seconds): since the pacing slice (2026-10-27) the
+  // first probe also waits out the aggressor's 225s opening advance
+  // floor, which sits after the First Bell in the same attack() gate.
   stepWorld(world, Math.floor(BELL_TIMES[0] / STEP) + 5)
   assert(bellRung(world, 0), 'sanity: bell has rung')
-  for (let i = 0; i < 120; i += 1) {
+  for (let i = 0; i < 240; i += 1) {
     world.update(1)
     ai.update(world, 1)
   }
   const attacked = soldiers.some((id) => world.state[id] !== STATE_IDLE)
-  assert(attacked, 'AI sends its first probe after the First Bell')
+  assert(attacked, 'AI sends its first probe after the First Bell (and past the advance floor)')
 })

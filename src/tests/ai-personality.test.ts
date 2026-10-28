@@ -89,39 +89,48 @@ function attackersOf(world: World, soldiers: number[]): number {
   return n
 }
 
+// Staging note (pacing slice, 2026-10-27): the behavior tests below run
+// their single think PAST the opening advance floor (aggressor/defender
+// 225s, expander 240s — see OPENING_ADVANCE_DELAY_SEC in opponent.ts) so
+// they keep measuring personality discipline, not the pacing gate; the
+// gate itself is pinned in ai-pacing.test.ts. Mid-game garrison rules
+// apply at these clocks (aggressor keeps 1, expander 2, defender 4).
+
 test('aggressor attacks with a full wave', () => {
-  const { world, soldiers } = armedScenario(6)
-  new OpponentAI(TEAM_ENEMY, 'normal', 'aggressor').update(world, 5)
+  // 7 staged: the mid-game garrison keeps 1 home, the other 6 march.
+  const { world, soldiers } = armedScenario(7)
+  new OpponentAI(TEAM_ENEMY, 'normal', 'aggressor').update(world, 230)
   const n = attackersOf(world, soldiers)
-  assertEqual(n, 6, `aggressor should send all 6 soldiers, sent ${n}`)
+  assertEqual(n, 6, `aggressor should send its full wave of 6 (7 staged, 1 garrison), sent ${n}`)
 })
 
 test('aggressor holds a sub-threshold force', () => {
   const { world, soldiers } = armedScenario(5)
-  new OpponentAI(TEAM_ENEMY, 'normal', 'aggressor').update(world, 5)
+  new OpponentAI(TEAM_ENEMY, 'normal', 'aggressor').update(world, 230)
   const n = attackersOf(world, soldiers)
   assertEqual(n, 0, `aggressor with 5 soldiers should wait for 6, sent ${n}`)
 })
 
 test('defender holds back the same army', () => {
   const { world, soldiers } = armedScenario(6)
-  new OpponentAI(TEAM_ENEMY, 'normal', 'defender').update(world, 5)
+  new OpponentAI(TEAM_ENEMY, 'normal', 'defender').update(world, 230)
   const n = attackersOf(world, soldiers)
   assertEqual(n, 0, `defender should hold its 6 soldiers, sent ${n}`)
 })
 
 test('expander sits between the two', () => {
   const { world, soldiers } = armedScenario(5)
-  new OpponentAI(TEAM_ENEMY, 'normal', 'expander').update(world, 5)
+  new OpponentAI(TEAM_ENEMY, 'normal', 'expander').update(world, 240)
   const n = attackersOf(world, soldiers)
   assertEqual(n, 0, `expander with 5 soldiers should not attack yet (needs 6), sent ${n}`)
 })
 
 test('expander attacks once the army is big enough', () => {
+  // 8 staged: the mid-game garrison keeps 2 home, the other 6 march.
   const { world, soldiers } = armedScenario(8)
-  new OpponentAI(TEAM_ENEMY, 'normal', 'expander').update(world, 5)
+  new OpponentAI(TEAM_ENEMY, 'normal', 'expander').update(world, 240)
   const n = attackersOf(world, soldiers)
-  assert(n >= 6, `expander should attack with 8 soldiers, sent ${n}`)
+  assert(n >= 6, `expander should send its 6 non-garrison soldiers (8 staged), sent ${n}`)
 })
 
 suite('ai-micro: worker evacuation')

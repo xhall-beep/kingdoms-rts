@@ -2,6 +2,7 @@
 import { report } from './harness.ts'
 import './sim.test.ts'
 import './ai-personality.test.ts'
+import './ai-pacing.test.ts'
 import './ai-balance.test.ts'
 import './ai-melee.test.ts'
 import './ai-micro.test.ts'
