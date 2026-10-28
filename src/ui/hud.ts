@@ -239,6 +239,23 @@ export class HudImpl implements Hud {
   private actionsEl: HTMLElement | null = null
   private buildingsEl: HTMLElement | null = null
   private lastBuildingsKey = ''
+  /** Last strip strings written — the strip joins the wrath sliver's rule: DOM writes only on change. */
+  private lastStripText: Record<'gold' | 'wood' | 'supply' | 'info' | 'army', string> = {
+    gold: '',
+    wood: '',
+    supply: '',
+    info: '',
+    army: '',
+  }
+  /** Sim tick + world the cached unit counts were computed from (see update()). */
+  private lastCountsWorld: World | null = null
+  private lastCountsTick = -1
+  private cachedWorkers = 0
+  private cachedArmy = 0
+  private cachedStatues = 0
+  /** Sim tick + world the last building-bar scan ran on (see updateBuildings()). */
+  private lastBuildingsWorld: World | null = null
+  private lastBuildingsTick = -1
   private bannerEl: HTMLElement | null = null
   private tutorialEl: HTMLElement | null = null
   private callbacks: HudCallbacks | null = null
@@ -744,12 +761,21 @@ export class HudImpl implements Hud {
     el.hidden = false
   }
 
+  /** Write a strip readout only when its string actually changed. The
+   *  strip previously paid 5 string allocations + DOM writes per frame
+   *  at 60 fps even while the sim stood still (perf pass 2026-10-27);
+   *  these elements are written nowhere else, so the guard is exact. */
+  private setStripText(el: HTMLElement | null, key: 'gold' | 'wood' | 'supply' | 'info' | 'army', value: string): void {
+    if (!el) return
+    if (this.lastStripText[key] === value) return
+    this.lastStripText[key] = value
+    el.textContent = value
+  }
+
   update(world: World, selected: number[]): void {
-    if (this.goldEl) this.goldEl.textContent = String(Math.floor(world.gold[TEAM_PLAYER]))
-    if (this.woodEl) this.woodEl.textContent = String(Math.floor(world.wood[TEAM_PLAYER]))
-    if (this.supplyEl) {
-      this.supplyEl.textContent = `${world.supplyUsed[TEAM_PLAYER]}/${world.supplyCap[TEAM_PLAYER]}`
-    }
+    this.setStripText(this.goldEl, 'gold', String(Math.floor(world.gold[TEAM_PLAYER])))
+    this.setStripText(this.woodEl, 'wood', String(Math.floor(world.wood[TEAM_PLAYER])))
+    this.setStripText(this.supplyEl, 'supply', `${world.supplyUsed[TEAM_PLAYER]}/${world.supplyCap[TEAM_PLAYER]}`)
     // Living Wild wrath sliver: fixed cell, always rendered; only the
     // segment fills and the band class change, and only when the
     // mapped display state actually changed.
@@ -769,27 +795,50 @@ export class HudImpl implements Hud {
     // Counts are computed once and split across the two readouts: the top
     // strip carries VP + faction extras; the dashboard idle row carries
     // Workers/Army (they no longer earn a second strip row).
-    let workers = 0
-    let army = 0
-    let statues = 0
-    for (const id of world.entities.keys()) {
-      if (world.team[id] !== TEAM_PLAYER) continue
-      if (world.kind[id] === KIND_WORKER) {
-        workers += 1
-        if (isHeldWorker(world, id)) statues += 1
-      } else if (world.kind[id] <= 2) army += 1
+    //
+    // Per-frame scan guard: update() runs every rAF frame but the counts
+    // derive only from sim state, and the sim moves only inside
+    // world.update() (which bumps world.tick exactly once per step) or
+    // on world replacement — so a frame on an already-scanned
+    // (world, tick) recomputes the identical counts. The bound on
+    // staleness: a local command applied between ticks (train taps
+    // apply immediately in local play) lands in these counts at most
+    // one sim tick (1/60 sim-second) late, display-only — the sim and
+    // its hash never read the HUD, and the selected building's own
+    // command card is keyed separately and stays live every frame.
+    let workers: number
+    let army: number
+    let statues: number
+    if (this.lastCountsWorld === world && this.lastCountsTick === world.tick) {
+      workers = this.cachedWorkers
+      army = this.cachedArmy
+      statues = this.cachedStatues
+    } else {
+      workers = 0
+      army = 0
+      statues = 0
+      for (const id of world.entities.keys()) {
+        if (world.team[id] !== TEAM_PLAYER) continue
+        if (world.kind[id] === KIND_WORKER) {
+          workers += 1
+          if (isHeldWorker(world, id)) statues += 1
+        } else if (world.kind[id] <= 2) army += 1
+      }
+      this.lastCountsWorld = world
+      this.lastCountsTick = world.tick
+      this.cachedWorkers = workers
+      this.cachedArmy = army
+      this.cachedStatues = statues
     }
     // Statues exist: pulse the Idle Workers button. It already selects
     // exactly these workers (STATE_IDLE + empty hands), so recovery is one
     // discoverable tap away — tap it, then Gather, and the squad works.
     this.idleBtn?.classList.toggle('tb-pulse', statues > 0)
-    if (this.infoEl) {
-      // Top strip carries VP only now: the old combined string (VP + Soul-Ash
-      // + horn charge) ellipsized into uselessness ("VP 1…") on a 412px
-      // phone. The extras live in the toolbar info row, where they fit.
-      this.infoEl.textContent = `VP ${Math.ceil(world.victoryPoints[TEAM_PLAYER])}`
-    }
-    if (this.armyEl) {
+    // Top strip carries VP only now: the old combined string (VP + Soul-Ash
+    // + horn charge) ellipsized into uselessness ("VP 1…") on a 412px
+    // phone. The extras live in the toolbar info row, where they fit.
+    this.setStripText(this.infoEl, 'info', `VP ${Math.ceil(world.victoryPoints[TEAM_PLAYER])}`)
+    {
       let armyText = `Workers ${workers} · Army ${army}`
       // Undead economy: show harvested Soul-Ash feeding the supply cap.
       if (world.factionOfTeam[TEAM_PLAYER] === 'undead') {
@@ -800,7 +849,7 @@ export class HudImpl implements Hud {
       if (charge > 0 || (world.rallyKind[TEAM_PLAYER] !== 0 && world.rallyUntil[TEAM_PLAYER] > world.matchTime)) {
         armyText += ` · 📯 ${charge}`
       }
-      this.armyEl.textContent = armyText
+      this.setStripText(this.armyEl, 'army', armyText)
     }
     this.updateActions(world, selected)
     this.updateBuildings(world)
@@ -811,6 +860,14 @@ export class HudImpl implements Hud {
   private updateBuildings(world: World): void {
     const el = this.buildingsEl
     if (!el) return
+    // Same tick-guard as the counts scan in update(): the pill key
+    // derives only from sim state, so a frame on an unchanged tick
+    // recomputes the identical key — skip the scan and the two fresh
+    // Map allocations per frame (perf pass 2026-10-27). The existing
+    // key comparison below still guards the DOM rebuild itself.
+    if (this.lastBuildingsWorld === world && this.lastBuildingsTick === world.tick) return
+    this.lastBuildingsWorld = world
+    this.lastBuildingsTick = world.tick
     // Count owned buildings by kind, and how many production ITEMS
     // (active slot + waiting queue) each kind has in production — the
     // pill badge (⏳N) must be readable without selecting anything.
