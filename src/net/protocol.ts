@@ -187,6 +187,11 @@ const CmdTag = {
   // both peers must run the same build — an older peer rejects the tag
   // loudly instead of desyncing silently.
   Research: 16,
+  // The building-targeted commands (Train / CancelTrain / Rally /
+  // Upgrade / Research) also gained a trailing commanding-team byte
+  // (ownership validation, tester H2) — same same-build rule applies:
+  // an older peer would misparse the longer payload, so mixed-build
+  // matches are excluded by the version handshake, as with tag 16.
 } as const
 type CmdTag = (typeof CmdTag)[keyof typeof CmdTag]
 
@@ -213,19 +218,19 @@ function cmdSize(cmd: Command): number {
     case 'build':
       return 1 + varintSize(cmd.workerId) + 1 + 4 + 4 + varintSize(cmd.siteId)
     case 'train':
-      return 1 + varintSize(cmd.buildingId) + 1
+      return 1 + varintSize(cmd.buildingId) + 1 + 1
     case 'cancelTrain':
-      return 1 + varintSize(cmd.buildingId) + 1
+      return 1 + varintSize(cmd.buildingId) + 1 + 1
     case 'rally':
-      return 1 + varintSize(cmd.buildingId) + 4 + 4
+      return 1 + varintSize(cmd.buildingId) + 4 + 4 + 1
     case 'surrender':
       return 1 + 1
     case 'militia':
       return 1 + 1
     case 'upgrade':
-      return 1 + varintSize(cmd.buildingId)
-    case 'research':
       return 1 + varintSize(cmd.buildingId) + 1
+    case 'research':
+      return 1 + varintSize(cmd.buildingId) + 1 + 1
     case 'warhorn':
       return 1 + 1 + 1
     case 'pvp-setup':
@@ -304,18 +309,24 @@ function writeCommand(view: DataView, o: number, cmd: Command): number {
       view.setUint8(o++, CmdTag.Train)
       o = writeVarint(view, o, cmd.buildingId)
       view.setUint8(o++, unitToByte(cmd.unit))
+      // Commanding team rides last (ownership validation at the apply
+      // layer). A team-less in-memory command encodes as team 0; every
+      // emitter sets the field, so the byte is authoritative on the wire.
+      view.setUint8(o++, cmd.team === 1 ? 1 : 0)
       return o
     case 'cancelTrain':
       view.setUint8(o++, CmdTag.CancelTrain)
       o = writeVarint(view, o, cmd.buildingId)
       // Index rides as index+1 in a u8: 0 = active item (-1), 1.. = queue index.
       view.setUint8(o++, cmd.index + 1)
+      view.setUint8(o++, cmd.team === 1 ? 1 : 0)
       return o
     case 'rally':
       view.setUint8(o++, CmdTag.Rally)
       o = writeVarint(view, o, cmd.buildingId)
       view.setFloat32(o, cmd.x, true); o += 4
       view.setFloat32(o, cmd.z, true); o += 4
+      view.setUint8(o++, cmd.team === 1 ? 1 : 0)
       return o
     case 'patrol':
       view.setUint8(o++, CmdTag.Patrol)
@@ -342,11 +353,13 @@ function writeCommand(view: DataView, o: number, cmd: Command): number {
     case 'upgrade':
       view.setUint8(o++, CmdTag.Upgrade)
       o = writeVarint(view, o, cmd.buildingId)
+      view.setUint8(o++, cmd.team === 1 ? 1 : 0)
       return o
     case 'research':
       view.setUint8(o++, CmdTag.Research)
       o = writeVarint(view, o, cmd.buildingId)
       view.setUint8(o++, upgradeToByte(cmd.upgrade))
+      view.setUint8(o++, cmd.team === 1 ? 1 : 0)
       return o
     case 'warhorn':
       view.setUint8(o++, CmdTag.WarHorn)
@@ -397,18 +410,21 @@ function readCommand(view: DataView, o: number): { cmd: Command; next: number } 
     case CmdTag.Train: {
       const b = readVarint(view, o); o = b.next
       const u = view.getUint8(o++)
-      return { cmd: { type: 'train', step: 0, buildingId: b.value, unit: byteToUnit(u) }, next: o }
+      const t = view.getUint8(o++)
+      return { cmd: { type: 'train', step: 0, buildingId: b.value, unit: byteToUnit(u), team: (t === 1 ? 1 : 0) as 0 | 1 }, next: o }
     }
     case CmdTag.CancelTrain: {
       const b = readVarint(view, o); o = b.next
       const i = view.getUint8(o++)
-      return { cmd: { type: 'cancelTrain', step: 0, buildingId: b.value, index: i - 1 }, next: o }
+      const t = view.getUint8(o++)
+      return { cmd: { type: 'cancelTrain', step: 0, buildingId: b.value, index: i - 1, team: (t === 1 ? 1 : 0) as 0 | 1 }, next: o }
     }
     case CmdTag.Rally: {
       const b = readVarint(view, o); o = b.next
       const x = view.getFloat32(o, true); o += 4
       const z = view.getFloat32(o, true); o += 4
-      return { cmd: { type: 'rally', step: 0, buildingId: b.value, x, z }, next: o }
+      const t = view.getUint8(o++)
+      return { cmd: { type: 'rally', step: 0, buildingId: b.value, x, z, team: (t === 1 ? 1 : 0) as 0 | 1 }, next: o }
     }
     case CmdTag.Patrol: {
       const u = readIds(view, o); o = u.next
@@ -434,12 +450,14 @@ function readCommand(view: DataView, o: number): { cmd: Command; next: number } 
     }
     case CmdTag.Upgrade: {
       const b = readVarint(view, o); o = b.next
-      return { cmd: { type: 'upgrade', step: 0, buildingId: b.value }, next: o }
+      const t = view.getUint8(o++)
+      return { cmd: { type: 'upgrade', step: 0, buildingId: b.value, team: (t === 1 ? 1 : 0) as 0 | 1 }, next: o }
     }
     case CmdTag.Research: {
       const b = readVarint(view, o); o = b.next
       const u = view.getUint8(o++)
-      return { cmd: { type: 'research', step: 0, buildingId: b.value, upgrade: byteToUpgrade(u) }, next: o }
+      const t = view.getUint8(o++)
+      return { cmd: { type: 'research', step: 0, buildingId: b.value, upgrade: byteToUpgrade(u), team: (t === 1 ? 1 : 0) as 0 | 1 }, next: o }
     }
     case CmdTag.WarHorn: {
       const t = view.getUint8(o++)

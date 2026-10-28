@@ -20,6 +20,22 @@ import { soundWarHorn } from '../systems/warhorn.ts'
 import { placeStructure } from '../world/construction.ts'
 import type { Command } from '../session/commands.ts'
 
+/**
+ * Ownership gate for building-targeted commands (train / cancelTrain /
+ * rally / upgrade / research): the command's commanding team must own
+ * the named building. The production functions derive their team FROM
+ * the building, so without this check a command naming an enemy
+ * building acted on it at the enemy's expense (research was the proven
+ * case, tester H2; the other four share the shape). A team-less
+ * command — only possible from a stored log recorded before the field
+ * existed; the wire always carries it — applies unchecked, preserving
+ * historical replay behavior. Refusal is this layer's usual silent
+ * skip, identical on both peers.
+ */
+function issuerOwnsBuilding(world: World, buildingId: number, team: 0 | 1 | undefined): boolean {
+  return team === undefined || world.team[buildingId] === team
+}
+
 export function applyCommand(world: World, cmd: Command): void {
   switch (cmd.type) {
     case 'move':
@@ -83,18 +99,18 @@ export function applyCommand(world: World, cmd: Command): void {
       break
     }
     case 'train':
-      if (world.entities.has(cmd.buildingId)) {
+      if (world.entities.has(cmd.buildingId) && issuerOwnsBuilding(world, cmd.buildingId, cmd.team)) {
         enqueueTrain(world, cmd.buildingId, cmd.unit)
       }
       break
     case 'cancelTrain':
-      if (world.entities.has(cmd.buildingId)) {
+      if (world.entities.has(cmd.buildingId) && issuerOwnsBuilding(world, cmd.buildingId, cmd.team)) {
         if (cmd.index < 0) cancelTrainActive(world, cmd.buildingId)
         else cancelTrainQueued(world, cmd.buildingId, cmd.index)
       }
       break
     case 'rally':
-      if (world.entities.has(cmd.buildingId)) {
+      if (world.entities.has(cmd.buildingId) && issuerOwnsBuilding(world, cmd.buildingId, cmd.team)) {
         setRally(world, cmd.buildingId, cmd.x, cmd.z)
       }
       break
@@ -117,13 +133,16 @@ export function applyCommand(world: World, cmd: Command): void {
       world.ringMilitiaBell(cmd.team)
       break
     case 'upgrade':
-      if (world.entities.has(cmd.buildingId)) upgradeBuilding(world, cmd.buildingId)
+      if (world.entities.has(cmd.buildingId) && issuerOwnsBuilding(world, cmd.buildingId, cmd.team)) {
+        upgradeBuilding(world, cmd.buildingId)
+      }
       break
     case 'research':
       // Validation (host building, finished, funds, level cap) lives in
       // researchUpgrade — never reimplemented here, so both peers
-      // accept or refuse identically.
-      if (world.entities.has(cmd.buildingId)) {
+      // accept or refuse identically. Ownership is checked here:
+      // researchUpgrade takes its team from the building itself.
+      if (world.entities.has(cmd.buildingId) && issuerOwnsBuilding(world, cmd.buildingId, cmd.team)) {
         researchUpgrade(world, cmd.buildingId, cmd.upgrade)
       }
       break

@@ -95,9 +95,9 @@ const sampleCommands: Command[] = [
   { type: 'attackmove', step: 0, unitIds: [4, 5], x: 0, z: 0 },
   { type: 'gather', step: 0, unitIds: [10, 11, 12, 13], nodeId: 500 },
   { type: 'build', step: 0, workerId: 3, building: 'barracks', x: -17.75, z: 33.125, siteId: 42 },
-  { type: 'train', step: 0, buildingId: 8, unit: 'ranged' },
-  { type: 'research', step: 0, buildingId: 8, upgrade: 'rangedDmg' },
-  { type: 'rally', step: 0, buildingId: 8, x: 100.5, z: -100.5 },
+  { type: 'train', step: 0, buildingId: 8, unit: 'ranged', team: 1 },
+  { type: 'research', step: 0, buildingId: 8, upgrade: 'rangedDmg', team: 0 },
+  { type: 'rally', step: 0, buildingId: 8, x: 100.5, z: -100.5, team: 1 },
   { type: 'patrol', step: 0, unitIds: [21], x: 1.5, z: 2.5 },
   { type: 'stop', step: 0, unitIds: [21, 22] },
   { type: 'hold', step: 0, unitIds: [23] },
@@ -141,8 +141,8 @@ test('fuzz: 500 random commands round-trip bit-exact', () => {
       case 'attackmove': cmd = { type: 'attackmove', step: 0, unitIds: ids, x, z }; break
       case 'gather': cmd = { type: 'gather', step: 0, unitIds: ids, nodeId: rng.integer(1, 2000) }; break
       case 'build': cmd = { type: 'build', step: 0, workerId: ids[0], building: buildings[rng.integer(0, 5)], x, z, siteId: rng.integer(0, 2000) }; break
-      case 'train': cmd = { type: 'train', step: 0, buildingId: ids[0], unit: units[rng.integer(0, 2)] }; break
-      case 'rally': cmd = { type: 'rally', step: 0, buildingId: ids[0], x, z }; break
+      case 'train': cmd = { type: 'train', step: 0, buildingId: ids[0], unit: units[rng.integer(0, 2)], team: (rng.integer(0, 1) === 1 ? 1 : 0) as 0 | 1 }; break
+      case 'rally': cmd = { type: 'rally', step: 0, buildingId: ids[0], x, z, team: (rng.integer(0, 1) === 1 ? 1 : 0) as 0 | 1 }; break
       case 'patrol': cmd = { type: 'patrol', step: 0, unitIds: ids, x, z }; break
     }
     // Float32 coordinate precision: compare against f32-rounded originals.

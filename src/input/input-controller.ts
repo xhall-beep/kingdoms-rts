@@ -930,7 +930,7 @@ export class InputControllerImpl implements InputController {
     if (this.mode === 'move') {
       if (this.selected.length === 1 && this.isProductionBuilding(world, this.selected[0])) {
         if (!this.deferred) setRally(world, this.selected[0], p.x, p.z)
-        this.emit({ type: 'rally', step: 0, buildingId: this.selected[0], x: p.x, z: p.z })
+        this.emit({ type: 'rally', step: 0, buildingId: this.selected[0], x: p.x, z: p.z, team: this.localTeam })
       } else {
         if (!this.deferred) for (const id of this.selected) orderMove(world, id, p.x, p.z)
         this.renderer?.pingMove(p.x, p.z)

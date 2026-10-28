@@ -25,24 +25,42 @@ export type Command =
       z: number
       siteId: number
     }
-  | { type: 'train'; step: number; buildingId: number; unit: UnitType }
+  /**
+   * Building-targeted commands (train / cancelTrain / rally / upgrade /
+   * research) carry the commanding `team` — the way militia and warhorn
+   * always did — and the apply paths refuse them when the named
+   * building belongs to the other team (ownership validation; without
+   * it a tampered PvP client could research / train / cancel / rally /
+   * upgrade at an ENEMY building, charging the enemy's treasury —
+   * tester H2). `team` is optional in the type only because command
+   * logs recorded before the field existed are plain JSON without it:
+   * every emitter sets it, the wire codec always carries it, and a
+   * missing team applies with historical (unchecked) behavior so old
+   * stored logs replay intact.
+   */
+  | { type: 'train'; step: number; buildingId: number; unit: UnitType; team?: 0 | 1 }
   /** Cancel production: index -1 = active item, >= 0 = queue index. */
-  | { type: 'cancelTrain'; step: number; buildingId: number; index: number }
-  | { type: 'rally'; step: number; buildingId: number; x: number; z: number }
+  | { type: 'cancelTrain'; step: number; buildingId: number; index: number; team?: 0 | 1 }
+  | { type: 'rally'; step: number; buildingId: number; x: number; z: number; team?: 0 | 1 }
   | { type: 'patrol'; step: number; unitIds: number[]; x: number; z: number }
   | { type: 'stop'; step: number; unitIds: number[] }
   | { type: 'hold'; step: number; unitIds: number[] }
   | { type: 'militia'; step: number; team: 0 | 1 }
-  | { type: 'upgrade'; step: number; buildingId: number }
+  | { type: 'upgrade'; step: number; buildingId: number; team?: 0 | 1 }
   /**
    * Research one ladder level at its home building (smithy / archery
    * range). Validation is centralized in researchUpgrade — the apply
    * paths call it, never reimplement it, so both peers (and replays)
-   * accept or refuse identically. Research used to be a direct local
-   * call from the HUD: unrecorded (replays silently diverged) and, in
-   * a lockstep match, a one-peer mutation of hashed state (desync).
+   * accept or refuse identically. The apply paths additionally check
+   * ownership (the commanding `team` above must own the building):
+   * researchUpgrade derives its team FROM the building, so without
+   * the check a command naming an enemy smithy researched for the
+   * enemy at the enemy's expense (tester H2). Research used to be a
+   * direct local call from the HUD: unrecorded (replays silently
+   * diverged) and, in a lockstep match, a one-peer mutation of hashed
+   * state (desync).
    */
-  | { type: 'research'; step: number; buildingId: number; upgrade: UpgradeType }
+  | { type: 'research'; step: number; buildingId: number; upgrade: UpgradeType; team?: 0 | 1 }
   | { type: 'warhorn'; step: number; team: 0 | 1; rally: 1 | 2 | 3 }
   | { type: 'surrender'; step: number; player: 0 | 1 }
   /**

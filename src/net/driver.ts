@@ -128,8 +128,8 @@ export class ScriptedDriver {
         // Queue melee units if the barracks finished.
         const rax = myBarracks(world, team)
         if (rax >= 0) {
-          out.push({ type: 'train', step: 0, buildingId: rax, unit: 'melee' })
-          out.push({ type: 'train', step: 0, buildingId: rax, unit: 'melee' })
+          out.push({ type: 'train', step: 0, buildingId: rax, unit: 'melee', team })
+          out.push({ type: 'train', step: 0, buildingId: rax, unit: 'melee', team })
         }
         // Reassign half the workers to wood for the war economy.
         const tree = nearestNode(world, hx, hz, KIND_TREE)

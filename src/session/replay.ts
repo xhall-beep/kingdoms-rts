@@ -20,6 +20,16 @@ import type { Command } from './commands.ts'
  * so it makes the same decisions automatically — only player commands are
  * stored and replayed.
  */
+/**
+ * Ownership gate for building-targeted commands — mirrors
+ * net/apply.ts (issuerOwnsBuilding) so a replayed command is refused
+ * under exactly the rules the live match applied. Team-less commands
+ * (logs recorded before the field existed) apply unchecked.
+ */
+function issuerOwnsBuilding(world: World, buildingId: number, team: 0 | 1 | undefined): boolean {
+  return team === undefined || world.team[buildingId] === team
+}
+
 export class ReplayPlayer {
   private readonly world: World
   private commands: Command[] = []
@@ -147,18 +157,18 @@ export class ReplayPlayer {
         break
       }
       case 'train':
-        if (world.entities.has(cmd.buildingId)) {
+        if (world.entities.has(cmd.buildingId) && issuerOwnsBuilding(world, cmd.buildingId, cmd.team)) {
           enqueueTrain(world, cmd.buildingId, cmd.unit)
         }
         break
       case 'cancelTrain':
-        if (world.entities.has(cmd.buildingId)) {
+        if (world.entities.has(cmd.buildingId) && issuerOwnsBuilding(world, cmd.buildingId, cmd.team)) {
           if (cmd.index < 0) cancelTrainActive(world, cmd.buildingId)
           else cancelTrainQueued(world, cmd.buildingId, cmd.index)
         }
         break
       case 'rally':
-        if (world.entities.has(cmd.buildingId)) {
+        if (world.entities.has(cmd.buildingId) && issuerOwnsBuilding(world, cmd.buildingId, cmd.team)) {
           setRally(world, cmd.buildingId, cmd.x, cmd.z)
         }
         break
@@ -166,10 +176,12 @@ export class ReplayPlayer {
         world.ringMilitiaBell(cmd.team)
         break
       case 'upgrade':
-        if (world.entities.has(cmd.buildingId)) upgradeBuilding(world, cmd.buildingId)
+        if (world.entities.has(cmd.buildingId) && issuerOwnsBuilding(world, cmd.buildingId, cmd.team)) {
+          upgradeBuilding(world, cmd.buildingId)
+        }
         break
       case 'research':
-        if (world.entities.has(cmd.buildingId)) {
+        if (world.entities.has(cmd.buildingId) && issuerOwnsBuilding(world, cmd.buildingId, cmd.team)) {
           researchUpgrade(world, cmd.buildingId, cmd.upgrade)
         }
         break

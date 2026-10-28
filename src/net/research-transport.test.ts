@@ -130,28 +130,28 @@ test('research + train + cancel over the wire: zero desyncs, identical end state
     const t1 = peers[1].getCurrentTurn()
     if (!issued0a && t0 >= 2) {
       issued0a = true
-      peers[0].queueCommand({ type: 'research', step: 0, buildingId: s.smithy0, upgrade: 'meleeDmg' })
-      peers[0].queueCommand({ type: 'train', step: 0, buildingId: s.barracks0, unit: 'melee' })
-      peers[0].queueCommand({ type: 'train', step: 0, buildingId: s.barracks0, unit: 'melee' })
+      peers[0].queueCommand({ type: 'research', step: 0, buildingId: s.smithy0, team: 0, upgrade: 'meleeDmg' })
+      peers[0].queueCommand({ type: 'train', step: 0, buildingId: s.barracks0, unit: 'melee', team: 0})
+      peers[0].queueCommand({ type: 'train', step: 0, buildingId: s.barracks0, unit: 'melee', team: 0})
     }
     if (!issued0b && t0 >= 8) {
       issued0b = true
       // Cancel the still-queued second melee (the first is training).
-      peers[0].queueCommand({ type: 'cancelTrain', step: 0, buildingId: s.barracks0, index: 0 })
-      peers[0].queueCommand({ type: 'research', step: 0, buildingId: s.range0, upgrade: 'rangedDmg' })
+      peers[0].queueCommand({ type: 'cancelTrain', step: 0, buildingId: s.barracks0, index: 0, team: 0})
+      peers[0].queueCommand({ type: 'research', step: 0, buildingId: s.range0, team: 0, upgrade: 'rangedDmg' })
       peers[0].queueCommand({ type: 'militia', step: 0, team: 0 })
       peers[0].queueCommand({ type: 'warhorn', step: 0, team: 0, rally: 1 })
-      peers[0].queueCommand({ type: 'upgrade', step: 0, buildingId: s.barracks0 })
+      peers[0].queueCommand({ type: 'upgrade', step: 0, buildingId: s.barracks0, team: 0 })
     }
     if (!issued1a && t1 >= 4) {
       issued1a = true
-      peers[1].queueCommand({ type: 'research', step: 0, buildingId: s.smithy1, upgrade: 'meleeHp' })
-      peers[1].queueCommand({ type: 'train', step: 0, buildingId: s.barracks1, unit: 'ranged' })
+      peers[1].queueCommand({ type: 'research', step: 0, buildingId: s.smithy1, team: 1, upgrade: 'meleeHp' })
+      peers[1].queueCommand({ type: 'train', step: 0, buildingId: s.barracks1, unit: 'ranged', team: 1})
     }
     if (!issued1b && t1 >= 10) {
       issued1b = true
       // Cancel team 1's active train outright.
-      peers[1].queueCommand({ type: 'cancelTrain', step: 0, buildingId: s.barracks1, index: -1 })
+      peers[1].queueCommand({ type: 'cancelTrain', step: 0, buildingId: s.barracks1, index: -1, team: 1})
     }
   }
 
@@ -214,11 +214,11 @@ test('apply ledger: research + train + queued-cancel charges are exact', () => {
   const s = stageTech(w)
   const gold0 = w.gold[TEAM_PLAYER]
   const wood0 = w.wood[TEAM_PLAYER]
-  applyCommand(w, { type: 'research', step: 0, buildingId: s.smithy0, upgrade: 'meleeDmg' })
-  applyCommand(w, { type: 'train', step: 0, buildingId: s.barracks0, unit: 'melee' })
-  applyCommand(w, { type: 'train', step: 0, buildingId: s.barracks0, unit: 'melee' })
-  applyCommand(w, { type: 'cancelTrain', step: 0, buildingId: s.barracks0, index: 0 })
-  applyCommand(w, { type: 'research', step: 0, buildingId: s.range0, upgrade: 'rangedDmg' })
+  applyCommand(w, { type: 'research', step: 0, buildingId: s.smithy0, team: 0, upgrade: 'meleeDmg' })
+  applyCommand(w, { type: 'train', step: 0, buildingId: s.barracks0, unit: 'melee', team: 0})
+  applyCommand(w, { type: 'train', step: 0, buildingId: s.barracks0, unit: 'melee', team: 0})
+  applyCommand(w, { type: 'cancelTrain', step: 0, buildingId: s.barracks0, index: 0, team: 0})
+  applyCommand(w, { type: 'research', step: 0, buildingId: s.range0, team: 0, upgrade: 'rangedDmg' })
   const spend =
     researchCost(w, TEAM_PLAYER, 'meleeDmg').gold +
     researchCost(w, TEAM_PLAYER, 'rangedDmg').gold +
@@ -243,7 +243,7 @@ test('invalid research refuses identically on both peers (wrong host, no funds)'
   const hallA = findHall(a, TEAM_PLAYER)
   const hallB = findHall(b, TEAM_PLAYER)
   assertEqual(hallA, hallB, 'identical worlds, identical hall id')
-  const bad: Command = { type: 'research', step: 0, buildingId: hallA, upgrade: 'meleeDmg' }
+  const bad: Command = { type: 'research', step: 0, buildingId: hallA, upgrade: 'meleeDmg', team: 0}
   applyCommand(a, bad)
   applyCommand(b, bad)
   assertEqual(a.meleeDmgLvl[TEAM_PLAYER], 0, 'wrong-host research refused (a)')
@@ -255,7 +255,7 @@ test('invalid research refuses identically on both peers (wrong host, no funds)'
   const sb = stageTech(b)
   a.gold[TEAM_PLAYER] = 10
   b.gold[TEAM_PLAYER] = 10
-  const broke: Command = { type: 'research', step: 0, buildingId: sa.smithy0, upgrade: 'meleeDmg' }
+  const broke: Command = { type: 'research', step: 0, buildingId: sa.smithy0, team: 0, upgrade: 'meleeDmg' }
   applyCommand(a, broke)
   applyCommand(b, { ...broke, buildingId: sb.smithy0 })
   assertEqual(a.meleeDmgLvl[TEAM_PLAYER], 0, 'unaffordable research refused (a)')
@@ -271,7 +271,7 @@ test('unknown upgrade byte is rejected loudly, not silently desynced', () => {
     player: 0,
     commands: [{ type: 'research', step: 0, buildingId: 8, upgrade: 'meleeDmg' }],
   })
-  bytes[bytes.length - 1] = 0xff // corrupt the upgrade byte
+  bytes[bytes.length - 2] = 0xff // corrupt the upgrade byte (the trailing byte is the commanding team)
   let threw = false
   try {
     decodeMessage(bytes)
@@ -299,10 +299,10 @@ test('a recorded match with research + archer training replays to the identical 
   for (let i = 0; i < STEPS; i += 1) {
     if (i === AT) {
       if (researchUpgrade(live, ls.smithy0, 'meleeDmg')) {
-        log.record({ type: 'research', step: AT, buildingId: ls.smithy0, upgrade: 'meleeDmg' })
+        log.record({ type: 'research', step: AT, buildingId: ls.smithy0, upgrade: 'meleeDmg', team: 0})
       }
       if (enqueueTrain(live, ls.barracks0, 'ranged')) {
-        log.record({ type: 'train', step: AT, buildingId: ls.barracks0, unit: 'ranged' })
+        log.record({ type: 'train', step: AT, buildingId: ls.barracks0, unit: 'ranged', team: 0})
       }
     }
     live.update(STEP)

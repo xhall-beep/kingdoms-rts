@@ -430,6 +430,7 @@ export function initializeGame(): GameComposition {
           step: composition.engine.getSimulationSteps(),
           buildingId,
           upgrade: type as UpgradeType,
+          team: composition.inputController.getLocalTeam(),
         },
         () => researchUpgrade(world, buildingId, type as UpgradeType),
       )
@@ -445,6 +446,7 @@ export function initializeGame(): GameComposition {
           step: composition.engine.getSimulationSteps(),
           buildingId,
           unit: type,
+          team: composition.inputController.getLocalTeam(),
         },
         () => enqueueTrain(world, buildingId, type),
       )
@@ -467,6 +469,7 @@ export function initializeGame(): GameComposition {
           step: composition.engine.getSimulationSteps(),
           buildingId,
           index,
+          team: composition.inputController.getLocalTeam(),
         },
         () => (index < 0
           ? cancelTrainActive(world, buildingId)
@@ -493,6 +496,7 @@ export function initializeGame(): GameComposition {
           type: 'upgrade',
           step: composition.engine.getSimulationSteps(),
           buildingId,
+          team: composition.inputController.getLocalTeam(),
         },
         () => upgradeBuilding(world, buildingId),
       )

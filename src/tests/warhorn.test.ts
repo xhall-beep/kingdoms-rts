@@ -11,6 +11,7 @@ import {
   WarHornSystemImpl,
   soundWarHorn,
   chargeWarHorn,
+  warChargeAtLeast,
   rallyDamageMult,
   rallySpeedMult,
 } from '../systems/warhorn.ts'
@@ -117,6 +118,82 @@ test('warhorn command round-trips through the net protocol', async () => {
   const cmds = (decoded as { commands: { type: string; team: number; rally: number }[] }).commands
   assertEqual(cmds[0].type, 'warhorn', 'command type survives')
   assertEqual(cmds[0].rally, 2, 'rally kind survives')
+})
+
+suite('warhorn: threshold tolerance (tester E2)')
+
+test('1000 single-damage charges can fire the horn', () => {
+  // Tester E2 repro: charge accumulated as damage * 0.05 in a float made
+  // 1000 x 1-damage charges sum to 49.9999999999993 < HORN_COST (50), so
+  // a side that dealt exactly 1000 damage in 1-damage increments could
+  // not fire while lump charges landed at exactly 50. The stored sum is
+  // still dusty (accumulation arithmetic is untouched, so hashed state
+  // evolves bit-identically) — the fix is that the threshold comparison
+  // tolerates the dust.
+  const world = makeWorld()
+  for (let i = 0; i < 1000; i += 1) chargeWarHorn(world, TEAM_PLAYER, 1)
+  assert(
+    Math.abs(world.warCharge[TEAM_PLAYER] - 50) < 1e-6,
+    `stored charge is 50 within dust, got ${world.warCharge[TEAM_PLAYER]}`,
+  )
+  assert(soundWarHorn(world, TEAM_PLAYER, 1), 'the horn fires at exactly 1000 damage dealt')
+  assertEqual(world.warCharge[TEAM_PLAYER], 0, 'the spend leaves no negative dust residue')
+})
+
+test('equal total damage fires identically across sequences', () => {
+  const bySingles = makeWorld()
+  for (let i = 0; i < 1000; i += 1) chargeWarHorn(bySingles, TEAM_PLAYER, 1)
+  const byFifties = makeWorld()
+  for (let i = 0; i < 20; i += 1) chargeWarHorn(byFifties, TEAM_PLAYER, 50)
+  const byLump = makeWorld()
+  chargeWarHorn(byLump, TEAM_PLAYER, 1000)
+  const byMixed = makeWorld()
+  for (let i = 0; i < 500; i += 1) chargeWarHorn(byMixed, TEAM_PLAYER, 1)
+  for (let i = 0; i < 10; i += 1) chargeWarHorn(byMixed, TEAM_PLAYER, 50)
+  const byFractional = makeWorld()
+  for (let i = 0; i < 80; i += 1) chargeWarHorn(byFractional, TEAM_PLAYER, 12.5)
+  for (const [name, w] of [['singles', bySingles], ['fifties', byFifties], ['lump', byLump], ['mixed', byMixed], ['fractional', byFractional]] as const) {
+    assert(warChargeAtLeast(w, TEAM_PLAYER, 50), `${name}: 1000 total damage meets the threshold`)
+    assert(soundWarHorn(w, TEAM_PLAYER, 1), `${name}: the horn fires`)
+  }
+})
+
+test('just below the threshold still cannot fire (tolerance does not over-promote)', () => {
+  const singles = makeWorld()
+  for (let i = 0; i < 999; i += 1) chargeWarHorn(singles, TEAM_PLAYER, 1)
+  assert(!warChargeAtLeast(singles, TEAM_PLAYER, 50), '999 damage does not meet the threshold')
+  assert(!soundWarHorn(singles, TEAM_PLAYER, 1), '999 damage cannot fire')
+  const long = makeWorld()
+  for (let i = 0; i < 900; i += 1) chargeWarHorn(long, TEAM_PLAYER, 1)
+  assert(!soundWarHorn(long, TEAM_PLAYER, 1), 'a long sub-threshold accumulation cannot fire either')
+})
+
+test('warChargeAtLeast agrees at the AI firing floors (50 and 100)', () => {
+  const world = makeWorld()
+  for (let i = 0; i < 1000; i += 1) chargeWarHorn(world, TEAM_PLAYER, 1)
+  assert(warChargeAtLeast(world, TEAM_PLAYER, 50), 'dusty 50 meets the 50 floor')
+  assert(!warChargeAtLeast(world, TEAM_PLAYER, 100), 'dusty 50 does not meet the 100 floor')
+  const full = makeWorld()
+  for (let i = 0; i < 2000; i += 1) chargeWarHorn(full, TEAM_PLAYER, 1)
+  assert(warChargeAtLeast(full, TEAM_PLAYER, 100), '2000 singles meet the full-meter floor')
+})
+
+test('sounding then recharging in singles fires twice', () => {
+  const world = makeWorld()
+  for (let i = 0; i < 1000; i += 1) chargeWarHorn(world, TEAM_PLAYER, 1)
+  assert(soundWarHorn(world, TEAM_PLAYER, 2), 'first horn fires')
+  assertEqual(world.warCharge[TEAM_PLAYER], 0, 'charge fully spent')
+  stepWorld(world, 1300) // let the rally expire
+  for (let i = 0; i < 1000; i += 1) chargeWarHorn(world, TEAM_PLAYER, 1)
+  assert(soundWarHorn(world, TEAM_PLAYER, 2), 'second horn fires on the recharged meter')
+})
+
+test('cap and lump behavior unchanged', () => {
+  const world = makeWorld()
+  chargeWarHorn(world, TEAM_PLAYER, 1000)
+  assertEqual(world.warCharge[TEAM_PLAYER], 50, 'one lump of 1000 damage = exactly 50 (float-exact)')
+  chargeWarHorn(world, TEAM_PLAYER, 3000)
+  assertEqual(world.warCharge[TEAM_PLAYER], 100, 'still capped at 100')
 })
 
 test('war horn state survives save/load', async () => {

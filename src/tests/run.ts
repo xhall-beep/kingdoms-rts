@@ -56,6 +56,7 @@ import '../net/ws-link.test.ts'
 import '../net/pvp-setup.test.ts'
 import '../net/pvp-ai.test.ts'
 import '../net/research-transport.test.ts'
+import '../net/apply-ownership.test.ts'
 import '../net/client.test.ts'
 import './pvp-lobby-queue.test.ts'
 const ok = report()

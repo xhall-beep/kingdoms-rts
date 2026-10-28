@@ -28,7 +28,7 @@ import { orderBuild, orderGather } from '../systems/gather.ts'
 import { BUILD_RING_OFFSETS } from '../core/Math.ts'
 import { orderAttackMove } from '../systems/combat.ts'
 import { orderMove } from '../systems/movement.ts'
-import { HORN_COST, RALLY_NONE, soundWarHorn } from '../systems/warhorn.ts'
+import { HORN_COST, RALLY_NONE, soundWarHorn, warChargeAtLeast } from '../systems/warhorn.ts'
 import { CAPTURE_RADIUS } from '../systems/shrines.ts'
 import { enqueueTrain, researchCost, researchUpgrade, trainingQueueFor, upgradeBuilding } from '../systems/production.ts'
 import { UPGRADES, type UpgradeType } from '../data/upgrades.ts'
@@ -470,7 +470,7 @@ export class OpponentAI implements System {
 
   private emitTrain(world: World, buildingId: number, unit: UnitType): void {
     if (this.sink) {
-      this.sink({ type: 'train', step: 0, buildingId, unit })
+      this.sink({ type: 'train', step: 0, buildingId, unit, team: this.team })
     } else {
       enqueueTrain(world, buildingId, unit)
     }
@@ -1296,7 +1296,7 @@ export class OpponentAI implements System {
    */
   private soundWarHornStep(world: World, hall: number, soldiers: number[], defended: boolean): void {
     const team = this.team
-    if (world.warCharge[team] < HORN_COST) return
+    if (!warChargeAtLeast(world, team, HORN_COST)) return
     // A buff rally is already sounding: soundWarHorn would refuse, so
     // don't spend the decision. (Second Wind sets no rallyKind and
     // never blocks.)
@@ -1376,7 +1376,7 @@ export class OpponentAI implements System {
       return
     }
 
-    if (world.warCharge[team] >= profile.fireCharge) {
+    if (warChargeAtLeast(world, team, profile.fireCharge)) {
       // Second Wind: the perishable window — damaged-but-alive bodies,
       // enough of them that a 30% heal outvalues a buff.
       if (engagedCount >= HORN_WIND_MIN_BODIES && ownFrac <= profile.windHp) {
