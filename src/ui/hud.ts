@@ -448,29 +448,16 @@ export class HudImpl implements Hud {
     }
     // PvP lobby
     this.pvpLobby = new PvPLobby()
-    const bannerEl = parent.querySelector<HTMLElement>('#hud-banner')
     this.pvpLobby.mount(parent, {
       onMatchStart: (slot: 0 | 1, opponentName: string) => {
-        if (bannerEl) {
-          bannerEl.textContent = `Matched vs ${opponentName}! You are Player ${slot + 1}`
-          bannerEl.hidden = false
-          setTimeout(() => { bannerEl.hidden = true }, 5000)
-        }
+        this.showBanner(`Matched vs ${opponentName}! You are Player ${slot + 1}`, 5000)
         this.callbacks?.onPvPMatchStart?.(slot, opponentName, this.pvpLobby?.getClient() ?? null, this.pvpLobby?.opponentId, this.pvpLobby?.matchCredentials.matchId, this.pvpLobby?.matchCredentials.secret, this.pvpLobby?.ratingAtMatchStart)
       },
       onError: (msg: string) => {
-        if (bannerEl) {
-          bannerEl.textContent = msg
-          bannerEl.hidden = false
-          setTimeout(() => { bannerEl.hidden = true }, 3000)
-        }
+        this.showBanner(msg, 3000)
       },
       onPracticeStart: (tier: AiPracticeTier) => {
-        if (bannerEl) {
-          bannerEl.textContent = `Practice vs AI starting...`
-          bannerEl.hidden = false
-          setTimeout(() => { bannerEl.hidden = true }, 3000)
-        }
+        this.showBanner(`Practice vs AI starting...`, 3000)
         this.callbacks?.onPracticeVsAi?.(tier)
       },
     })
@@ -592,20 +579,32 @@ export class HudImpl implements Hud {
     this.update(world, [])
   }
 
-  /** The Three Bells: announce each bell once via the HUD banner when it rings. */
   private announcedBells = [false, false, false]
+  /** Deadline (performance.now) of the transient banner message that
+   * currently owns the banner lane, if any. updateBanner respects the
+   * lease; victory/defeat outranks it. */
+  private bannerLeaseUntil = 0
+
+  /** Show a transient message in the banner lane (bells, PvP match
+   * events). Before the lease existed, updateBanner — which runs later
+   * in the same update() — hid the banner in the very frame one of
+   * these writers showed it, so transient banners never displayed. */
+  private showBanner(text: string, ms: number): void {
+    const el = this.bannerEl
+    if (!el) return
+    el.textContent = text
+    el.className = 'hud-banner'
+    el.hidden = false
+    this.bannerLeaseUntil = performance.now() + ms
+  }
+
+  /** The Three Bells: announce each bell once via the HUD banner when it rings. */
   private announceBells(world: World): void {
     const names = ['🔔 First Bell — the Raid Bell', '🔔 Second Bell — the Turn', '🔔 Third Bell — the War Bell']
     for (let i = 0; i < 3; i += 1) {
       if (world.bellsRung[i] === 1 && !this.announcedBells[i]) {
         this.announcedBells[i] = true
-        if (this.bannerEl) {
-          this.bannerEl.textContent = names[i]
-          this.bannerEl.hidden = false
-          setTimeout(() => {
-            if (this.bannerEl) this.bannerEl.hidden = true
-          }, 4000)
-        }
+        this.showBanner(names[i], 4000)
         try {
           if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate(80)
         } catch { /* noop */ }
@@ -678,6 +677,7 @@ export class HudImpl implements Hud {
       }
     }
     if (!this.alertEl) return
+    this.syncAlertLane()
     const key = this.alertChip === null ? '' : this.alertChip.kind
     if (key === this.lastAlertKey) return
     this.lastAlertKey = key
@@ -689,6 +689,28 @@ export class HudImpl implements Hud {
       this.alertEl.hidden = false
       this.alertEl.textContent = ALERT_TEXT[this.alertChip.kind]
       this.alertEl.className = `hud-alert hud-alert-${this.alertChip.kind}`
+    }
+  }
+
+  private alertLaneApplied = -1
+  private pvpStatusEl: HTMLElement | null = null
+
+  /** The chip's lane yields to whatever else owns the top centre: the
+   * banner (top 52, ~50 tall) first, then the PvP status line (top
+   * 104, ~38 tall). With the banner lease in place the two can truly
+   * coincide (a bell ringing out mid-attack), and sharing the 56px
+   * lane stacked them on the same pixels. Written only on change. */
+  private syncAlertLane(): void {
+    if (!this.alertEl) return
+    if (!this.pvpStatusEl && typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+      this.pvpStatusEl = document.querySelector<HTMLElement>('#hud-pvp-status')
+    }
+    const bannerShown = this.bannerEl !== null && !this.bannerEl.hidden
+    const statusShown = this.pvpStatusEl !== null && !this.pvpStatusEl.hidden
+    const top = statusShown ? 148 : bannerShown ? 110 : 56
+    if (top !== this.alertLaneApplied) {
+      this.alertLaneApplied = top
+      if (this.alertEl.style) this.alertEl.style.top = `${top}px`
     }
   }
 
@@ -826,6 +848,11 @@ export class HudImpl implements Hud {
       btn.addEventListener('click', () => this.callbacks?.onSelectBuilding(k))
       el.appendChild(btn)
     }
+    // Scroll affordance: when the pills overflow the row, the CSS fade
+    // on the right edge marks that more pills exist off-screen (the
+    // scrollbar is hidden by design). A rebuild is the only moment the
+    // content width can change, so the check rides it.
+    el.classList.toggle('tb-scrollable', el.scrollWidth > el.clientWidth + 1)
   }
 
   /** Rebuild the contextual info + action panel when the selection changes. */
@@ -898,13 +925,19 @@ export class HudImpl implements Hud {
   private updateBanner(world: World): void {
     const el = this.bannerEl
     if (!el) return
-    if (world.winner === -1) {
-      el.hidden = true
+    if (world.winner !== -1) {
+      this.bannerLeaseUntil = 0
+      el.hidden = false
+      el.textContent = world.winner === 0 ? 'Victory!' : 'Defeat'
+      el.className = 'hud-banner ' + (world.winner === 0 ? 'hud-win' : 'hud-lose')
       return
     }
-    el.hidden = false
-    el.textContent = world.winner === 0 ? 'Victory!' : 'Defeat'
-    el.className = 'hud-banner ' + (world.winner === 0 ? 'hud-win' : 'hud-lose')
+    // A transient announcement (bell / PvP match message) owns the lane
+    // until its lease lapses; this method used to hide the banner in
+    // the same frame announceBells showed it, so bell banners were
+    // written but never displayed.
+    if (performance.now() < this.bannerLeaseUntil) return
+    el.hidden = true
   }
 }
 

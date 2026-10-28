@@ -433,7 +433,10 @@ code {
   background: rgba(20, 24, 34, 0.92);
   border: 1px solid rgba(255, 243, 212, 0.35);
   border-radius: 999px;
-  padding: 8px 18px;
+  /* 11px vertical padding puts the chip at 47px tall — the 44px
+   * touch floor (it is a tap-to-jump button) — without moving its
+   * lane: the box grows around the same centre line. */
+  padding: 11px 18px;
   white-space: nowrap;
   pointer-events: auto;
   cursor: pointer;
@@ -457,7 +460,11 @@ code {
 
 @keyframes hud-alert-pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.55; }
+  /* The pulse floor was 0.55: at the dip the whole chip — text
+   * included — washed out against the terrain (audit frames caught
+   * it mid-dip twice). 0.85 still pulses; the alert stays readable
+   * through the whole cycle. */
+  50% { opacity: 0.85; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -504,7 +511,10 @@ code {
   color: #fff3d4;
   font-size: 18px;
   line-height: 1;
-  min-width: 40px;
+  /* 44px touch floor (was 40 wide / 44 tall). Worst-case strip stats
+   * (4-digit gold/wood, Sup 24/16, VP 640) leave ~9px slack at 44px,
+   * and the stats segment ellipsizes before a button can clip. */
+  min-width: 44px;
   min-height: 44px;
   padding: 0;
   display: flex;
@@ -528,7 +538,7 @@ code {
 .hud-strip .hud-pause-btn {
   order: 4;
   flex: 0 0 auto;
-  min-width: 40px;
+  min-width: 44px;
   min-height: 44px;
   margin: 0;
   padding: 0;
@@ -691,7 +701,9 @@ code {
 .tb-danger {
   background: #5b1f1f;
   border-color: rgba(239, 68, 68, 0.5);
-  flex: 0 0 42px;
+  /* 44px touch floor (was 42); the 2px comes out of the flex middle
+   * (Idle/Base), whose cells stay identical across states. */
+  flex: 0 0 44px;
   font-size: 18px;
 }
 
@@ -795,6 +807,15 @@ code {
   pointer-events: none;
   white-space: nowrap;
   z-index: 25;
+  /* The plain announcement state (bells, PvP match messages) had no
+   * colors of its own — only .hud-win/.hud-lose style it — so it
+   * inherited the scaffold body text color and rendered as faint
+   * grey-purple text straight on the terrain the first time the
+   * banner lease made it visible. Give it the alert chip's pill:
+   * dark ground, banner-cream text. Win/lose still override. */
+  background: rgba(20, 24, 34, 0.92);
+  color: #fff3d4;
+  border: 1px solid rgba(255, 243, 212, 0.35);
 }
 
 .hud-banner[hidden] {
@@ -894,6 +915,14 @@ code {
 .hud-buildings::-webkit-scrollbar {
   display: none;
 }
+/* Overflow affordance (class set by updateBuildings when the pills
+ * actually overflow): the last pill fades at the right edge instead
+ * of clipping hard against the screen edge, so the row reads as
+ * scrollable. No geometry change; non-overflowing rows are untouched. */
+.hud-buildings.tb-scrollable {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - 22px), transparent 100%);
+}
 .hud-building {
   background: rgba(43, 32, 16, 0.7);
   border-color: rgba(255, 200, 100, 0.25);
@@ -933,10 +962,10 @@ code {
 .cmd-btn:active{background:#1f5a4c}
 .cmd-btn:disabled{opacity:0.35;cursor:default}
 .cmd-btn-label{line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.cmd-btn-sub{font-size:10px;color:rgba(245,197,66,0.8);font-weight:400;line-height:1.1;white-space:nowrap}
+.cmd-btn-sub{font-size:10px;color:rgba(245,197,66,0.8);font-weight:400;line-height:1.1;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .cmd-grid-build{flex-wrap:wrap;gap:8px}
 .cmd-grid-build .cmd-btn{flex:0 0 calc(25% - 6px)}
-.cmd-btn-note{font-size:9px;font-weight:600;color:#f2b25c;line-height:1.15;white-space:nowrap;min-height:11px}
+.cmd-btn-note{font-size:9px;font-weight:600;color:#f2b25c;line-height:1.15;white-space:nowrap;min-height:11px;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 /* Training row on a production building's card: name + countdown on
  * one line, the progress bar under it (cmd-hpbar geometry), then the
  * queue row when a queue exists. Bar + seconds live on the ACTIVE item
@@ -950,9 +979,18 @@ code {
  * (same text geometry as the read-only label), and queue runs are
  * tappable chips that keep the row compact at the 8-item cap. */
 .cmd-train-cancel{background:none;border:none;padding:0;cursor:pointer;text-align:left}
+/* Hit-area expansion for the queue chips (no layout change): at 19px
+ * tall they sit under the 44px touch floor, so an invisible ::after
+ * band gives each chip a 45px target. Hit-tested in the audit
+ * harness: the band above a chip resolves to the chip. (The same
+ * trick was measured USELESS on the 14px cancel label above — the
+ * statline wins its upper band and the chips win the lower — so the
+ * label keeps its raw box; growing it is a layout call, flagged for
+ * the visual gate.) */
 .cmd-train-chips{display:flex;align-items:center;gap:4px;flex-wrap:wrap;white-space:normal;overflow:visible;text-overflow:clip}
 .cmd-train-chiphead{font-size:11px;color:rgba(255,243,212,0.75)}
-.cmd-train-chip{pointer-events:auto;cursor:pointer;background:#143c32;border:1px solid rgba(245,197,66,0.45);color:#fff3d4;border-radius:999px;padding:2px 8px;font:inherit;font-size:11px;line-height:1.2}
+.cmd-train-chip{pointer-events:auto;cursor:pointer;background:#143c32;border:1px solid rgba(245,197,66,0.45);color:#fff3d4;border-radius:999px;padding:2px 8px;font:inherit;font-size:11px;line-height:1.2;position:relative}
+.cmd-train-chip::after{content:'';position:absolute;inset:-13px 0}
 .cmd-train-chip:active{background:#1f5a4c}
 
 /* PvP Lobby */
@@ -982,6 +1020,28 @@ code {
   max-width: 90vw;
   color: #fff;
   text-align: center;
+}
+
+/* The panel title inherits the scaffold h2 color (--text-h, near
+ * black) — on the dark panel it rendered at rgb(8,6,13) on #1a1a2e,
+ * effectively invisible (audit frame). Pin it to the lobby palette. */
+.pvp-lobby-panel h2 {
+  color: #fff3d4;
+}
+
+/* One touch floor for the whole panel: the plain hud-pill buttons
+ * (Close, queue Cancel) sized to their text at ~31px tall while every
+ * sibling action (hud-mode) is 44px. */
+.pvp-lobby .hud-pill {
+  min-height: 44px;
+}
+
+/* Hidden must win over .pvp-row's flex display (the codebase's
+ * standing fix pattern): without this the code-share row rendered —
+ * "Share this code: / Waiting for opponent..." — before any room
+ * existed. */
+.pvp-row[hidden] {
+  display: none !important;
 }
 .pvp-lobby-panel h2 { margin: 0 0 16px 0; }
 .pvp-row { margin: 12px 0; display: flex; gap: 8px; justify-content: center; align-items: center; flex-wrap: wrap; }
