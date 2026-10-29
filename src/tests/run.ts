@@ -60,6 +60,7 @@ import '../net/research-transport.test.ts'
 import '../net/apply-ownership.test.ts'
 import '../net/client.test.ts'
 import './pvp-lobby-queue.test.ts'
+import './combat-motion.test.ts'
 const ok = report()
 const _p = (globalThis as unknown as { process?: { exit(c: number): void } }).process
 if (_p) _p.exit(ok ? 0 : 1)

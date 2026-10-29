@@ -21,6 +21,13 @@ import {
   isBuildingKind,
 } from '../core/World'
 import { FOG_UNEXPLORED, FOG_VISIBLE } from '../world/fog.ts'
+import {
+  LUNGE_AMPLITUDE,
+  LUNGE_DURATION,
+  lungeProgress,
+  squashFactors,
+  strikeJustFired,
+} from './motion.ts'
 import { getSprite } from './sprites.ts'
 import type { FogGrid } from '../world/fog.ts'
 import { canSee } from '../world/visibility.ts'
@@ -132,6 +139,15 @@ export class Renderer {
   private viewTeam: 0 | 1 = 0
   /** Hit flashes: entity id -> age in seconds (visual-only, real-time). */
   private hitFlashes = new Map<number, number>()
+  /**
+   * Attack lunges: melee striker id -> world-space unit direction + age
+   * in seconds (visual-only, real-time). Set when the striker's cooldown
+   * jumps up between renders — the sim's strike signature — and aged
+   * out after LUNGE_DURATION. Never sim state, never hashed.
+   */
+  private lunges = new Map<number, { ux: number; uz: number; age: number }>()
+  /** Last seen melee cooldown per entity, for strike detection. */
+  private prevCooldown = new Map<number, number>()
   /** Death pops being animated (visual-only, real-time). */
   private deathPops: DeathPop[] = []
   /** Last loss-sfx time (performance.now), throttled so mass deaths stay quiet. */
@@ -299,6 +315,48 @@ export class Renderer {
       const oldest = this.hitFlashes.keys().next().value
       if (oldest === undefined) break
       this.hitFlashes.delete(oldest)
+    }
+    // Combat motion (visual-only): age out old lunges, drop motion state
+    // for recycled ids, and detect fresh melee strikes from cooldown
+    // resets. Direction is toward the strike target when known, else
+    // the striker's movement direction; with neither, no lunge.
+    for (const [id, lunge] of this.lunges) {
+      if (!world.entities.has(id)) this.lunges.delete(id)
+      else {
+        lunge.age += dtSeconds
+        if (lunge.age >= LUNGE_DURATION) this.lunges.delete(id)
+      }
+    }
+    for (const id of this.prevCooldown.keys()) {
+      if (!world.entities.has(id)) this.prevCooldown.delete(id)
+    }
+    for (const id of world.entities.keys()) {
+      if (world.kind[id] !== KIND_MELEE) continue
+      const current = world.cooldown[id]
+      const prev = this.prevCooldown.get(id)
+      if (strikeJustFired(prev, current)) {
+        let ux = 0
+        let uz = 0
+        const target = world.targetId[id]
+        if (target >= 0 && world.entities.has(target)) {
+          ux = world.positionX[target] - world.positionX[id]
+          uz = world.positionZ[target] - world.positionZ[id]
+        }
+        if (ux === 0 && uz === 0) {
+          ux = world.velocityX[id]
+          uz = world.velocityZ[id]
+        }
+        const len = Math.hypot(ux, uz)
+        if (len > 0) {
+          this.lunges.set(id, { ux: ux / len, uz: uz / len, age: 0 })
+          while (this.lunges.size > 96) {
+            const oldest = this.lunges.keys().next().value
+            if (oldest === undefined) break
+            this.lunges.delete(oldest)
+          }
+        }
+      }
+      this.prevCooldown.set(id, current)
     }
     for (const pop of world.deathPops) {
       this.deathPops.push({ ...pop })
@@ -735,26 +793,48 @@ export class Renderer {
       else if (kind === KIND_MELEE) spriteKey = 'footman'
       else if (kind === KIND_RANGED) spriteKey = 'archer'
       const unitSprite = spriteKey ? getSprite(spriteKey) : null
+      // Combat motion, render-only: a lunging melee body shifts toward
+      // its target along the strike direction; a just-struck body
+      // squashes (wide + short) while its hit flash fades. The ground
+      // shadow stays planted at the feet, and overlays below (health
+      // bar, flash, rings) stay at the base position.
+      let bx = p.x
+      let by = p.y
+      const lunge = kind === KIND_MELEE ? this.lunges.get(id) : undefined
+      if (lunge) {
+        const off = lungeProgress(lunge.age) * r * LUNGE_AMPLITUDE
+        bx += lunge.ux * off
+        by += lunge.uz * off
+      }
+      const squash = squashFactors(this.hitFlashes.get(id))
+      const squashed = squash.sx !== 1 || squash.sy !== 1
       this.groundShadow(p.x, p.y, r)
+      if (squashed) {
+        this.ctx.save()
+        this.ctx.translate(bx, by)
+        this.ctx.scale(squash.sx, squash.sy)
+        this.ctx.translate(-bx, -by)
+      }
       if (unitSprite) {
         const size = r * 2.2
-        this.ctx.drawImage(unitSprite, p.x - size / 2, p.y - size / 2, size, size)
+        this.ctx.drawImage(unitSprite, bx - size / 2, by - size / 2, size, size)
       } else {
-        this.circle(p.x, p.y, r, color)
+        this.circle(bx, by, r, color)
       }
       if (kind === KIND_MELEE) {
         this.ctx.strokeStyle = 'rgba(0,0,0,0.5)'
         this.ctx.lineWidth = 2
         this.ctx.beginPath()
-        this.ctx.arc(p.x, p.y, r * 0.7, 0, Math.PI * 2)
+        this.ctx.arc(bx, by, r * 0.7, 0, Math.PI * 2)
         this.ctx.stroke()
       } else if (kind === KIND_RANGED) {
         this.ctx.strokeStyle = '#f5c542'
         this.ctx.lineWidth = 2
         this.ctx.beginPath()
-        this.ctx.arc(p.x, p.y, r * 0.7, 0, Math.PI * 2)
+        this.ctx.arc(bx, by, r * 0.7, 0, Math.PI * 2)
         this.ctx.stroke()
       }
+      if (squashed) this.ctx.restore()
       // Training progress bar for queued production is drawn on the building.
     }
 
