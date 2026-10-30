@@ -140,13 +140,13 @@ export class Renderer {
   /** Hit flashes: entity id -> age in seconds (visual-only, real-time). */
   private hitFlashes = new Map<number, number>()
   /**
-   * Attack lunges: melee striker id -> world-space unit direction + age
-   * in seconds (visual-only, real-time). Set when the striker's cooldown
-   * jumps up between renders — the sim's strike signature — and aged
-   * out after LUNGE_DURATION. Never sim state, never hashed.
+   * Attack lunges: melee/militia striker id -> world-space unit direction
+   * + age in seconds (visual-only, real-time). Set when the striker's
+   * cooldown jumps up between renders — the sim's strike signature —
+   * and aged out after LUNGE_DURATION. Never sim state, never hashed.
    */
   private lunges = new Map<number, { ux: number; uz: number; age: number }>()
-  /** Last seen melee cooldown per entity, for strike detection. */
+  /** Last seen striker cooldown per entity, for strike detection. */
   private prevCooldown = new Map<number, number>()
   /** Death pops being animated (visual-only, real-time). */
   private deathPops: DeathPop[] = []
@@ -317,9 +317,12 @@ export class Renderer {
       this.hitFlashes.delete(oldest)
     }
     // Combat motion (visual-only): age out old lunges, drop motion state
-    // for recycled ids, and detect fresh melee strikes from cooldown
-    // resets. Direction is toward the strike target when known, else
-    // the striker's movement direction; with neither, no lunge.
+    // for recycled ids, and detect fresh melee/militia strikes from
+    // cooldown resets. Direction is toward the strike target when
+    // known, else the striker's movement direction; with neither,
+    // no lunge. Mustered militia peasants fight as melee (combat.ts)
+    // but keep KIND_WORKER, so they need the militia check here —
+    // otherwise their strikes silently skip the lunge.
     for (const [id, lunge] of this.lunges) {
       if (!world.entities.has(id)) this.lunges.delete(id)
       else {
@@ -331,7 +334,9 @@ export class Renderer {
       if (!world.entities.has(id)) this.prevCooldown.delete(id)
     }
     for (const id of world.entities.keys()) {
-      if (world.kind[id] !== KIND_MELEE) continue
+      const strikerKind = world.kind[id]
+      const isMilitiaStriker = strikerKind === KIND_WORKER && world.isMilitia(id)
+      if (strikerKind !== KIND_MELEE && !isMilitiaStriker) continue
       const current = world.cooldown[id]
       const prev = this.prevCooldown.get(id)
       if (strikeJustFired(prev, current)) {
@@ -793,14 +798,17 @@ export class Renderer {
       else if (kind === KIND_MELEE) spriteKey = 'footman'
       else if (kind === KIND_RANGED) spriteKey = 'archer'
       const unitSprite = spriteKey ? getSprite(spriteKey) : null
-      // Combat motion, render-only: a lunging melee body shifts toward
+      // Combat motion, render-only: a lunging striker body shifts toward
       // its target along the strike direction; a just-struck body
       // squashes (wide + short) while its hit flash fades. The ground
       // shadow stays planted at the feet, and overlays below (health
-      // bar, flash, rings) stay at the base position.
+      // bar, flash, rings) stay at the base position. Lunges are only
+      // ever recorded for melee/militia strikers, so a map hit here
+      // is already the right gate (and it survives a militia expiry
+      // mid-swing instead of cutting the 0.18 s animation short).
       let bx = p.x
       let by = p.y
-      const lunge = kind === KIND_MELEE ? this.lunges.get(id) : undefined
+      const lunge = this.lunges.get(id)
       if (lunge) {
         const off = lungeProgress(lunge.age) * r * LUNGE_AMPLITUDE
         bx += lunge.ux * off

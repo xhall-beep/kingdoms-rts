@@ -7,7 +7,7 @@
  * renderer wiring (cooldown-reset strike detection, lunge offset toward
  * the target, squash transform on the struck body).
  */
-import { KIND_MELEE } from '../core/World.ts'
+import { KIND_MELEE, STATE_ATTACK } from '../core/World.ts'
 import { hashWorldState } from '../net/hash.ts'
 import { Renderer } from '../render/renderer.ts'
 import {
@@ -262,6 +262,89 @@ test('rendering combat motion never touches the lockstep hash', () => {
     assertEqual(hashWorldState(world), before, 'renders must not change hashed state')
     // Sanity: the duel really is a fight — a melee kind is present.
     assert(world.kind.some((k) => k === KIND_MELEE), 'duel contains melee units')
+  } finally {
+    restore()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Militia lunge — mustered peasants fight as melee (combat.ts) but keep
+// KIND_WORKER, so the renderer's strike detection must include them.
+// Bell mustering itself is pinned by militia.test.ts; here the muster
+// state is set directly so the test does not depend on a seeded hall.
+// ---------------------------------------------------------------------------
+
+suite('combat motion: militia lunge')
+
+function makeMilitiaDuel(mustered: boolean): {
+  world: ReturnType<typeof makeWorld>
+  ctx: RecordingCtx
+  renderer: Renderer
+  worker: number
+  enemy: number
+} {
+  const world = makeWorld()
+  const worker = world.spawnUnit('worker', 0, 0, 0)
+  const enemy = world.spawnUnit('melee', 1, 1.2, 0)
+  for (const u of [worker, enemy]) {
+    world.health[u.id] = 100000
+    world.maxHealth[u.id] = 100000
+    world.sight[u.id] = 50
+  }
+  if (mustered) world.militiaUntil[worker.id] = world.matchTime + 25
+  // Force the worker into combat range (militia.test.ts precedent).
+  world.state[worker.id] = STATE_ATTACK
+  world.targetId[worker.id] = enemy.id
+  world.moving[worker.id] = 0
+  world.cooldown[worker.id] = 0
+  const ctx = new RecordingCtx()
+  const canvas = { width: 0, height: 0, getContext: () => ctx }
+  const renderer = new Renderer(canvas as unknown as HTMLCanvasElement)
+  renderer.resize(412, 800)
+  renderer.centerOn(0, 0, 10)
+  return { world, ctx, renderer, worker: worker.id, enemy: enemy.id }
+}
+
+test('mustered militia peasant lunges toward its target on the next render', () => {
+  const restore = stubDocument()
+  try {
+    const { world, ctx, renderer, worker } = makeMilitiaDuel(true)
+    assert(world.isMilitia(worker), 'worker is mustered militia in this duel')
+    renderer.render(world, 0, 1 / 60)
+    const before = maxBodyArcX(ctx, 196, 216)
+    assert(before > 200 && before <= 207, `worker arcs near base x, got ${before}`)
+    stepWorld(world, 2)
+    renderer.render(world, 0, 1 / 60)
+    ctx.arcs.length = 0
+    renderer.render(world, 0, LUNGE_DURATION / 2)
+    const after = maxBodyArcX(ctx, 196, 220)
+    assert(
+      after - before > 1,
+      `militia lunge must shift the worker body toward the enemy: ${before} -> ${after}`,
+    )
+    assert(after > 206, `lunged worker body sits past the base position, got ${after}`)
+  } finally {
+    restore()
+  }
+})
+
+test('unmustered worker never lunges (it cannot strike)', () => {
+  const restore = stubDocument()
+  try {
+    const { world, ctx, renderer, worker } = makeMilitiaDuel(false)
+    assert(!world.isMilitia(worker), 'worker is an ordinary peasant in this duel')
+    renderer.render(world, 0, 1 / 60)
+    const before = maxBodyArcX(ctx, 196, 210)
+    assert(before > 200 && before <= 207, `worker arcs near base x, got ${before}`)
+    stepWorld(world, 2)
+    renderer.render(world, 0, 1 / 60)
+    ctx.arcs.length = 0
+    renderer.render(world, 0, LUNGE_DURATION / 2)
+    const after = maxBodyArcX(ctx, 196, 210)
+    assert(
+      after - before <= 0.5,
+      `ordinary worker must not lunge: ${before} -> ${after}`,
+    )
   } finally {
     restore()
   }
