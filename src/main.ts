@@ -383,7 +383,7 @@ export function initializeGame(): GameComposition {
   let replaying = false
   let pvpActive = false
   const replayPlayer = new ReplayPlayer(composition.engine.world)
-  composition.renderer.centerOn(-40, -40, 10)
+  composition.renderer.centerOn(-40, -40, 13)
   // Keep the canvas backing store in sync with the CSS viewport. A stale or
   // fallback size (the old code measured once and never again) desyncs the
   // renderer from pointer input: the world renders tiny and every tap

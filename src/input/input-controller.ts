@@ -298,7 +298,7 @@ export class InputControllerImpl implements InputController {
         }
       }
     }
-    if (found) renderer.centerOn(bx, bz, 10)
+    if (found) renderer.centerOn(bx, bz, 13)
   }
 
   getSelected(): number[] {

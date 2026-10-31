@@ -115,7 +115,7 @@ export class Renderer {
   private readonly ctx: CanvasRenderingContext2D
   private camX = 0
   private camZ = 0
-  private zoom = 10
+  private zoom = 13
   private selected = new Set<number>()
   private selectionBox: { x0: number; y0: number; x1: number; y1: number } | null = null
   private frame = 0
@@ -398,7 +398,7 @@ export class Renderer {
     ) {
       this.camX = -40
       this.camZ = -40
-      this.zoom = 10
+      this.zoom = 13
     }
     this.drawGround()
     this.drawSeasonTint(world)
