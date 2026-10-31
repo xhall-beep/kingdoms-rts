@@ -116,7 +116,7 @@ export const FACTIONS: Record<FactionId, FactionDef> = {
     worker: { carryMax: 20, buildRate: 1, seedWarp: false, sapTap: false } },
   undead: { name: 'Undead', colors: [0x5b3f8f, 0x9be7ff, 0x2a2236], skin: 0xe9e4d4, head: 'hood', hall: 'box,cone,spires,skull',
     units: { worker: 'Husk', melee: 'Gnawer', ranged: 'Gloom Archer' },
-    mods: m(0.9, 0.95, 0.95, 0.85, 0.85, 0.9),
+    mods: m(0.9, 0.95, 0.95, 1, 1, 0.9),
     signature: { reanimate: { chance: 0.25, hpFactor: 0.5, durationSec: 15 } },
     worker: { carryMax: 10, buildRate: 1, seedWarp: true, sapTap: false } },
   lich: { name: 'Lich', colors: [0x1d6f8f, 0x7ff0ff, 0x1a1f2e], skin: 0xdfe8e4, head: 'hood', hall: 'round,cone,crystals,spires',

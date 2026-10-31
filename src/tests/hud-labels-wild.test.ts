@@ -339,7 +339,7 @@ test('human research buttons price at the Adaptable 80g/40w and enable at that p
   assertEqual(armor?.disabled, false, 'armor research enabled at 85g/45w (the real price)')
 })
 
-test('undead train prices carry the 0.85 cost modifier', () => {
+test('undead train prices carry the faction cost modifier', () => {
   const world = new World()
   world.factionOfTeam[TEAM_PLAYER] = 'undead'
   world.gold[TEAM_PLAYER] = 1000
@@ -348,7 +348,7 @@ test('undead train prices carry the 0.85 cost modifier', () => {
   const buttons = cardButtons(renderCard(world, hall.id))
   const husk = buttons.find((b) => b.label === 'Husk')
   assert(husk !== undefined, 'undead worker train button renders')
-  assertEqual(husk?.sub, '43g 0w', 'husk priced at round(50 x 0.85), not the base 50g')
+  assertEqual(husk?.sub, '50g 0w', 'husk priced at round(50 x 1.0) — the charged faction price (normalized 2026-10-30)')
 })
 
 test('undead unit stat line prices the unit at its faction price', () => {
@@ -356,8 +356,8 @@ test('undead unit stat line prices the unit at its faction price', () => {
   world.factionOfTeam[TEAM_PLAYER] = 'undead'
   const melee = world.spawnUnit('melee', TEAM_PLAYER, 100, 100)
   const text = collectText(renderCard(world, melee.id))
-  assert(text.includes('85g 26w'), 'stat line shows the charged undead melee price')
-  assert(!text.includes('100g 30w'), 'stat line no longer shows the base price')
+  assert(text.includes('100g 30w'), 'stat line shows the charged undead melee price (faction price = base at cost 1.0)')
+  assert(!text.includes('85g 26w'), 'stat line no longer shows the old 0.85-discounted price')
 })
 
 test('human prices are unchanged (modifier 1.0 control)', () => {
