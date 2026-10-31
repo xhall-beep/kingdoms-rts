@@ -322,7 +322,7 @@ function renderCard(world: World, id: number, buildOpen = false): CardEl {
 
 suite('tech buildings: command card')
 
-test('build menu always shows tech entries, greyed "Requires Workshop" until one stands', () => {
+test('build menu always shows tech entries, greyed "Needs Workshop" until one stands', () => {
   const world = new World()
   rich(world, TEAM_PLAYER)
   const worker = world.spawnUnit('worker', TEAM_PLAYER, 0, 0)
@@ -334,11 +334,11 @@ test('build menu always shows tech entries, greyed "Requires Workshop" until one
   assert(workshopBtn !== undefined && !workshopBtn.disabled, 'the workshop itself is buildable')
   // Locked cells keep their price on the sub line (players plan around
   // prices) and carry the requirement on their own note line.
-  assert(smithyBtn!.disabled && smithyBtn!.note === 'Requires Workshop', 'smithy greyed with its reason')
-  assert(archeryBtn!.disabled && archeryBtn!.note === 'Requires Workshop', 'archery greyed with its reason')
+  assert(smithyBtn!.disabled && smithyBtn!.note === 'Needs Workshop', 'smithy greyed with its reason')
+  assert(archeryBtn!.disabled && archeryBtn!.note === 'Needs Workshop', 'archery greyed with its reason')
   assert(smithyBtn!.sub === '160g 120w', 'smithy price stays visible while locked')
   assert(archeryBtn!.sub === '110g 190w', 'archery price stays visible while locked')
-  assert(workshopBtn!.note === '', 'unlocked entries render an empty note line (same cell geometry)')
+  assert(workshopBtn!.note === 'Unlocks tech', 'unlocked entries carry their purpose on the note line (basics slice 2, audit F9; the line still renders in every state — same cell geometry)')
 
   world.spawnBuilding('workshop', TEAM_PLAYER, 10, 10, true)
   buttons = cardButtons(renderCard(world, worker.id, true))
@@ -346,7 +346,7 @@ test('build menu always shows tech entries, greyed "Requires Workshop" until one
   const archeryAfter = buttons.find((b) => b.label === 'Archery')
   assert(smithyAfter !== undefined && !smithyAfter.disabled, 'smithy live once a workshop stands')
   assert(archeryAfter !== undefined && !archeryAfter.disabled, 'archery live once a workshop stands')
-  assert(smithyAfter!.note === '' && archeryAfter!.note === '', 'note line empties once unlocked')
+  assert(smithyAfter!.note === 'Weapon + Armor' && archeryAfter!.note === 'Unlocks archers', 'note line shows each purpose once unlocked (basics slice 2)')
 })
 
 test('barracks card: archer button greyed pre-range, live post-range, and no research buttons', () => {

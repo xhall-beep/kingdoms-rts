@@ -17,7 +17,8 @@ import { WarHornSystemImpl, soundWarHorn } from './systems/warhorn'
 import { ShrineSystemImpl } from './systems/shrines'
 import { MovementSystemImpl } from './systems/movement'
 import { ProductionSystemImpl } from './systems/production'
-import { cancelTrainActive, cancelTrainQueued, enqueueTrain, researchUpgrade, upgradeBuilding } from './systems/production'
+import { cancelTrainActive, cancelTrainQueued, enqueueTrain, researchRefusal, researchUpgrade, trainRefusal, upgradeBuilding, upgradeRefusal } from './systems/production'
+import { refusalBannerText } from './ui/command-card.ts'
 import { sfx } from './ui/feedback.ts'
 import type { UpgradeType } from './data/upgrades.ts'
 import { VictorySystemImpl } from './systems/victory'
@@ -424,7 +425,7 @@ export function initializeGame(): GameComposition {
       if (selected.length !== 1) return
       const buildingId = selected[0]
       const world = composition.engine.world
-      dispatchHudCommand(
+      const ok = dispatchHudCommand(
         {
           type: 'research',
           step: composition.engine.getSimulationSteps(),
@@ -434,6 +435,17 @@ export function initializeGame(): GameComposition {
         },
         () => researchUpgrade(world, buildingId, type as UpgradeType),
       )
+      if (!ok) {
+        // Refused locally: name the reason (the sim's own guard chain
+        // recomputes it — the failed apply changed no state).
+        const reason = researchRefusal(world, buildingId, type as UpgradeType)
+        if (reason) {
+          composition.hud.announceRefusal(
+            refusalBannerText(world, composition.inputController.getLocalTeam(), reason, 'research'),
+          )
+        }
+        sfx.error()
+      }
     },
     onTrain: (type) => {
       const selected = composition.inputController.getSelected()
@@ -451,10 +463,20 @@ export function initializeGame(): GameComposition {
         () => enqueueTrain(world, buildingId, type),
       )
       if (!ok) {
-        // Refused (queue full at the cap of 8, unaffordable, supply):
-        // audible feedback — a silent no-op reads as an ignored tap.
+        // Refused (queue full at the cap of 8, unaffordable, supply,
+        // gate, unfinished): name the reason in the banner lane AND
+        // beep — a silent no-op reads as an ignored tap, and a beep
+        // alone cannot say which of the causes fired. The reason is
+        // recomputed by the same guard chain that just refused (the
+        // failed apply changed no state, so it names the same cause).
         // (In transport mode the tap is always accepted; a refusal is
         // decided identically on both peers when the turn executes.)
+        const reason = trainRefusal(world, buildingId, type)
+        if (reason) {
+          composition.hud.announceRefusal(
+            refusalBannerText(world, composition.inputController.getLocalTeam(), reason, 'train'),
+          )
+        }
         sfx.error()
       }
     },
@@ -491,7 +513,7 @@ export function initializeGame(): GameComposition {
       if (selected.length !== 1) return
       const buildingId = selected[0]
       const world = composition.engine.world
-      dispatchHudCommand(
+      const ok = dispatchHudCommand(
         {
           type: 'upgrade',
           step: composition.engine.getSimulationSteps(),
@@ -500,6 +522,15 @@ export function initializeGame(): GameComposition {
         },
         () => upgradeBuilding(world, buildingId),
       )
+      if (!ok) {
+        const reason = upgradeRefusal(world, buildingId)
+        if (reason) {
+          composition.hud.announceRefusal(
+            refusalBannerText(world, composition.inputController.getLocalTeam(), reason, 'upgrade'),
+          )
+        }
+        sfx.error()
+      }
     },
     onWarHorn: (rally) => {
       const team = composition.inputController.getLocalTeam()
@@ -649,6 +680,11 @@ export function initializeGame(): GameComposition {
     },
   }
   composition.hud.mount(hudRoot, hudCallbacks)
+  // Opening direction for local play (basics audit F1): the standard
+  // local match is the one start that announced nothing at all — PvP
+  // and practice announce through the lobby, the special modes carry
+  // their own overlays.
+  if (gameMode === 'rts') composition.hud.announceOpening()
   // Alert chip: the renderer owns camera truth — wire its off-screen
   // probe so the chip only fires for events the player cannot see.
   composition.hud.setAlertViewportProbe((x, z) => composition.renderer.isWorldPointOnScreen(x, z))

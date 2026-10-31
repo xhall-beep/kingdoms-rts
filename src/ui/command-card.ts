@@ -16,7 +16,8 @@ import {
 } from '../core/World'
 import { getUnits } from '../data/stats.ts'
 import type { UnitType } from '../data/units.ts'
-import { ORC_TIER_NAMES, TIER_UPGRADES, researchCost, trainCostFor, trainingStateFor, trainingQueueFor } from '../systems/production.ts'
+import { ORC_TIER_NAMES, TIER_UPGRADES, researchCost, researchRefusal, trainCostFor, trainRefusal, trainingStateFor, trainingQueueFor, upgradeRefusal } from '../systems/production.ts'
+import type { RefusalReason } from '../systems/production.ts'
 import { HORN_COST, warChargeAtLeast } from '../systems/warhorn.ts'
 import { UPGRADES } from '../data/upgrades.ts'
 import type { UpgradeType } from '../data/upgrades.ts'
@@ -29,7 +30,6 @@ import {
   PLAYER_BUILDABLE,
   buildingPrereqMet,
   canAfford,
-  teamHasFinishedBuilding,
 } from '../world/construction.ts'
 import { FACTIONS } from '../data/factions.ts'
 import type { FactionId } from '../data/factions.ts'
@@ -140,14 +140,112 @@ const BUILD_BUTTON_LABELS: Record<string, string> = {
 }
 
 /**
+ * Player-facing text for a production refusal (basics slice 2, audit
+ * F5). Two forms over the one RefusalReason the sim's own guard chain
+ * computed — short for a button's note line, full for the banner lane.
+ * No rule lives here: the reason (and the shortfall amount) comes from
+ * production.ts; this only phrases it.
+ */
+export function refusalShortText(reason: RefusalReason): string {
+  switch (reason.kind) {
+    // Compact delta form: the note line is 84px of 9px text at phone
+    // widths, and the full 'Need N more wood' sentence ellipsized by
+    // a character (frame-measured, basics slice 2). On a disabled
+    // price button the delta alone is unambiguous; the banner lane
+    // carries the full sentence.
+    case 'gold': return `${reason.short} more gold`
+    case 'wood': return `${reason.short} more wood`
+    case 'supply': return 'Supply full'
+    case 'queue-full': return 'Queue full'
+    case 'needs-archery': return 'Requires Archery Range'
+    case 'unfinished': return 'Under construction'
+    case 'mid-upgrade': return 'Upgrading'
+    case 'max-level': return 'Max level'
+    case 'unavailable': return ''
+  }
+}
+
+export function refusalBannerText(
+  world: World,
+  team: number,
+  reason: RefusalReason,
+  context: 'train' | 'research' | 'upgrade',
+): string {
+  switch (reason.kind) {
+    case 'gold': return `Need ${reason.short} more gold`
+    case 'wood': return `Need ${reason.short} more wood`
+    case 'supply':
+      // The advice must be true for the tapping team: undead raise no
+      // farms — their cap grows through Soul-Ash — so they get the
+      // bare fact instead of a farm tip that cannot work for them.
+      return world.factionOfTeam[team] === 'undead'
+        ? 'Supply full'
+        : 'Supply full — build a Farm'
+    case 'queue-full': return 'Queue full'
+    case 'needs-archery': return 'Requires a finished Archery Range'
+    case 'unfinished': return 'Still under construction'
+    case 'mid-upgrade':
+      return context === 'upgrade'
+        ? 'Already upgrading'
+        : context === 'research'
+          ? 'Upgrading — research paused'
+          : 'Upgrading — training paused'
+    case 'max-level':
+      return context === 'upgrade' ? 'Already at top tier' : 'Already at max level'
+    case 'unavailable': return 'Not available here'
+  }
+}
+
+/**
+ * What a build-menu entry is FOR, in one short line (basics audit F9:
+ * the menu sold prices, not purposes). Every claim derives from the
+ * data tables and the systems that consume them: the Farm's grant is
+ * the table's supply value (never a literal — the +8-for-+6 label bug
+ * is the standing lesson), the Workshop's line names the two entries
+ * BUILDING_REQUIRES gates on it, the Archery Range's line names the
+ * Barracks unlock enqueueTrain enforces, the Tower's line is the
+ * combat system's tower fire.
+ */
+function buildPurpose(btype: BuildingType): string {
+  const bdef = BUILDINGS[btype]
+  switch (btype) {
+    // Length discipline: the note line is 84px of 9px text in the
+    // build grid — 16 characters is the measured ceiling before the
+    // ellipsis eats the end (frame proof, basics slice 2). Every
+    // string below fits it; lengthen one and the frame proof fails.
+    case 'hall': return 'Trains workers'
+    case 'farm': return `Supply +${bdef.supply}`
+    case 'barracks': return 'Trains soldiers'
+    case 'archery': return 'Unlocks archers'
+    case 'tower': return 'Shoots enemies'
+    case 'workshop': return 'Unlocks tech'
+    case 'smithy': return 'Weapon + Armor'
+  }
+}
+
+/** The binding shortfall for an unaffordable build entry, phrased like
+ * the refusal reasons (the audit's F5 moment B: greyed entries showed
+ * the price but never what was missing). */
+function buildShortfallNote(world: World, btype: BuildingType): string {
+  const cost = BUILDINGS[btype].cost
+  const goldShort = Math.ceil(cost.gold - world.gold[TEAM_PLAYER])
+  const woodShort = Math.ceil(cost.wood - world.wood[TEAM_PLAYER])
+  if (goldShort > 0 && woodShort > 0) return `${goldShort}g + ${woodShort}w more`
+  if (goldShort > 0) return `${goldShort} more gold`
+  return `${woodShort} more wood`
+}
+
+/**
  * One build-menu entry, shared by the expander menu and the inline
  * fallback so the two can never drift apart. Tech-locked entries
  * (Smithy / Archery Range before a finished Workshop) still render —
  * the fixed-grid invariant: cells never appear or disappear — greyed,
  * with the price always visible (players plan around prices) and the
- * requirement on its own third line. The note line renders for every
- * build entry (empty when unlocked) so locked and unlocked cells have
- * identical geometry. placeStructure enforces the same gate in the sim.
+ * binding fact on its own third line: the lock when gated, the
+ * shortfall when unaffordable, otherwise what the building is for
+ * (audit F9). The note line renders for every build entry so locked
+ * and unlocked cells have identical geometry. placeStructure enforces
+ * the same gate in the sim.
  */
 function appendBuildButton(cmd: CmdFn, world: World, cb: CommandCardCallbacks, btype: BuildingType): void {
   const bdef = BUILDINGS[btype]
@@ -155,8 +253,33 @@ function appendBuildButton(cmd: CmdFn, world: World, cb: CommandCardCallbacks, b
   const locked = req !== undefined && !buildingPrereqMet(world, TEAM_PLAYER, btype)
   const afford = canAfford(world, TEAM_PLAYER, btype)
   const sub = `${bdef.cost.gold}g ${bdef.cost.wood}w`
-  const note = locked && req !== undefined ? `Requires ${BUILDINGS[req].name}` : ''
+  const note = locked && req !== undefined
+    ? `Needs ${BUILDINGS[req].name}`
+    : !afford
+      ? buildShortfallNote(world, btype)
+      : buildPurpose(btype)
   cmd(BUILD_BUTTON_LABELS[btype] ?? bdef.name, () => cb.onBuildType(btype), locked || !afford, sub, note)
+}
+
+/** One research ladder button (Smithy Weapon/Armor, Archery Ranged). */
+function appendResearchButton(
+  cmd: CmdFn,
+  world: World,
+  cb: CommandCardCallbacks,
+  buildingId: number,
+  type: UpgradeType,
+  label: string,
+): void {
+  const price = researchCost(world, TEAM_PLAYER, type)
+  const refusal = researchRefusal(world, buildingId, type)
+  const sub = `${price.gold}g ${price.wood}w`
+  if (refusal?.kind === 'gold' || refusal?.kind === 'wood') {
+    cmd(label, () => cb.onResearch(type), true, sub, refusalShortText(refusal))
+  } else if (refusal?.kind === 'unfinished') {
+    cmd(label, () => cb.onResearch(type), false, sub, refusalShortText(refusal))
+  } else {
+    cmd(label, () => cb.onResearch(type), false, sub)
+  }
 }
 
 function appendBuildButtons(cmd: CmdFn, world: World, cb: CommandCardCallbacks): void {
@@ -475,27 +598,42 @@ export function renderCommandCard(
       const btype = BUILDING_TYPE_BY_KIND[kind]
       const trainable: UnitType[] = btype ? BUILDINGS[btype].trains : []
       for (const utype of trainable) {
-        // Price + affordability from trainCostFor — the exact price
-        // enqueueTrain charges this team (faction modifier applied).
+        // Price from trainCostFor — the exact price enqueueTrain
+        // charges this team (faction modifier applied) — and the
+        // button state from trainRefusal, the sim's own guard chain,
+        // so the card can never disagree with the tap's verdict:
+        //  - the Archery gate and a resource shortfall disable the
+        //    button, with the binding fact on the note line;
+        //  - supply / queue-full / unfinished / mid-upgrade leave the
+        //    button LIVE, its note naming the state, so the tap itself
+        //    surfaces the reason in the banner lane (main.ts onTrain)
+        //    — a disabled button fires nothing, not even the reason.
         const price = trainCostFor(world, TEAM_PLAYER, utype)
-        const afford =
-          world.gold[TEAM_PLAYER] >= price.gold &&
-          world.wood[TEAM_PLAYER] >= price.wood
-        const rangeLocked =
-          utype === 'ranged' && !teamHasFinishedBuilding(world, TEAM_PLAYER, 'archery')
-        cmd(
-          factionUnitName(world, TEAM_PLAYER, utype),
-          () => cb.onTrain(utype),
-          rangeLocked || !afford,
-          rangeLocked ? 'Requires Archery Range' : `${price.gold}g ${price.wood}w`,
-        )
+        const refusal = trainRefusal(world, id, utype)
+        const name = factionUnitName(world, TEAM_PLAYER, utype)
+        const priceSub = `${price.gold}g ${price.wood}w`
+        if (refusal?.kind === 'needs-archery') {
+          cmd(name, () => cb.onTrain(utype), true, 'Requires Archery Range')
+        } else if (refusal?.kind === 'gold' || refusal?.kind === 'wood') {
+          cmd(name, () => cb.onTrain(utype), true, priceSub, refusalShortText(refusal))
+        } else if (refusal?.kind === 'unavailable') {
+          cmd(name, () => cb.onTrain(utype), true, priceSub)
+        } else if (refusal) {
+          cmd(name, () => cb.onTrain(utype), false, priceSub, refusalShortText(refusal))
+        } else {
+          cmd(name, () => cb.onTrain(utype), false, priceSub)
+        }
       }
       // Upgrade buttons. Prices come from researchCost — the helper
       // researchUpgrade charges and the AI's research gate floors on.
       // The card used to hardcode the base '100g 50w': for human (the
       // default faction) the Adaptable signature charges 80g/40w, so
       // the label overstated the price AND the button stayed disabled
-      // until the player held the full base cost.
+      // until the player held the full base cost. Button state now
+      // comes from researchRefusal (the sim's own guards): a resource
+      // shortfall disables with the missing amount on the note line;
+      // an unfinished building's button stays live so the tap names
+      // the reason in the banner lane (main.ts onResearch).
       if (kind === KIND_SMITHY) {
         const ladders: Array<{ type: UpgradeType; lvl: number; label: string }> = [
           { type: 'meleeDmg', lvl: world.meleeDmgLvl[TEAM_PLAYER], label: 'Weapon' },
@@ -503,21 +641,13 @@ export function renderCommandCard(
         ]
         for (const { type, lvl, label } of ladders) {
           if (lvl >= UPGRADES[type].maxLevel) continue
-          const price = researchCost(world, TEAM_PLAYER, type)
-          const afford =
-            world.gold[TEAM_PLAYER] >= price.gold &&
-            world.wood[TEAM_PLAYER] >= price.wood
-          cmd(`${label} +${lvl + 1}`, () => cb.onResearch(type), !afford, `${price.gold}g ${price.wood}w`)
+          appendResearchButton(cmd, world, cb, id, type, `${label} +${lvl + 1}`)
         }
       }
       if (kind === KIND_ARCHERY) {
         const lvl = world.rangedDmgLvl[TEAM_PLAYER]
         if (lvl < UPGRADES.rangedDmg.maxLevel) {
-          const price = researchCost(world, TEAM_PLAYER, 'rangedDmg')
-          const afford =
-            world.gold[TEAM_PLAYER] >= price.gold &&
-            world.wood[TEAM_PLAYER] >= price.wood
-          cmd(`Ranged +${lvl + 1}`, () => cb.onResearch('rangedDmg'), !afford, `${price.gold}g ${price.wood}w`)
+          appendResearchButton(cmd, world, cb, id, 'rangedDmg', `Ranged +${lvl + 1}`)
         }
       }
       // Militia Bell (human racial): muster nearby peasants as Levy Pikemen.
@@ -536,14 +666,19 @@ export function renderCommandCard(
         const tier = world.tier[id]
         if (tier < 3) {
           // Cost read from production's TIER_UPGRADES (the table
-          // upgradeBuilding charges) — no duplicated literals.
+          // upgradeBuilding charges) — no duplicated literals — and
+          // the button state from upgradeRefusal, so a shortfall
+          // disables with the missing amount on the note line.
           const cost = TIER_UPGRADES[tier]
-          const afford = world.gold[TEAM_PLAYER] >= cost.gold && world.wood[TEAM_PLAYER] >= cost.wood
+          const refusal = upgradeRefusal(world, id)
           const upgrading = world.upgradeLeft[id] > 0
           const label = upgrading
             ? `Upgrading…`
             : `⬆ ${ORC_TIER_NAMES[tier]}`
-          cmd(label, () => cb.onUpgrade(), !afford || upgrading, upgrading ? undefined : `${cost.gold}g ${cost.wood}w`)
+          const shortfall = refusal?.kind === 'gold' || refusal?.kind === 'wood'
+            ? refusalShortText(refusal)
+            : undefined
+          cmd(label, () => cb.onUpgrade(), upgrading || shortfall !== undefined, upgrading ? undefined : `${cost.gold}g ${cost.wood}w`, shortfall)
         }
       }
       // War Horn: sound a rally when the horn is charged (all races).

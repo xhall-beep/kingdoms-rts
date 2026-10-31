@@ -129,23 +129,32 @@ export const TIER_UPGRADES = [
   { gold: 300, wood: 200, time: 30 }, // 2 -> 3
 ]
 
+/** The refusal upgradeBuilding would hit, or null when it applies. */
+export function upgradeRefusal(world: World, buildingId: number): RefusalReason | null {
+  if (!world.entities.has(buildingId)) return { kind: 'unavailable' }
+  const team = world.team[buildingId] as 0 | 1
+  if (world.factionOfTeam[team] !== 'orc') return { kind: 'unavailable' }
+  const kind = world.kind[buildingId]
+  if (kind !== KIND_HALL && kind !== KIND_BARRACKS) return { kind: 'unavailable' }
+  if (world.buildProgress[buildingId] < world.buildTotal[buildingId]) return { kind: 'unfinished' }
+  if (world.upgradeLeft[buildingId] > 0) return { kind: 'mid-upgrade' } // already upgrading
+  const tier = world.tier[buildingId]
+  if (tier >= 3) return { kind: 'max-level' }
+  const cost = TIER_UPGRADES[tier]
+  if (world.gold[team] < cost.gold) return { kind: 'gold', short: Math.ceil(cost.gold - world.gold[team]) }
+  if (world.wood[team] < cost.wood) return { kind: 'wood', short: Math.ceil(cost.wood - world.wood[team]) }
+  return null
+}
+
 /**
  * Orc in-place upgrading (v2.0 spec): War-Halls and Foundries reforge
  * themselves through three tiers without rebuilding. Returns true when the
  * upgrade starts. The building cannot train while upgrading.
  */
 export function upgradeBuilding(world: World, buildingId: number): boolean {
-  if (!world.entities.has(buildingId)) return false
+  if (upgradeRefusal(world, buildingId) !== null) return false
   const team = world.team[buildingId] as 0 | 1
-  if (world.factionOfTeam[team] !== 'orc') return false
-  const kind = world.kind[buildingId]
-  if (kind !== KIND_HALL && kind !== KIND_BARRACKS) return false
-  if (world.buildProgress[buildingId] < world.buildTotal[buildingId]) return false // unfinished
-  if (world.upgradeLeft[buildingId] > 0) return false // already upgrading
-  const tier = world.tier[buildingId]
-  if (tier >= 3) return false
-  const cost = TIER_UPGRADES[tier]
-  if (world.gold[team] < cost.gold || world.wood[team] < cost.wood) return false
+  const cost = TIER_UPGRADES[world.tier[buildingId]]
   world.gold[team] -= cost.gold
   world.wood[team] -= cost.wood
   world.upgradeLeft[buildingId] = cost.time
@@ -229,22 +238,36 @@ function promoteQueue(world: World, buildingId: number): void {
 }
 
 /**
- * Queue a unit at a finished building. The first item starts in the
- * active slot; further items wait in the queue (cap MAX_TRAIN_QUEUE
- * total). Every item's cost is charged when it is queued. Returns false
- * when the building can't train the type, is unfinished or mid-upgrade,
- * the queue is full, the team can't afford the item, or starting it
- * would exceed the supply cap. Faction cost/train-time modifiers apply.
+ * Why a production command (train / research / tier upgrade) refuses,
+ * or null when it applies. The predicates below ARE the commands' own
+ * guard chains, extracted verbatim — the commands call them, and the
+ * HUD reads them to name the refusal, so the reason a player is shown
+ * can never drift from the rule the sim actually enforces (basics
+ * audit F5, 2026-10-31: supply-cap and queue-cap refusals shared one
+ * error beep and zero text). Pure reads: no state is touched.
+ * `short` is the missing amount of the named resource, rounded up.
  */
-export function enqueueTrain(world: World, buildingId: number, type: UnitType): boolean {
+export type RefusalReason =
+  | { kind: 'gold'; short: number }
+  | { kind: 'wood'; short: number }
+  | { kind: 'supply' }
+  | { kind: 'queue-full' }
+  | { kind: 'needs-archery' }
+  | { kind: 'unfinished' }
+  | { kind: 'mid-upgrade' }
+  | { kind: 'max-level' }
+  | { kind: 'unavailable' }
+
+/** The refusal enqueueTrain would hit for this order, or null when it applies. */
+export function trainRefusal(world: World, buildingId: number, type: UnitType): RefusalReason | null {
   const kind = world.kind[buildingId]
   if (kind !== KIND_HALL && kind !== KIND_BARRACKS && kind !== KIND_ARCHERY && kind !== KIND_FARM) {
-    return false
+    return { kind: 'unavailable' }
   }
   const def = BUILDINGS[BUILDING_TYPE_BY_KIND[kind]]
-  if (!def.trains.includes(type)) return false
-  if (world.buildProgress[buildingId] < world.buildTotal[buildingId]) return false
-  if (world.upgradeLeft[buildingId] > 0) return false // mid-upgrade: no training
+  if (!def.trains.includes(type)) return { kind: 'unavailable' }
+  if (world.buildProgress[buildingId] < world.buildTotal[buildingId]) return { kind: 'unfinished' }
+  if (world.upgradeLeft[buildingId] > 0) return { kind: 'mid-upgrade' } // mid-upgrade: no training
   // Archery Range rework (2026-10-26): ranged units are hired at the
   // Barracks, but only while a FINISHED Archery Range stands for the
   // team — the Range is the unlock, not the producer. Enforced here in
@@ -253,12 +276,13 @@ export function enqueueTrain(world: World, buildingId: number, type: UnitType): 
   // cancelled — they were legitimately bought while the Range stood
   // and complete normally (promoteQueue never re-checks the gate).
   if (type === 'ranged' && !teamHasFinishedBuilding(world, world.team[buildingId] as 0 | 1, 'archery')) {
-    return false
+    return { kind: 'needs-archery' }
   }
 
   const team = world.team[buildingId]
   const cost = trainCostFor(world, team, type)
-  if (world.gold[team] < cost.gold || world.wood[team] < cost.wood) return false
+  if (world.gold[team] < cost.gold) return { kind: 'gold', short: Math.ceil(cost.gold - world.gold[team]) }
+  if (world.wood[team] < cost.wood) return { kind: 'wood', short: Math.ceil(cost.wood - world.wood[team]) }
   const unitDef = getUnits()[type]
   // Supply: units already in production (here and at every other
   // building of the team) count against the cap — see
@@ -267,15 +291,29 @@ export function enqueueTrain(world: World, buildingId: number, type: UnitType): 
     world.supplyUsed[team] + productionCommittedSupply(world, team) + unitDef.popCost >
     world.supplyCap[team]
   ) {
-    return false
+    return { kind: 'supply' }
   }
 
   const active = world.trainKind[buildingId] !== NO_TRAINING
-  if (active && world.trainQueueLen[buildingId] >= TRAIN_QUEUE_WAITING) return false // queue full
+  if (active && world.trainQueueLen[buildingId] >= TRAIN_QUEUE_WAITING) return { kind: 'queue-full' }
+  return null
+}
 
+/**
+ * Queue a unit at a finished building. The first item starts in the
+ * active slot; further items wait in the queue (cap MAX_TRAIN_QUEUE
+ * total). Every item's cost is charged when it is queued. Returns false
+ * when trainRefusal names a reason for this order. Faction cost/train-
+ * time modifiers apply.
+ */
+export function enqueueTrain(world: World, buildingId: number, type: UnitType): boolean {
+  if (trainRefusal(world, buildingId, type) !== null) return false
+
+  const team = world.team[buildingId]
+  const cost = trainCostFor(world, team, type)
   world.gold[team] -= cost.gold
   world.wood[team] -= cost.wood
-  if (!active) {
+  if (world.trainKind[buildingId] === NO_TRAINING) {
     beginTraining(world, buildingId, type)
   } else {
     const len = world.trainQueueLen[buildingId]
@@ -434,23 +472,32 @@ export function researchCost(
   }
 }
 
-/** Research an upgrade at a building. Returns true if successful. */
-export function researchUpgrade(world: World, buildingId: number, type: UpgradeType): boolean {
-  if (!world.entities.has(buildingId)) return false
+/** The refusal researchUpgrade would hit, or null when it applies. */
+export function researchRefusal(world: World, buildingId: number, type: UpgradeType): RefusalReason | null {
+  if (!world.entities.has(buildingId)) return { kind: 'unavailable' }
   const team = world.team[buildingId] as 0 | 1
   const def = UPGRADES[type]
   // Research lives at its home building (UPGRADES.building): the melee
   // ladders at the Smithy, the ranged ladder at the Archery Range. The
   // Barracks hosts no research since the tech-buildings rework — this
   // is enforced in the sim, not just by which card renders the button.
-  if (BUILDING_TYPE_BY_KIND[world.kind[buildingId]] !== def.building) return false
-  if (world.buildProgress[buildingId] < world.buildTotal[buildingId]) return false // unfinished
+  if (BUILDING_TYPE_BY_KIND[world.kind[buildingId]] !== def.building) return { kind: 'unavailable' }
+  if (world.buildProgress[buildingId] < world.buildTotal[buildingId]) return { kind: 'unfinished' }
   const currentLvl = type === 'meleeDmg' ? world.meleeDmgLvl[team]
     : type === 'meleeHp' ? world.meleeHpLvl[team]
     : world.rangedDmgLvl[team]
-  if (currentLvl >= def.maxLevel) return false
+  if (currentLvl >= def.maxLevel) return { kind: 'max-level' }
   const cost = researchCost(world, team, type)
-  if (world.gold[team] < cost.gold || world.wood[team] < cost.wood) return false
+  if (world.gold[team] < cost.gold) return { kind: 'gold', short: Math.ceil(cost.gold - world.gold[team]) }
+  if (world.wood[team] < cost.wood) return { kind: 'wood', short: Math.ceil(cost.wood - world.wood[team]) }
+  return null
+}
+
+/** Research an upgrade at a building. Returns true if successful. */
+export function researchUpgrade(world: World, buildingId: number, type: UpgradeType): boolean {
+  if (researchRefusal(world, buildingId, type) !== null) return false
+  const team = world.team[buildingId] as 0 | 1
+  const cost = researchCost(world, team, type)
   world.gold[team] -= cost.gold
   world.wood[team] -= cost.wood
   if (type === 'meleeDmg') world.meleeDmgLvl[team]++

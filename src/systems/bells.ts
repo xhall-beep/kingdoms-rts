@@ -3,7 +3,9 @@ import type { System, World } from '../core/World.ts'
 /**
  * The Three Bells — the match clock made audible (v2.0 spec, section 4).
  *
- *   First Bell  (3:00): the quiet opening ends. The AI launches its first probe.
+ *   First Bell  (3:00): the quiet opening ends; the raid phase begins. The
+ *     first probe follows once the AI's opening advance floor passes
+ *     (225s/240s by personality — OPENING_ADVANCE_DELAY_SEC in opponent.ts).
  *   Second Bell (6:00): the Season Wheel turns; Elder Vaults unseal.
  *   Third Bell  (9:00): Tier 3 unlocks; Divine Creatures unleash; mines collapse.
  *

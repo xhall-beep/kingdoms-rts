@@ -1430,8 +1430,9 @@ export class OpponentAI implements System {
 
   /** Once strong enough, idle soldiers march on the enemy hall (or search for it). */
   private attack(world: World, hall: number, soldiers: number[]): void {
-    // The quiet opening: no AI attacks before the First Bell (3:00).
-    // The Warlord personality still hits *at* the bell — see tuning.
+    // The quiet opening: no AI attacks before the First Bell (3:00),
+    // and none advance at the bell itself — the earliest first march
+    // still waits out the per-personality pacing floor below.
     if (world.bellsRung[0] !== 1) return
     // Opening advance delay (pacing slice): even with the bell rung and
     // a wave ready, the first march waits for the per-personality floor.

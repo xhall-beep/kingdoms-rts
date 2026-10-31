@@ -147,6 +147,13 @@ export function pickAlert(
   return best
 }
 
+/**
+ * The match-start line for local play (see HudImpl.announceOpening).
+ * Exported so tests pin the exact shipped copy.
+ */
+export const OPENING_BANNER_TEXT =
+  'Build, train, and destroy the enemy — or hold the shrine to drain their VP to 0.'
+
 export interface Hud {
   render(world: World): void
   setPvpActive(active: boolean): void
@@ -347,7 +354,8 @@ export class HudImpl implements Hud {
         <p><b>Drag</b> pans in <b>✋ Move</b> mode. Switch to <b>▦ Select</b> mode (toolbar, bottom) and any drag draws a selection box. <b>Pinch</b> zooms in both modes.</p>
         <p><b>Double-tap</b> or <b>long-press</b> a unit to select all of its type on screen.</p>
         <p><b>Cancel</b> backs out of placing a building or an armed Move/Attack/Gather order without issuing it. <b>Stop</b> halts a unit — it delivers what it carries, then waits for you.</p>
-        <p>Use the <b>menu</b> to build, train, save, and pick factions.</p>
+        <p><b>Build:</b> select a <b>Worker</b>, then tap <b>Build ▸</b>. <b>Train</b> and <b>research</b>: select the building that offers them. Idle workers gather on their own.</p>
+        <p>The <b>☰ menu</b> holds Pause, Save, Load, Replay, New Game, the other game modes, AI settings, and faction picks.</p>
         <button id="hud-tutorial-close">Got it!</button>
       </div>
       <div class="hud-build-stamp" id="hud-build-stamp"></div>`
@@ -606,22 +614,62 @@ export class HudImpl implements Hud {
    * events). Before the lease existed, updateBanner — which runs later
    * in the same update() — hid the banner in the very frame one of
    * these writers showed it, so transient banners never displayed. */
-  private showBanner(text: string, ms: number): void {
+  private showBanner(text: string, ms: number, className = 'hud-banner'): void {
     const el = this.bannerEl
     if (!el) return
     el.textContent = text
-    el.className = 'hud-banner'
+    el.className = className
     el.hidden = false
     this.bannerLeaseUntil = performance.now() + ms
   }
 
+  /**
+   * Opening direction for a local match (basics audit F1, 2026-10-31):
+   * local play used to start in total silence — no banner, no
+   * objective — and the first banner a new player ever saw named the
+   * unexplained First Bell at 3:00. main.ts calls this once for the
+   * standard local mode; PvP and practice announce their own starts
+   * through the lobby, and the special modes carry their own overlays.
+   * Every claim in the line is a shipped fact: build/train are the
+   * opening verbs (cards), annihilation is the victory system's
+   * elimination rule, and a held shrine drains the enemy's VP to the
+   * same system's VP defeat. The note class (smaller, wrapping) is
+   * what lets one honest line fit a 412px screen — the 22px nowrap
+   * announcement style fits ~30 characters.
+   */
+  announceOpening(): void {
+    this.showBanner(OPENING_BANNER_TEXT, 5000, 'hud-banner hud-banner-note')
+  }
+
+  /**
+   * A refused command names its reason in the banner lane (basics
+   * audit F5): the error tint keeps it from reading as an
+   * announcement, and the 3000ms lease matches the PvP lobby's error
+   * precedent. The text comes from the caller — main.ts formats the
+   * RefusalReason the sim's own guard chain computed.
+   */
+  announceRefusal(text: string): void {
+    this.showBanner(text, 3000, 'hud-banner hud-banner-error')
+  }
+
   /** The Three Bells: announce each bell once via the HUD banner when it rings. */
   private announceBells(world: World): void {
-    const names = ['🔔 First Bell — the Raid Bell', '🔔 Second Bell — the Turn', '🔔 Third Bell — the War Bell']
+    // The First Bell carries its meaning with it (audit F1): the bare
+    // name told a cold player nothing. bells.ts's contract is that the
+    // First Bell ends the quiet opening and opens the raid phase — the
+    // first probe itself waits out the AI's opening advance floor
+    // (225s aggressor/defender, 240s expander; OPENING_ADVANCE_DELAY_SEC),
+    // so the banner announces the probe as coming, never as launched.
+    // The note class gives the longer line room to fit.
+    const names = [
+      "🔔 First Bell — the Raid Bell: the enemy's first probe is coming",
+      '🔔 Second Bell — the Turn',
+      '🔔 Third Bell — the War Bell',
+    ]
     for (let i = 0; i < 3; i += 1) {
       if (world.bellsRung[i] === 1 && !this.announcedBells[i]) {
         this.announcedBells[i] = true
-        this.showBanner(names[i], 4000)
+        this.showBanner(names[i], 4000, i === 0 ? 'hud-banner hud-banner-note' : 'hud-banner')
         try {
           if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate(80)
         } catch { /* noop */ }
