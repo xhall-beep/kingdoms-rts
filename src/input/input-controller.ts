@@ -335,11 +335,13 @@ export class InputControllerImpl implements InputController {
   /**
    * Select all idle player workers (classic RTS idle-worker button).
    * A worker is idle when in STATE_IDLE and not carrying resources.
+   * Returns how many were selected, so the caller can answer an
+   * empty tap (basics slice 4) instead of leaving it silent.
    */
-  selectIdleWorkers(): void {
+  selectIdleWorkers(): number {
     const world = this.world
     const renderer = this.renderer
-    if (!world || !renderer) return
+    if (!world || !renderer) return 0
     const idle: number[] = []
     for (const id of world.entities.keys()) {
       if (
@@ -353,6 +355,7 @@ export class InputControllerImpl implements InputController {
     }
     this.selected = idle
     renderer.setSelection(this.selected)
+    return idle.length
   }
 
   /** Stop all selected units: cancel movement, attacks, and other orders. */

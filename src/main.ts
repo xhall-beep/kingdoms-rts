@@ -34,7 +34,7 @@ import {
   writeSave,
 } from './session/save-load.ts'
 import type { AIDifficulty, AIPersonality } from './ai/opponent'
-import { ALERT_EDGE_MARGIN_PX, HudImpl } from './ui/hud'
+import { ALERT_EDGE_MARGIN_PX, HudImpl, NO_IDLE_WORKERS_TEXT } from './ui/hud'
 import { PvPGame } from './net/pvp-game.ts'
 import { PvpAiGame } from './net/pvp-ai.ts'
 import type { AiPracticeTier } from './net/pvp-ai.ts'
@@ -409,7 +409,13 @@ export function initializeGame(): GameComposition {
     onMode: (mode) => composition.inputController.setMode(mode),
     onBuildType: (type) => composition.inputController.setPendingBuilding(type),
     onSelectBuilding: (kind) => composition.inputController.selectBuilding(kind),
-    onSelectIdleWorkers: () => composition.inputController.selectIdleWorkers(),
+    onSelectIdleWorkers: () => {
+      // Basics slice 4 (audit F8 follow-up): an Idle tap that
+      // selects nothing used to answer with silence. Name the
+      // state in the refusal lane instead of leaving a dead tap.
+      const n = composition.inputController.selectIdleWorkers()
+      if (n === 0) composition.hud.announceRefusal(NO_IDLE_WORKERS_TEXT)
+    },
     onLocateBase: () => composition.inputController.centerOnBase(),
     onAlertJump: (x, z) => composition.renderer.centerOn(x, z),
     onStop: () => composition.inputController.stopSelected(),

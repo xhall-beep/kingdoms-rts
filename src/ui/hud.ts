@@ -178,6 +178,18 @@ export const VP_DRAIN_BANNER_TEXT =
   '⚠ The enemy holds the shrine — your VP is draining. Drive them off it, or hold it to drain theirs.'
 
 /**
+ * Empty Idle Workers answer (basics audit F8 follow-up, slice 4):
+ * the 👷 Idle button used to answer a tap that selected nothing
+ * with nothing — no selection change, no sound, no text — so a
+ * player whose workers are all gathering (the opening's normal
+ * state) read it as a dead button. The banner confirms the tap
+ * registered and names the state. Worded as the outcome alone,
+ * which is true whether the player has busy workers or none at
+ * all; the count comes from the controller, not a guess.
+ */
+export const NO_IDLE_WORKERS_TEXT = 'No idle workers'
+
+/**
  * One-shot watch for the first enemy-shrine VP drain (audit F3).
  * shrines.ts is the sim's only VP writer, so a DROP in the local
  * team's VP is exactly an enemy-held shrine draining — no other
