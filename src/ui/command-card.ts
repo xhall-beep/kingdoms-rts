@@ -1,6 +1,7 @@
 /** RTS-style command card: portrait, stats, and command grid per selection. */
 import type { World } from '../core/World'
 import {
+  HARVEST_WOOD,
   KIND_ARCHERY,
   KIND_BARRACKS,
   KIND_FARM,
@@ -12,8 +13,19 @@ import {
   KIND_TREE,
   KIND_WORKER,
   KIND_WORKSHOP,
+  MILITIA_DURATION_SEC,
+  MILITIA_MUSTER_RADIUS,
+  STATE_ATTACK,
+  STATE_ATTACKMOVE,
+  STATE_BUILD,
+  STATE_GATHER,
+  STATE_HOLD,
+  STATE_MOVE,
+  STATE_PATROL,
+  STATE_RETURN,
   TEAM_PLAYER,
 } from '../core/World'
+import type { MilitiaRefusal } from '../core/World'
 import { getUnits } from '../data/stats.ts'
 import type { UnitType } from '../data/units.ts'
 import { ORC_TIER_NAMES, TIER_UPGRADES, researchCost, researchRefusal, trainCostFor, trainRefusal, trainingStateFor, trainingQueueFor, upgradeRefusal } from '../systems/production.ts'
@@ -31,6 +43,7 @@ import {
   buildingPrereqMet,
   canAfford,
 } from '../world/construction.ts'
+import type { PlacementRefusal } from '../world/construction.ts'
 import { FACTIONS } from '../data/factions.ts'
 import type { FactionId } from '../data/factions.ts'
 
@@ -116,6 +129,82 @@ export function formatQueueRuns(world: World, team: number, queue: readonly Unit
     i = j
   }
   return runs.join(' · ')
+}
+
+/**
+ * What a selected unit is DOING right now (basics slice 3, audit F8):
+ * the card used to be a pure stat sheet — a worker mid-job and a
+ * worker standing idle rendered identically, and the opening
+ * auto-gather assignment was invisible. Read from the unit's own
+ * state fields only: the sim state, its target node's kind for the
+ * gather flavour, its harvest assignment as the fallback while a
+ * target is being (re)acquired, and the militia window. Length
+ * discipline: every string fits the 16-character ceiling the build
+ * grid's note line measured (slice 2) — the tightest note geometry
+ * on any card — so the line is safe at any card width.
+ */
+export function unitStateText(world: World, id: number): string {
+  if (world.kind[id] === KIND_WORKER && world.isMilitia(id)) return 'On militia duty'
+  switch (world.state[id]) {
+    case STATE_GATHER: {
+      const target = world.targetId[id]
+      const targetKind = target >= 0 ? world.kind[target] : -1
+      if (targetKind === KIND_GOLDMINE) return 'Gathering gold'
+      if (targetKind === KIND_TREE) return 'Gathering wood'
+      return world.harvestKind[id] === HARVEST_WOOD ? 'Gathering wood' : 'Gathering gold'
+    }
+    case STATE_RETURN: return 'Returning'
+    case STATE_ATTACK: return 'Fighting'
+    case STATE_BUILD: return 'Building'
+    case STATE_HOLD: return 'Holding'
+    case STATE_MOVE:
+    case STATE_ATTACKMOVE:
+    case STATE_PATROL: return 'Moving'
+    default: return 'Idle'
+  }
+}
+
+/**
+ * The Militia Bell's real terms (basics slice 3, audit F6): radius
+ * and duration read from the militia system's own constants — the
+ * same values World.ringMilitiaBell enforces — plus the gathering
+ * freeze the ring imposes (militia drop their cargo and stop).
+ */
+export const BELL_TERMS_TEXT =
+  `🔔 Bell: Peasants within ${MILITIA_MUSTER_RADIUS} fight for ${MILITIA_DURATION_SEC}s — gathering stops`
+
+/** Banner text for a refused Militia Bell ring (audit F6): the
+ * reason comes from World.militiaRefusal — ringMilitiaBell's own
+ * guard chain — this only phrases it. */
+export function militiaRefusalBannerText(reason: MilitiaRefusal): string {
+  switch (reason) {
+    case 'none-in-radius': return `No Peasants within ${MILITIA_MUSTER_RADIUS} of the Hall`
+    case 'cooldown': return 'The Bell is still recharging'
+    case 'no-hall': return 'No Town Hall standing'
+    case 'unavailable': return 'Not available here'
+  }
+}
+
+/** Banner text for a refused placement tap (basics slice 3, audit
+ * F10): the reason comes from placementRefusal — canPlaceStructure's
+ * own checks — this only phrases it. `type` is the building the
+ * player was placing (the prereq line names its gate from
+ * BUILDING_REQUIRES, the same table the check reads). */
+export function placementRefusalBannerText(
+  reason: PlacementRefusal,
+  type: BuildingType,
+): string {
+  switch (reason.kind) {
+    case 'gold': return `Need ${reason.short} more gold`
+    case 'wood': return `Need ${reason.short} more wood`
+    case 'prereq': {
+      const req = BUILDING_REQUIRES[type]
+      return req ? `Requires a finished ${BUILDINGS[req].name}` : 'Locked by tech'
+    }
+    case 'blocked-unit': return reason.own ? 'Your own unit is standing there' : 'A unit is standing there'
+    case 'blocked': return 'Blocked — pick another spot'
+    case 'faction-rule': return 'Your faction cannot raise this'
+  }
 }
 
 /**
@@ -437,6 +526,29 @@ export function renderCommandCard(
     card.appendChild(line)
   }
 
+  // --- Unit state line (basics slice 3, audit F8): what the selected
+  // unit is doing right now, read from its own state fields — the
+  // line that makes the opening auto-gather assignment, a return
+  // trip, or a fight visible on the card instead of guessable only
+  // by watching the unit. ---
+  if (isUnit) {
+    const stateLine = document.createElement('div')
+    stateLine.className = 'cmd-statline'
+    stateLine.textContent = unitStateText(world, id)
+    card.appendChild(stateLine)
+  }
+
+  // --- Militia Bell terms (basics slice 3, audit F6): the hall card
+  // states the Bell's radius, duration, and gathering freeze BEFORE
+  // the first ring — the audit's cold player mustered blind and
+  // froze his whole economy for 25s without a word of warning. ---
+  if (isOwn && isBuilding && kind === KIND_HALL && world.factionOfTeam[world.team[id] as 0 | 1] === 'human') {
+    const bellLine = document.createElement('div')
+    bellLine.className = 'cmd-statline'
+    bellLine.textContent = BELL_TERMS_TEXT
+    card.appendChild(bellLine)
+  }
+
   // --- Construction state: an unfinished structure shows its progress
   // and (for our own) how many builders are on it. The multi-builder
   // mechanic is invisible without this, and invisible mechanics read
@@ -659,6 +771,13 @@ export function renderCommandCard(
           onCooldown ? '🔔 Bell (cd)' : '🔔 Bell',
           () => cb.onMilitia(),
           onCooldown,
+          undefined,
+          // The cost half of the Bell's terms rides the button itself
+          // (radius + duration are on the card's terms line above).
+          // Short form: 'Gathering stops' ellipsized in this cell at
+          // 412px (frame-measured, basics slice 3) — the full wording
+          // lives on the terms line, this is its flag.
+          'No gathering',
         )
       }
       // Orc in-place upgrading: reforge the War-Hall / Foundry through 3 tiers.

@@ -173,6 +173,24 @@ export interface DeathPop {
   age: number
 }
 
+/**
+ * Militia Bell terms (human racial) — the single source every surface
+ * reads: World.ringMilitiaBell enforces them, the AI mirrors the
+ * radius, and the command card quotes them. They used to live as
+ * literals inside ringMilitiaBell, which is why the Bell button could
+ * not tell the player any of them (basics audit F6).
+ */
+export const MILITIA_MUSTER_RADIUS = 25
+export const MILITIA_DURATION_SEC = 25
+export const MILITIA_COOLDOWN_SEC = 120
+
+/**
+ * Why a Militia Bell ring would muster nothing — the read-only mirror
+ * of ringMilitiaBell's guard chain (see World.militiaRefusal). The UI
+ * names the reason instead of answering the tap with silence.
+ */
+export type MilitiaRefusal = 'unavailable' | 'cooldown' | 'no-hall' | 'none-in-radius'
+
 export class World {
   // ---- spatial (struct of arrays) ----
   readonly positionX: Float32Array
@@ -878,14 +896,12 @@ export class World {
       }
     }
     if (!found) return 0
-    const MUSTER_RADIUS = 25
-    const DURATION = 25
     let mustered = 0
     for (const id of this.entities.keys()) {
       if (this.team[id] !== team || this.kind[id] !== KIND_WORKER) continue
       const d = Math.hypot(this.positionX[id] - hx, this.positionZ[id] - hz)
-      if (d > MUSTER_RADIUS) continue
-      this.militiaUntil[id] = this.matchTime + DURATION
+      if (d > MILITIA_MUSTER_RADIUS) continue
+      this.militiaUntil[id] = this.matchTime + MILITIA_DURATION_SEC
       // Drop what they're carrying and stand ready — militia don't gather.
       this.carryAmount[id] = 0
       this.carryKind[id] = 0
@@ -893,8 +909,38 @@ export class World {
       mustered += 1
     }
     if (mustered === 0) return 0
-    this.militiaCooldown[team] = this.matchTime + 120
+    this.militiaCooldown[team] = this.matchTime + MILITIA_COOLDOWN_SEC
     return mustered
+  }
+
+  /**
+   * Read-only mirror of ringMilitiaBell's guard chain, in the same
+   * order: returns null exactly when a ring would muster at least one
+   * Peasant, otherwise the first guard that stops it. Writes nothing —
+   * the HUD calls this after a refused ring to name the reason (the
+   * failed apply changed no state, so it names the same cause).
+   */
+  militiaRefusal(team: 0 | 1): MilitiaRefusal | null {
+    if (this.factionOfTeam[team] !== 'human') return 'unavailable'
+    if (this.matchTime < this.militiaCooldown[team]) return 'cooldown'
+    let hx = 0
+    let hz = 0
+    let found = false
+    for (const id of this.entities.keys()) {
+      if (this.team[id] === team && this.kind[id] === KIND_HALL) {
+        hx = this.positionX[id]
+        hz = this.positionZ[id]
+        found = true
+        break
+      }
+    }
+    if (!found) return 'no-hall'
+    for (const id of this.entities.keys()) {
+      if (this.team[id] !== team || this.kind[id] !== KIND_WORKER) continue
+      const d = Math.hypot(this.positionX[id] - hx, this.positionZ[id] - hz)
+      if (d <= MILITIA_MUSTER_RADIUS) return null
+    }
+    return 'none-in-radius'
   }
 
   /** True while the given worker serves as militia. */

@@ -24,7 +24,8 @@ import type { BuildingType } from '../data/buildings.ts'
 import type { Command } from '../session/commands.ts'
 import type { Renderer } from '../render/renderer'
 import { sfx } from '../ui/feedback.ts'
-import { canPlaceStructure, placeStructure, BUILDING_TYPE_BY_KIND } from '../world/construction.ts'
+import { canPlaceStructure, placeStructure, placementRefusal, BUILDING_TYPE_BY_KIND } from '../world/construction.ts'
+import type { PlacementRefusal } from '../world/construction.ts'
 import { orderAttack, orderAttackMove } from '../systems/combat'
 import { buildersOnSite, buildSurchargeAmount, orderBuild, orderGather } from '../systems/gather'
 import { setRally } from '../systems/production.ts'
@@ -52,6 +53,8 @@ export interface InputController {
   centerOnBase(): void
   /** Would the pending building actually place at the current ghost spot? */
   isGhostValid(world: World): boolean
+  /** Why the pending building would refuse at the current ghost spot (null = it places). */
+  ghostRefusal(world: World): PlacementRefusal | null
 }
 
 const PICK_RADIUS_PX = 40 // minimum tap target in screen pixels (finger-friendly)
@@ -999,8 +1002,13 @@ export class InputControllerImpl implements InputController {
     } else {
       // Blocked footprint / can't afford / faction rule: say so audibly —
       // a silent no-op here reads as "the game ignored my tap". The mode
-      // stays armed so the player can pick another spot.
+      // stays armed so the player can pick another spot. The reason
+      // itself goes to the banner lane through the refused listener:
+      // placementRefusal recomputes the same guard chain that just
+      // refused (the failed apply changed no state).
       sfx.error()
+      const reason = placementRefusal(world, this.localTeam, type, x, z)
+      if (reason) this.placementRefusedListener?.(reason, type)
     }
   }
 
@@ -1086,6 +1094,24 @@ export class InputControllerImpl implements InputController {
   isGhostValid(world: World): boolean {
     if (this.pendingBuilding === null || this.ghostPos === null) return true
     return canPlaceStructure(world, this.localTeam, this.pendingBuilding, this.ghostPos.x, this.ghostPos.z)
+  }
+
+  /** Why the pending building would refuse at the current ghost
+   * position — placementRefusal over the same spot isGhostValid
+   * checks, so the ghost can distinguish a unit standing in the way
+   * (amber) from a spot that can never hold the building (red). */
+  ghostRefusal(world: World): PlacementRefusal | null {
+    if (this.pendingBuilding === null || this.ghostPos === null) return null
+    return placementRefusal(world, this.localTeam, this.pendingBuilding, this.ghostPos.x, this.ghostPos.z)
+  }
+
+  private placementRefusedListener: ((reason: PlacementRefusal, type: BuildingType) => void) | null = null
+
+  /** A refused placement tap names its reason through this listener
+   * (composition wires it to the HUD banner lane) — the beep alone
+   * could not say which cause fired (basics audit F10). */
+  setPlacementRefusedListener(fn: ((reason: PlacementRefusal, type: BuildingType) => void) | null): void {
+    this.placementRefusedListener = fn
   }
 
   /** Right-click: attack enemies, gather from nodes, move otherwise. */

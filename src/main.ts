@@ -18,7 +18,7 @@ import { ShrineSystemImpl } from './systems/shrines'
 import { MovementSystemImpl } from './systems/movement'
 import { ProductionSystemImpl } from './systems/production'
 import { cancelTrainActive, cancelTrainQueued, enqueueTrain, researchRefusal, researchUpgrade, trainRefusal, upgradeBuilding, upgradeRefusal } from './systems/production'
-import { refusalBannerText } from './ui/command-card.ts'
+import { militiaRefusalBannerText, placementRefusalBannerText, refusalBannerText } from './ui/command-card.ts'
 import { sfx } from './ui/feedback.ts'
 import type { UpgradeType } from './data/upgrades.ts'
 import { VictorySystemImpl } from './systems/victory'
@@ -34,7 +34,7 @@ import {
   writeSave,
 } from './session/save-load.ts'
 import type { AIDifficulty, AIPersonality } from './ai/opponent'
-import { HudImpl } from './ui/hud'
+import { ALERT_EDGE_MARGIN_PX, HudImpl } from './ui/hud'
 import { PvPGame } from './net/pvp-game.ts'
 import { PvpAiGame } from './net/pvp-ai.ts'
 import type { AiPracticeTier } from './net/pvp-ai.ts'
@@ -503,10 +503,20 @@ export function initializeGame(): GameComposition {
       // every local mode — the controller's default and PvP restore).
       const team = composition.inputController.getLocalTeam()
       const world = composition.engine.world
-      dispatchHudCommand(
+      const ok = dispatchHudCommand(
         { type: 'militia', step: composition.engine.getSimulationSteps(), team },
         () => world.ringMilitiaBell(team) > 0,
       )
+      if (!ok) {
+        // A zero-muster ring used to be a TOTAL silent no-op — not
+        // even the error beep train refusals get (audit F6). Name the
+        // reason from the bell's own guard chain (the failed apply
+        // changed no state, so militiaRefusal names the same cause)
+        // and beep, like every other refused command.
+        const reason = world.militiaRefusal(team)
+        if (reason) composition.hud.announceRefusal(militiaRefusalBannerText(reason))
+        sfx.error()
+      }
     },
     onUpgrade: () => {
       const selected = composition.inputController.getSelected()
@@ -687,7 +697,15 @@ export function initializeGame(): GameComposition {
   if (gameMode === 'rts') composition.hud.announceOpening()
   // Alert chip: the renderer owns camera truth — wire its off-screen
   // probe so the chip only fires for events the player cannot see.
-  composition.hud.setAlertViewportProbe((x, z) => composition.renderer.isWorldPointOnScreen(x, z))
+  // The probe carries the edge margin (audit F6): a fight hugging the
+  // frame edge is not "seen" in any useful sense and still chips.
+  composition.hud.setAlertViewportProbe((x, z) => composition.renderer.isWorldPointOnScreen(x, z, ALERT_EDGE_MARGIN_PX))
+  // Placement refusals name their reason in the banner lane (audit
+  // F10): the input controller computes the reason from the placement
+  // guard chain at the refused tap; here it becomes banner text.
+  composition.inputController.setPlacementRefusedListener((reason, type) => {
+    composition.hud.announceRefusal(placementRefusalBannerText(reason, type))
+  })
   // Every armed-mode change (card buttons, placement, auto-reset after an
   // order) syncs the toolbar's Cancel button through this listener.
   composition.inputController.setModeListener((mode) => composition.hud.setInputMode(mode))
@@ -764,11 +782,21 @@ export function initializeGame(): GameComposition {
     }
     // Update building placement ghost. Validity is REAL (footprint free +
     // affordable + faction rules) — the ghost used to be hardcoded green,
-    // so a doomed placement looked identical to a good one.
+    // so a doomed placement looked identical to a good one. The refusal
+    // rides along (audit F10): a unit standing in the footprint draws
+    // AMBER — it can be ordered away — while terrain, buildings, and
+    // every other refusal stay red.
     const ghost = composition.inputController.getGhostPosition()
     const pending = composition.inputController.getPendingBuilding()
     if (ghost && pending) {
-      composition.renderer.setGhost(pending, ghost.x, ghost.z, composition.inputController.isGhostValid(w))
+      const refusal = composition.inputController.ghostRefusal(w)
+      composition.renderer.setGhost(
+        pending,
+        ghost.x,
+        ghost.z,
+        refusal === null,
+        refusal?.kind === 'blocked-unit',
+      )
     } else {
       composition.renderer.setGhost(null, 0, 0, true)
     }

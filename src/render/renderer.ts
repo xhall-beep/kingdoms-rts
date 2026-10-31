@@ -226,11 +226,21 @@ export class Renderer {
    * can already see raises no chip (flashes and rings cover it).
    * Before the first resize the viewport is unmeasured — report
    * off-screen so an alert is never silently swallowed.
+   *
+   * `marginPx` insets the viewport on every side: a point inside the
+   * margin band counts as NOT on screen. The alert chip wires a
+   * margin (basics audit F6): the audit's first fight landed ~11px
+   * from the frame edge — technically "on screen", effectively
+   * invisible — and the chip stayed down. Only a fight comfortably
+   * inside the frame suppresses the chip now.
    */
-  isWorldPointOnScreen(x: number, z: number): boolean {
+  isWorldPointOnScreen(x: number, z: number, marginPx = 0): boolean {
     if (this.cssWidth <= 0 || this.cssHeight <= 0) return false
     const s = this.toScreen(x, z)
-    return s.x >= 0 && s.x <= this.cssWidth && s.y >= 0 && s.y <= this.cssHeight
+    return (
+      s.x >= marginPx && s.x <= this.cssWidth - marginPx &&
+      s.y >= marginPx && s.y <= this.cssHeight - marginPx
+    )
   }
 
   pan(dxPixels: number, dyPixels: number): void {
@@ -274,13 +284,19 @@ export class Renderer {
   private ghostX = 0
   private ghostZ = 0
   private ghostValid = true
+  /** An invalid ghost blocked by a unit (vs terrain/buildings/money):
+   * drawn amber, not red — the blocker can simply be ordered away,
+   * which is a different problem from a spot that can never hold the
+   * building (basics audit F10). */
+  private ghostBlockedByUnit = false
 
   /** Set the building placement ghost preview. */
-  setGhost(building: string | null, x: number, z: number, valid: boolean): void {
+  setGhost(building: string | null, x: number, z: number, valid: boolean, blockedByUnit = false): void {
     this.ghostBuilding = building
     this.ghostX = x
     this.ghostZ = z
     this.ghostValid = valid
+    this.ghostBlockedByUnit = !valid && blockedByUnit
   }
 
   private moveIndicators: { x: number; z: number; ttl: number; color: string }[] = []
@@ -575,10 +591,10 @@ export class Renderer {
     const p = this.toScreen(this.ghostX, this.ghostZ)
     const size = 40 // approx building footprint in px
     ctx.globalAlpha = 0.5
-    ctx.fillStyle = this.ghostValid ? '#4ade80' : '#ef4444'
+    ctx.fillStyle = this.ghostValid ? '#4ade80' : this.ghostBlockedByUnit ? '#f59e0b' : '#ef4444'
     ctx.fillRect(p.x - size / 2, p.y - size / 2, size, size)
     ctx.globalAlpha = 1
-    ctx.strokeStyle = this.ghostValid ? '#22c55e' : '#dc2626'
+    ctx.strokeStyle = this.ghostValid ? '#22c55e' : this.ghostBlockedByUnit ? '#d97706' : '#dc2626'
     ctx.lineWidth = 2
     ctx.strokeRect(p.x - size / 2, p.y - size / 2, size, size)
   }

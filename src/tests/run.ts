@@ -62,6 +62,7 @@ import '../net/client.test.ts'
 import './pvp-lobby-queue.test.ts'
 import './combat-motion.test.ts'
 import './basics-slice2.test.ts'
+import './basics-slice3.test.ts'
 const ok = report()
 const _p = (globalThis as unknown as { process?: { exit(c: number): void } }).process
 if (_p) _p.exit(ok ? 0 : 1)

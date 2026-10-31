@@ -15,6 +15,8 @@ import {
   KIND_BARRACKS,
   KIND_FARM,
   KIND_HALL,
+  KIND_MELEE,
+  KIND_RANGED,
   KIND_SMITHY,
   KIND_WORKER,
   KIND_WORKSHOP,
@@ -25,7 +27,7 @@ import {
 import { buildersOnSite } from '../systems/gather.ts'
 import { WILD_HEAT_THRESHOLD } from '../systems/living-wild.ts'
 import { BUILDING_TYPE_BY_KIND } from '../world/construction.ts'
-import { renderCommandCard } from './command-card.ts'
+import { renderCommandCard, unitStateText } from './command-card.ts'
 import { BUILD_STAMP_LABEL } from '../build-stamp.ts'
 import { isHeldWorker } from '../render/renderer.ts'
 
@@ -153,6 +155,60 @@ export function pickAlert(
  */
 export const OPENING_BANNER_TEXT =
   'Build, train, and destroy the enemy — or hold the shrine to drain their VP to 0.'
+
+/**
+ * Viewport margin (CSS px) for the alert chip's on-screen test
+ * (basics audit F6): an event inside this band at the frame edge
+ * counts as NOT comfortably on screen and still raises its chip.
+ * main.ts wires it into the renderer's probe. 56px ≈ one tap target:
+ * the audit's first fight sat ~11px from the right edge — visible on
+ * paper, invisible in play.
+ */
+export const ALERT_EDGE_MARGIN_PX = 56
+
+/**
+ * First-VP-drain explanation (basics audit F3): the enemy's shrine
+ * presence starts draining the player's VP from ~0:10, under fog,
+ * and until this slice nothing anywhere named VP, shrines, or the
+ * counter. Every claim is a shrines.ts fact: the drain runs only
+ * while the holder keeps a unit on the shrine (so driving them off
+ * stops it), and holding it yourself drains THEIR VP instead.
+ */
+export const VP_DRAIN_BANNER_TEXT =
+  '⚠ The enemy holds the shrine — your VP is draining. Drive them off it, or hold it to drain theirs.'
+
+/**
+ * One-shot watch for the first enemy-shrine VP drain (audit F3).
+ * shrines.ts is the sim's only VP writer, so a DROP in the local
+ * team's VP is exactly an enemy-held shrine draining — no other
+ * cause exists to confuse it with. HUD-side state only (never
+ * hashed, never saved): the latch is per match — a fresh world
+ * object re-arms it and re-baselines the reading, so a drop is
+ * measured against this match's own VP, never a previous one.
+ */
+export class VpDrainWatch {
+  private world: World | null = null
+  private lastVp = 0
+  private announced = false
+
+  /** True exactly once per match: the first time the local VP drops. */
+  observe(world: World): boolean {
+    const vp = world.victoryPoints[TEAM_PLAYER]
+    if (this.world !== world) {
+      this.world = world
+      this.lastVp = vp
+      this.announced = false
+      return false
+    }
+    const dropped = vp < this.lastVp
+    this.lastVp = vp
+    if (dropped && !this.announced) {
+      this.announced = true
+      return true
+    }
+    return false
+  }
+}
 
 export interface Hud {
   render(world: World): void
@@ -355,6 +411,7 @@ export class HudImpl implements Hud {
         <p><b>Double-tap</b> or <b>long-press</b> a unit to select all of its type on screen.</p>
         <p><b>Cancel</b> backs out of placing a building or an armed Move/Attack/Gather order without issuing it. <b>Stop</b> halts a unit — it delivers what it carries, then waits for you.</p>
         <p><b>Build:</b> select a <b>Worker</b>, then tap <b>Build ▸</b>. <b>Train</b> and <b>research</b>: select the building that offers them. Idle workers gather on their own.</p>
+        <p><b>Shrine & VP:</b> hold the centre shrine with a unit standing on it and the enemy's <b>VP</b> drains away — a team whose VP reaches 0 loses, and the enemy holding it drains yours the same way.</p>
         <p>The <b>☰ menu</b> holds Pause, Save, Load, Replay, New Game, the other game modes, AI settings, and faction picks.</p>
         <button id="hud-tutorial-close">Got it!</button>
       </div>
@@ -652,6 +709,20 @@ export class HudImpl implements Hud {
     this.showBanner(text, 3000, 'hud-banner hud-banner-error')
   }
 
+  private vpDrainWatch = new VpDrainWatch()
+
+  /**
+   * First enemy-shrine drain explains itself, once per match
+   * (audit F3): the watch detects the local VP's first drop and the
+   * banner names the cause and the counter through the same lease
+   * every other transient announcement uses.
+   */
+  private announceVpDrain(world: World): void {
+    if (this.vpDrainWatch.observe(world)) {
+      this.showBanner(VP_DRAIN_BANNER_TEXT, 5000, 'hud-banner hud-banner-note')
+    }
+  }
+
   /** The Three Bells: announce each bell once via the HUD banner when it rings. */
   private announceBells(world: World): void {
     // The First Bell carries its meaning with it (audit F1): the bare
@@ -839,6 +910,7 @@ export class HudImpl implements Hud {
       }
     }
     this.updateAlerts(world)
+    this.announceVpDrain(world)
     this.announceBells(world)
     // Counts are computed once and split across the two readouts: the top
     // strip carries VP + faction extras; the dashboard idle row carries
@@ -997,6 +1069,12 @@ export class HudImpl implements Hud {
         stateKey =
           `${world.trainKind[sid]}:${Math.round(world.trainLeft[sid] * 10)}:` +
           `${Math.floor(world.buildProgress[sid])}:${buildersOnSite(world, sid)}:${queueKey}`
+      } else if (k === KIND_WORKER || k === KIND_MELEE || k === KIND_RANGED) {
+        // A selected unit's card carries its current order/state
+        // (basics slice 3, audit F8): key the card on the rendered
+        // state text so an auto-gather assignment, a return trip, or
+        // a fight starting re-renders the line the frame it changes.
+        stateKey = `unit:${unitStateText(world, sid)}`
       }
     }
     const key = `${selKey}|${Math.floor(world.gold[TEAM_PLAYER])}|${Math.floor(world.wood[TEAM_PLAYER])}|${hpKey}|${stateKey}|${this.buildOpen ? 1 : 0}`
