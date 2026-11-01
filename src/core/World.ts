@@ -759,11 +759,21 @@ export class World {
     this.sight[id] = def.sight
     this.buildTotal[id] = def.buildTicks / TICK_RATE
     this.buildProgress[id] = built ? this.buildTotal[id] : 0
-    // Default rally points toward the map center so both teams' workers start
-    // from symmetric positions. A fixed +z offset favored whichever team sat
-    // at +z, handing it ~2.3x gold income in the first 25 seconds.
-    this.rallyX[id] = x - Math.sign(x) * (def.radius + 4)
-    this.rallyZ[id] = z - Math.sign(z) * (def.radius + 4)
+    // Default rally (basics audit F7, slice 5): soldiers muster HOME,
+    // workers walk to work. A Barracks' old centre-ward rally parked
+    // fresh Footmen toward the map centre, where the first enemy wave
+    // met and killed them before it ever reached the base. A building
+    // that trains combat units now rallies AWAY from the centre (toward
+    // the owning base's corner); the hall keeps its centre-ward rally,
+    // since the gold sits centre-ward of it and a fresh worker walks to
+    // the rally before auto-gathering. Both directions are sign-based,
+    // so the mirror symmetry the old default protected (no fixed +z
+    // offset favoring one team, which once handed it ~2.3x gold income
+    // in the first 25 seconds) still holds exactly.
+    const outward = def.trains.some((t) => t !== 'worker')
+    const dir = outward ? 1 : -1
+    this.rallyX[id] = x + dir * Math.sign(x) * (def.radius + 4)
+    this.rallyZ[id] = z + dir * Math.sign(z) * (def.radius + 4)
     this.state[id] = STATE_IDLE
     this.tier[id] = 1
     this.upgradeLeft[id] = 0
