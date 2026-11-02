@@ -65,6 +65,7 @@ import './basics-slice2.test.ts'
 import './basics-slice3.test.ts'
 import './basics-slice4.test.ts'
 import './basics-slice5.test.ts'
+import './basics-slice6.test.ts'
 const ok = report()
 const _p = (globalThis as unknown as { process?: { exit(c: number): void } }).process
 if (_p) _p.exit(ok ? 0 : 1)

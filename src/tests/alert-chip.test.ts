@@ -141,6 +141,7 @@ suite('alert chip: pickAlert gate')
 
 const NO_COOLDOWN: Record<AlertKind, number> = {
   attack: -1000000,
+  shrine: -1000000,
   treant: -1000000,
   complete: -1000000,
 }

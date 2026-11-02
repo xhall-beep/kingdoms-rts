@@ -368,7 +368,7 @@ test('pickAlert: edge fight raises the chip, centre fight stays down', () => {
   renderer.centerOn(-40, -40, 10)
   const probe = (x: number, z: number): boolean =>
     renderer.isWorldPointOnScreen(x, z, ALERT_EDGE_MARGIN_PX)
-  const lastShown = { attack: -1000000, treant: -1000000, complete: -1000000 }
+  const lastShown = { attack: -1000000, shrine: -1000000, treant: -1000000, complete: -1000000 }
   const edge: AlertEvent = { kind: 'attack', x: -20.5, z: -40, team: TEAM_PLAYER, tick: 100 }
   const centre: AlertEvent = { kind: 'attack', x: -40, z: -40, team: TEAM_PLAYER, tick: 100 }
   assert(pickAlert([edge], TEAM_PLAYER, null, lastShown, 100, probe) !== null, 'edge fight chips')

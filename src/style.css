@@ -458,6 +458,11 @@ code {
   border-color: rgba(125, 208, 138, 0.55);
 }
 
+.hud-alert-shrine {
+  background: rgba(74, 52, 110, 0.94);
+  border-color: rgba(216, 178, 106, 0.65);
+}
+
 @keyframes hud-alert-pulse {
   0%, 100% { opacity: 1; }
   /* The pulse floor was 0.55: at the dip the whole chip — text

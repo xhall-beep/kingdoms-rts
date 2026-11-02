@@ -133,7 +133,7 @@ export interface HitFlash {
 }
 
 /** Event classes the HUD alert chip announces (visual-only). */
-export type AlertKind = 'attack' | 'treant' | 'complete'
+export type AlertKind = 'attack' | 'shrine' | 'treant' | 'complete'
 
 /**
  * Attack alerts are throttled at the source: at most one per team per
@@ -217,7 +217,7 @@ export class World {
   /** Visual-only completion events (building finished, unit trained, research/tier done); not sim state. */
   completionFlashes: CompletionFlash[] = []
 
-  /** Visual-only HUD alert events (own unit/building struck, treant spawn, completion); not sim state. */
+  /** Visual-only HUD alert events (own unit/building struck, shrine capture, treant spawn, completion); not sim state. */
   alertEvents: AlertEvent[] = []
 
   /** Visual-only per-team tick of the last pushed attack alert (the source throttle); not sim state. */

@@ -76,9 +76,25 @@ export class ShrineSystemImpl implements System {
         if (world.team[id] === 0) p0 += 1
         else p1 += 1
       }
+      const prevHolder = world.shrineHeld[sid]
       if (p0 > 0 && p1 === 0) world.shrineHeld[sid] = 0
       else if (p1 > 0 && p0 === 0) world.shrineHeld[sid] = 1
       // Contested or empty: the holder keeps it (no flip-flopping).
+      // Basics slice 6 (audit F3, remaining half): a capture is an
+      // alert-channel event, visual-only like every other alert
+      // (never hashed, never saved). It fires ONLY on a holder
+      // change, and ONLY for the team that just lost the shrine —
+      // that team is the one that must act, and in local play it is
+      // exactly the enemy-capture case the audit found silent: the
+      // VP drain that follows was already bannered once (slice 3),
+      // but the capture itself had no event class at all. Your own
+      // capture alerts the other team's viewer in PvP and nobody in
+      // local play, which is the correct shape for good news.
+
+      if (world.shrineHeld[sid] !== prevHolder && (world.shrineHeld[sid] === 0 || world.shrineHeld[sid] === 1)) {
+        const newHolder = world.shrineHeld[sid] as 0 | 1
+        world.pushAlert('shrine', sx, sz, (1 - newHolder) as 0 | 1)
+      }
 
       // Drain the enemy's Victory Points — but only while the holder
       // keeps a living unit inside the radius. Presence is the upkeep:

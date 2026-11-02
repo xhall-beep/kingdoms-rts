@@ -88,7 +88,7 @@ export function wildWrathDisplay(world: World): WildWrathDisplay {
  *    flashes and rings cover the moment (decided at DISPLAY time via
  *    the renderer's camera probe: the camera may have moved since
  *    the event was pushed).
- *  - ONE chip at a time, priority attack > treant > complete; a
+ *  - ONE chip at a time, priority attack > shrine > treant > complete; a
  *    higher-priority event preempts a lower one, never the reverse.
  *  - PER-CLASS COOLDOWN (10 sim-seconds from show time) so a
  *    sustained battle cannot re-chip every few seconds — the
@@ -97,7 +97,14 @@ export function wildWrathDisplay(world: World): WildWrathDisplay {
  *    the event on screen themselves.
  */
 export const ALERT_PRIORITY: Record<AlertKind, number> = {
-  attack: 3,
+  attack: 4,
+  // Basics slice 6 (audit F3, remaining half): a shrine capture is a
+  // strategic alarm, not a death alarm — below an attack on your own
+  // units, above a treant spawn and a completion. The shrine event
+  // itself is pushed by the shrine system for the LOSING team only:
+  // in local play that is exactly the enemy-capture case the audit
+  // found silent (your own capture is good news and needs no chip).
+  shrine: 3,
   treant: 2,
   complete: 1,
 }
@@ -105,6 +112,7 @@ export const ALERT_PRIORITY: Record<AlertKind, number> = {
 /** Chip text per class. */
 export const ALERT_TEXT: Record<AlertKind, string> = {
   attack: '⚔ Under attack!',
+  shrine: '⚑ Enemy holds the shrine!',
   treant: '🌲 The wild stirs…',
   complete: '✓ Complete',
 }
@@ -303,6 +311,7 @@ export class HudImpl implements Hud {
   /** Per-class tick the chip last showed (display cooldown source). */
   private readonly alertLastShownTick: Record<AlertKind, number> = {
     attack: -1000000,
+    shrine: -1000000,
     treant: -1000000,
     complete: -1000000,
   }
