@@ -107,6 +107,26 @@ export function treeColorsAt(x: number, z: number): { outer: string; inner: stri
 }
 
 /**
+ * Minimum on-screen box (CSS px) for a unit sprite (basics audit F4,
+ * remaining half). The audit measured the peasant's solid figure at
+ * 7.0px wide at zoom 10; the shipped boot zoom is 13, which lifts it
+ * to ~9.1px — still the smallest readable element on a phone screen.
+ * A unit sprite box is r * 2.2, so a worker (radius 0.5) draws 14.3px
+ * at boot zoom, while combat units (radius 0.9, 25.7px box) already
+ * read fine. The floor below only bites for small-radius units at
+ * low zoom: a 19px box holds a ~12.1px solid figure (the sprite's
+ * solid width is 163/256 of its box), still inside the 21px
+ * selection-ring diameter at boot zoom. Render-only: radius,
+ * picking, and sim state are unchanged.
+ */
+export const UNIT_SPRITE_MIN_SIZE_PX = 19
+
+/** Unit sprite box size for a draw radius r: the usual 2.2x scale, floored at the F4 minimum. */
+export function unitSpriteSize(r: number): number {
+  return Math.max(r * 2.2, UNIT_SPRITE_MIN_SIZE_PX)
+}
+
+/**
  * 2D canvas renderer: terrain, fog-gated entities, health bars, selection,
  * and a fog-of-war overlay for the viewing team. Own camera (pan/zoom).
  */
@@ -840,7 +860,7 @@ export class Renderer {
         this.ctx.translate(-bx, -by)
       }
       if (unitSprite) {
-        const size = r * 2.2
+        const size = unitSpriteSize(r)
         this.ctx.drawImage(unitSprite, bx - size / 2, by - size / 2, size, size)
       } else {
         this.circle(bx, by, r, color)
