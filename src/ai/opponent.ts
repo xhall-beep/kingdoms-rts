@@ -925,6 +925,12 @@ export class OpponentAI implements System {
     if (this.scoutId !== null) {
       if (!world.entities.has(this.scoutId) || world.health[this.scoutId] <= 0) {
         this.scoutId = null
+        // The dead scout's remaining route dies with it. Without this,
+        // the re-scout branch below — which requires an empty target
+        // list — never fires, and the AI stays blind for the rest of
+        // the scouting window: a scout killed mid-route strands its
+        // unvisited targets forever, so no replacement is ever sent.
+        this.scoutTargets = []
       } else if (world.state[this.scoutId] === STATE_IDLE && this.scoutTargets.length > 0) {
         // Scout arrived, send to next target
         const t = this.scoutTargets.shift()!
