@@ -34,6 +34,7 @@ import { enqueueTrain, researchCost, researchUpgrade, trainingQueueFor, upgradeB
 import { UPGRADES, type UpgradeType } from '../data/upgrades.ts'
 import {
   BUILDING_TYPE_BY_KIND,
+  isAreaFree,
   placeStructure,
 } from '../world/construction.ts'
 import { canSee, isExplored } from '../world/visibility.ts'
@@ -62,6 +63,16 @@ const MELEE_RESERVE_FACTOR = 0.5
  * to ranged (safety valve so the archery can never stall permanently).
  */
 const MELEE_STARVE_HOLD_WINDOW = 10
+
+/**
+ * Expansion gold: a mine must be at least this far from every own hall
+ * to count as expansion gold, and hold this much ore to be worth a hall.
+ * The shipped map puts each side's four mines ~14–25 from its own hall
+ * and ~85+ from the enemy's, so the floor admits own-side gold while
+ * the nearest-wins pick below keeps the hall on our side of the map.
+ */
+const MIN_EXPAND_MINE_DIST = 10
+const EXPAND_MINE_MIN_AMOUNT = 500
 
 /**
  * Nearest harvestable node of the wanted type to a worker. Deterministic:
@@ -494,8 +505,8 @@ export class OpponentAI implements System {
     this.evacuateWorkers(world, hall, workers)
     this.assignWorkers(world, workers)
     this.scout(world, hall, workers)
-    this.expandBase(world, hall, workers)
-    const reserveGold = this.expand(world, hall, workers)
+    const baseReserve = this.expandBase(world, hall, workers, soldiers)
+    const reserveGold = Math.max(baseReserve, this.expand(world, hall, workers))
     this.resumeStalledBuilds(world, workers)
     this.upgradeOrcBuildings(world, hall)
     this.researchUpgrades(world)
@@ -873,40 +884,122 @@ export class OpponentAI implements System {
    * Returns the gold cost to reserve from soldier training while saving
    * for the planned building (0 when nothing is planned).
    */
-  /** Build a second Town Hall near untapped resources when the main base depletes. */
-  private expandBase(world: World, _hall: number, workers: number[]): void {
+  /**
+   * Build a second Town Hall near untapped resources when the main base
+   * depletes. Returns the gold to reserve from soldier training while
+   * saving for the hall (0 when nothing is planned or it is placed):
+   * the old snapshot gate (`gold < 400` → give up this think) let
+   * trainSoldiers eat the stake every think, so the bank never reached
+   * the hall — in a 10-minute expander mirror it peaked at 351g and no
+   * second hall was ever attempted. The reserve is the same mechanism
+   * expand() uses for the tech chain, and it clears the think the hall
+   * is placed (halls are counted including under construction).
+   *
+   * The reserve (and the dispatch) wait for the opening AND a complete
+   * army: both chain tech buildings must stand finished, read live from
+   * the world, the AI must already field its attack army
+   * (soldiers.length >= tuning.attackArmy), and at least one ranged
+   * unit must be in the field. A 350g reserve from 180s starved the
+   * opening army — the undead cold-start test held at its old
+   * 3-soldier plateau and the tech-chain probe never fielded archers,
+   * because trainSoldiers held the hall's gold while the barracks sat
+   * idle. Measured: baseline fields its 4th soldier at 3:32 and its
+   * first archer at 5:27, 11s after the chain completes and 39s before
+   * that match ends, so any reserve active in the opening eats exactly
+   * the guarded events; the archer leg of the gate protects the first
+   * archer directly. Live state (not the opening latch) is deliberate
+   * here: if a tech building is wiped mid-game, expansion waits until
+   * the chain stands again instead of booming on a broken tech base.
+   *
+   * Targeting is nearest-wins, not farthest-wins: the old max-distance
+   * pick chose the mine farthest from our halls, which on the shipped
+   * map is the ENEMY's gold field — the probe hall landed at (-18,-22),
+   * 28 from the enemy hall and 85 from our own, a builder walking into
+   * the enemy base. Nearest rich mine beyond MIN_EXPAND_MINE_DIST
+   * keeps the hall on our own gold while our mines are rich; enemy
+   * gold only wins once our own fields are mined out.
+   *
+   * Placement searches ring offsets around the mine with the read-only
+   * area check (isAreaFree — the same state on both lockstep peers), so a
+   * fixed +10/+10 offset can no longer land the hall inside our own
+   * hall's footprint and silently fail every think.
+   */
+  private expandBase(world: World, _hall: number, workers: number[], soldiers: number[]): number {
     // Personality decides when (or whether) to expand at all.
-    if (this.gameTime < this.tuning.expansionAtSec) return
-    const halls = structuresOf(world, this.team, KIND_HALL, true)
-    if (halls.length >= 2) return // Already expanded
-    if (world.gold[this.team] < 400) return // Need savings for the hall
+    if (this.gameTime < this.tuning.expansionAtSec) return 0
+    const halls = structuresOf(world, this.team, KIND_HALL, false)
+    if (halls.length >= 2) return 0 // Already expanding / expanded
+    // The opening comes first: both chain tech buildings must stand
+    // finished before gold is reserved or spent on a second hall.
+    const techFirst = this.personality === 'defender' ? KIND_SMITHY : KIND_ARCHERY
+    const techSecond = this.personality === 'defender' ? KIND_ARCHERY : KIND_SMITHY
+    const openingComplete =
+      structuresOf(world, this.team, techFirst, true).length > 0 &&
+      structuresOf(world, this.team, techSecond, true).length > 0
+    if (!openingComplete) return 0
+    // ... and the army must already exist, with ranged support:
+    // saving for a hall before the attack threshold is met, or before
+    // the first archer is fielded, starves the opening (see doc above).
+    if (soldiers.length < this.tuning.attackArmy) return 0
+    if (unitsOf(world, this.team, KIND_RANGED).length === 0) return 0
+    const hallCost = BUILDINGS.hall.cost
 
-    // Find a gold mine far from our existing halls
+    // Nearest rich mine at least MIN_EXPAND_MINE_DIST from every own hall.
     let best: number | null = null
-    let bestDist = 60 // Minimum distance from existing halls
+    let bestDist = Infinity
     for (const id of world.entities.keys()) {
       if (world.kind[id] !== KIND_GOLDMINE) continue
-      if (world.amount[id] < 500) continue // Need a rich node
+      if (world.amount[id] < EXPAND_MINE_MIN_AMOUNT) continue // Need a rich node
       let minHallDist = Infinity
       for (const h of halls) {
         const d = Math.hypot(world.positionX[id] - world.positionX[h], world.positionZ[id] - world.positionZ[h])
         minHallDist = Math.min(minHallDist, d)
       }
-      if (minHallDist > bestDist) {
+      if (minHallDist < MIN_EXPAND_MINE_DIST) continue
+      if (minHallDist < bestDist || (minHallDist === bestDist && best !== null && id < best)) {
         bestDist = minHallDist
         best = id
       }
     }
+    if (best === null) return 0 // No expansion gold anywhere.
 
-    if (best !== null) {
-      // Send a worker to build a hall near this gold mine
-      const gx = world.positionX[best]
-      const gz = world.positionZ[best]
-      const worker = workers.find((id) => world.state[id] === STATE_IDLE && !this.fleeing.has(id))
-      if (worker !== undefined) {
-        this.emitBuild(world, worker, 'hall', gx + 10, gz + 10)
+    // Ring-search a hall site around the mine (same offset table as
+    // build()). The check is area-only (isAreaFree): canPlaceStructure
+    // also tests affordability, and a broke AI would find "no site"
+    // and never reserve the gold it needs to save. Affordability is
+    // decided separately below, and the area predicate is read-only,
+    // so it validates identically in direct and lockstep modes.
+    const gx = world.positionX[best]
+    const gz = world.positionZ[best]
+    const ringBase = BUILDINGS.hall.radius + 3
+    let site: { x: number; z: number } | null = null
+    for (let k = 0; k < 30; k += 1) {
+      const ring = Math.floor(k / 10)
+      const r = ringBase + ring * 4
+      const [cos, sin] = BUILD_RING_OFFSETS[k]
+      const bx = gx + cos * r
+      const bz = gz + sin * r
+      if (isAreaFree(world, bx, bz, BUILDINGS.hall.radius)) {
+        site = { x: bx, z: bz }
+        break
       }
     }
+    if (site === null) return 0 // No free spot; don't reserve for the impossible.
+
+    // Saving for the hall: reserve its gold so trainSoldiers banks
+    // toward it instead of spending the stake every think. Wood is
+    // not reserved (nothing else banks wood this way); retry next
+    // think if the wood is short.
+    if (world.gold[this.team] < hallCost.gold || world.wood[this.team] < hallCost.wood) {
+      return hallCost.gold
+    }
+
+    const builder =
+      workers.find((id) => world.state[id] === STATE_IDLE && !this.fleeing.has(id)) ??
+      workers.find((id) => world.carryAmount[id] === 0 && !this.fleeing.has(id))
+    if (builder === undefined) return 0
+    this.emitBuild(world, builder, 'hall', site.x, site.z)
+    return 0
   }
 
   /** Send a worker to scout the map and find the enemy base. */
