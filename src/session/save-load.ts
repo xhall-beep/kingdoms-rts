@@ -8,7 +8,6 @@ import type { FactionId } from '../data/factions.ts'
 import type { Command } from './commands.ts'
 import { VictorySystemImpl } from '../systems/victory.ts'
 import { ShrineSystemImpl } from '../systems/shrines.ts'
-import { OpponentAI, type ScoutSaveState } from '../ai/opponent.ts'
 
 const SAVE_VERSION = 1
 const SAVE_KEY = 'kingdoms-rts-save'
@@ -82,20 +81,6 @@ export interface WorldSave {
    */
   victoryTimer?: number
   shrineTimer?: number
-  /**
-   * OpponentAI scout state (scout-kill response slice). Internal AI
-   * state, but sim state all the same for the scout-kill counters: a
-   * load leaves the AI object untouched, so without this the restored
-   * world's save-time scout fails the AI's post-save position
-   * continuity check and the first post-load think fabricates a kill
-   * (QA 2026-11-05: save 15s, play to 120s, load, one think →
-   * kills 0→1, delay 0→30). Optional: saves written before this field
-   * existed load with the AI untouched, as they always have. This is
-   * deliberately NOT in the state registry: the registry covers World
-   * fields only, and these live on the OpponentAI instance — the same
-   * explicit-carry precedent as the victory/shrine timers above.
-   */
-  scoutState?: ScoutSaveState
   gold: number[]
   wood: number[]
   supplyUsed: number[]
@@ -180,26 +165,6 @@ function setShrineTimer(world: World, t: number): void {
   }
 }
 
-// The OpponentAI scout state is internal AI state; the save carries it
-// through the same instanceof scan as the victory/shrine timers above.
-// Undefined when the world has no OpponentAI (a save from such a world
-// simply carries no scout state, and a load into one restores none).
-function scoutStateOf(world: World): ScoutSaveState | undefined {
-  for (const s of world.systems) {
-    if (s instanceof OpponentAI) return s.getScoutState()
-  }
-  return undefined
-}
-
-function setScoutState(world: World, state: ScoutSaveState): void {
-  for (const s of world.systems) {
-    if (s instanceof OpponentAI) {
-      s.restoreScoutState(state)
-      return
-    }
-  }
-}
-
 /** Capture the full simulation state plus the command log. */
 export function serializeWorld(world: World, step: number, commands: readonly Command[]): WorldSave {
   const maxId = maxEntityId(world)
@@ -218,7 +183,6 @@ export function serializeWorld(world: World, step: number, commands: readonly Co
     freeIds: world.getFreeIds(),
     victoryTimer: victoryTimerOf(world),
     shrineTimer: shrineTimerOf(world),
-    scoutState: scoutStateOf(world),
     entities: [...world.entities.keys()],
     arrays,
     gold: [...world.gold],
@@ -286,11 +250,6 @@ export function deserializeWorld(world: World, save: WorldSave): void {
   world.tick = save.tick ?? save.step
   if (save.victoryTimer !== undefined) setVictoryTimer(world, save.victoryTimer)
   if (save.shrineTimer !== undefined) setShrineTimer(world, save.shrineTimer)
-  // Scout state restores the AI to the saved timeline: without it the
-  // first post-load think reads the restored scout against a post-save
-  // last-seen position and fabricates a kill. Pre-fix saves carry no
-  // such field and leave the AI untouched, as before.
-  if (save.scoutState !== undefined) setScoutState(world, save.scoutState)
   world.gold = [...save.gold]
   world.wood = [...save.wood]
   world.supplyUsed = [...save.supplyUsed]
