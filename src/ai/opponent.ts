@@ -318,6 +318,42 @@ const OPENING_ADVANCE_DELAY_SEC: Record<AIPersonality, number> = {
   expander: 240,
 }
 
+/**
+ * Scout-kill response (Montz, 2026-11-04): a dead scout is never free.
+ * Slice 8 replaced a killed scout with one worker re-running the route;
+ * this slice answers the kill itself. Proposed numbers, measured before
+ * they ship (see ai-scout-kill.test.ts + the scratch probe): each kill
+ * pushes the first march later — 30s on the first kill, 15s more per
+ * further kill (the party's report time), capped at 60s — and sends a
+ * party to the death area: 2 workers on the first kill, 3 workers + a
+ * melee escort from the second. Both effects are capped so repeated
+ * kills can never stall the attack or spam scouts: the delay stops at
+ * 60s and at most 3 parties go out per match. The single replacement
+ * scout (slice 8) still goes out on every kill.
+ */
+const SCOUT_KILL_DELAY_FIRST_SEC = 30
+const SCOUT_KILL_DELAY_STEP_SEC = 15
+const SCOUT_KILL_DELAY_MAX_SEC = 60
+const SCOUT_KILL_PARTY_MAX = 3
+const SCOUT_KILL_PARTY_WORKERS_FIRST = 2
+const SCOUT_KILL_PARTY_WORKERS_LATER = 3
+const SCOUT_KILL_PARTY_MIN_WORKERS = 5
+
+/** Scout state a save carries so a load continues the restored timeline. */
+export interface ScoutSaveState {
+  /** Live scout's entity id at save time, or null when none is out. */
+  scoutId: number | null
+  /** Unvisited route targets at save time (the scout's remaining route). */
+  scoutTargets: { x: number; z: number }[]
+  /** Last recorded position of the live scout — scoutAlive() compares against this. */
+  lastScoutX: number
+  lastScoutZ: number
+  /** Kills answered so far, parties sent, and first-march delay accrued. */
+  scoutKills: number
+  scoutPartiesSent: number
+  scoutKillDelaySec: number
+}
+
 export type AIDifficulty = 'easy' | 'normal' | 'hard'
 
 /** Resolved decision parameters: difficulty base values plus personality mods. */
@@ -386,6 +422,26 @@ export class OpponentAI implements System {
   private favorMelee = true
   private scoutId: number | null = null
   private scoutTargets: { x: number; z: number }[] = []
+  /** Scout-kill retaliation state (see the SCOUT_KILL_* constants). */
+  private scoutKills = 0
+  /** Scouting parties dispatched in answer to scout kills (bounded). */
+  private scoutPartiesSent = 0
+  /** First-advance delay (sim-seconds) accumulated from scout kills. */
+  private scoutKillDelaySec = 0
+  /** Last seen position of the live scout, recorded on every think
+   * while it lives — the death area when it dies, and the identity
+   * check in scoutAlive() (see below). */
+  private lastScoutX = 0
+  private lastScoutZ = 0
+  /** Death area of the latest killed scout, snapshotted when the death
+   * is detected — the replacement scout re-arms lastScout* on dispatch,
+   * so the party must read the snapshot, not the live position. */
+  private lastDeathX = 0
+  private lastDeathZ = 0
+  /** Set when a scout death is detected this think; the party goes out
+   * after the replacement scout is dispatched, so the two picks never
+   * steal each other's worker. */
+  private scoutKilledThisThink = false
   /** Workers currently evacuated from a raid. They are not reassigned to
    * gather or construction duty until the threat is gone. */
   private readonly fleeing = new Set<number>()
@@ -427,6 +483,57 @@ export class OpponentAI implements System {
   /** Resolved decision parameters (difficulty + personality), for tests and UI. */
   decisionTuning(): AIDecisionTuning {
     return { ...this.tuning }
+  }
+
+  /** Scout-kill retaliation state, for tests and the probe harness. */
+  scoutKillResponse(): { kills: number; partiesSent: number; delaySec: number } {
+    return {
+      kills: this.scoutKills,
+      partiesSent: this.scoutPartiesSent,
+      delaySec: this.scoutKillDelaySec,
+    }
+  }
+
+  /**
+   * Scout state carried by a save (see session/save-load.ts). The AI
+   * object itself survives an in-session load untouched — the restored
+   * world holds the scout at its save-time position while the AI still
+   * holds its post-save last-seen position — so without this, the
+   * position-continuity check in scoutAlive() fails on the first
+   * post-load think and the load fabricates a kill that never happened
+   * in the restored timeline (QA 2026-11-05: save at 15s, play to
+   * 120s, load, one think → kills 0→1, delay 0→30). Persisting the
+   * counters alone is not enough either: a kill from the discarded
+   * post-save timeline would survive the load in the counters, and a
+   * stale target queue would strand the restored scout's route (the
+   * slice-8 failure mode, via load), so the route queue rides along.
+   * lastDeathX/Z are deliberately NOT carried: they are only read
+   * after a fresh noteScoutKill() overwrites them. The pending-kill
+   * flag is always false between thinks, when saves are taken, so
+   * restore clears it.
+   */
+  getScoutState(): ScoutSaveState {
+    return {
+      scoutId: this.scoutId,
+      scoutTargets: this.scoutTargets.map((t) => ({ x: t.x, z: t.z })),
+      lastScoutX: this.lastScoutX,
+      lastScoutZ: this.lastScoutZ,
+      scoutKills: this.scoutKills,
+      scoutPartiesSent: this.scoutPartiesSent,
+      scoutKillDelaySec: this.scoutKillDelaySec,
+    }
+  }
+
+  /** Restore scout state captured by a save (see getScoutState). */
+  restoreScoutState(state: ScoutSaveState): void {
+    this.scoutId = state.scoutId
+    this.scoutTargets = state.scoutTargets.map((t) => ({ x: t.x, z: t.z }))
+    this.lastScoutX = state.lastScoutX
+    this.lastScoutZ = state.lastScoutZ
+    this.scoutKills = state.scoutKills
+    this.scoutPartiesSent = state.scoutPartiesSent
+    this.scoutKillDelaySec = state.scoutKillDelaySec
+    this.scoutKilledThisThink = false
   }
 
   /**
@@ -504,7 +611,7 @@ export class OpponentAI implements System {
     this.trainWorkers(world, hall, workers.length)
     this.evacuateWorkers(world, hall, workers)
     this.assignWorkers(world, workers)
-    this.scout(world, hall, workers)
+    this.scout(world, hall, workers, soldiers)
     const baseReserve = this.expandBase(world, hall, workers, soldiers)
     const reserveGold = Math.max(baseReserve, this.expand(world, hall, workers))
     this.resumeStalledBuilds(world, workers)
@@ -1003,20 +1110,23 @@ export class OpponentAI implements System {
   }
 
   /** Send a worker to scout the map and find the enemy base. */
-  private scout(world: World, hall: number, workers: number[]): void {
-    // Only scout early game, and only if we don't know where the enemy is
-    if (this.gameTime > 180) return // Stop scouting after 3 minutes
+  private scout(world: World, hall: number, workers: number[], soldiers: number[]): void {
     const enemyTeam = (this.team === 0 ? 1 : 0) as 0 | 1
     const enemyHall = structuresOf(world, enemyTeam, KIND_HALL, false)[0]
-    if (enemyHall !== undefined) {
-      const ex = world.positionX[enemyHall]
-      const ez = world.positionZ[enemyHall]
-      if (isExplored(world, this.team, ex, ez)) return // Already found them
-    }
+    const found =
+      enemyHall !== undefined &&
+      isExplored(world, this.team, world.positionX[enemyHall], world.positionZ[enemyHall])
 
-    // Check if our scout is still alive and scouting
+    // Death detection runs first, on every think, found or not: a scout
+    // that found the enemy and was later killed must still be answered.
+    // The old layout returned at "already found them" before ever
+    // looking at the scout, so a kill after discovery was invisible
+    // forever — the falsification probe caught exactly this (a scripted
+    // kill at 40s left scoutKills at 0). A live scout's position is
+    // recorded here too, every think: the identity check compares
+    // against it, and the death area is the last recorded spot.
     if (this.scoutId !== null) {
-      if (!world.entities.has(this.scoutId) || world.health[this.scoutId] <= 0) {
+      if (!this.scoutAlive(world)) {
         this.scoutId = null
         // The dead scout's remaining route dies with it. Without this,
         // the re-scout branch below — which requires an empty target
@@ -1024,7 +1134,29 @@ export class OpponentAI implements System {
         // the scouting window: a scout killed mid-route strands its
         // unvisited targets forever, so no replacement is ever sent.
         this.scoutTargets = []
-      } else if (world.state[this.scoutId] === STATE_IDLE && this.scoutTargets.length > 0) {
+        // The kill itself gets an answer (see noteScoutKill): the first
+        // march waits on the party's report, and a party goes to the
+        // death area — after the replacement below, or now when there
+        // is no replacement to wait for.
+        this.noteScoutKill()
+      } else {
+        this.lastScoutX = world.positionX[this.scoutId]
+        this.lastScoutZ = world.positionZ[this.scoutId]
+      }
+    }
+
+    // A kill detected this think is answered now when there is no
+    // replacement to wait for (enemy already found — scouting is done).
+    if (this.scoutKilledThisThink && found) {
+      this.scoutKilledThisThink = false
+      this.dispatchScoutParty(world, hall, workers, soldiers)
+      return
+    }
+    if (found) return // Already found them: the scout goes back to work.
+
+    // Live scout, enemy not yet found: advance the route on arrival.
+    if (this.scoutId !== null) {
+      if (world.state[this.scoutId] === STATE_IDLE && this.scoutTargets.length > 0) {
         // Scout arrived, send to next target
         const t = this.scoutTargets.shift()!
         this.emitMove(world, this.scoutId, t.x, t.z)
@@ -1032,6 +1164,14 @@ export class OpponentAI implements System {
       } else if (world.state[this.scoutId] !== STATE_IDLE) {
         return // Still moving
       }
+    }
+
+    // Only scout early game — no new scout past 3 minutes. A kill
+    // detected past the window still sets the delay (noteScoutKill),
+    // but no party goes out: consume the flag here.
+    if (this.gameTime > 180) {
+      this.scoutKilledThisThink = false
+      return
     }
 
     // Need a new scout
@@ -1060,9 +1200,144 @@ export class OpponentAI implements System {
         return
       }
       this.scoutId = scout
+      this.lastScoutX = world.positionX[scout]
+      this.lastScoutZ = world.positionZ[scout]
       const t = this.scoutTargets.shift()!
       this.emitMove(world, scout, t.x, t.z)
     }
+
+    // A scout died this think: the replacement is out, so now the party
+    // answers at the death area (never before — the picks must not steal
+    // each other's worker).
+    if (this.scoutKilledThisThink) {
+      this.scoutKilledThisThink = false
+      this.dispatchScoutParty(world, hall, workers, soldiers)
+    }
+  }
+
+  /**
+   * Is the entity at scoutId still our scout? Entity ids are recycled
+   * LIFO (World.createEntity pops freeIds): the next spawn after the
+   * scout's death takes its id, so "alive" alone proves nothing — in a
+   * live match a newborn worker wearing the dead scout's id reads as
+   * the scout surviving, and the kill is never answered. The check is
+   * position continuity instead: a live scout moves at most its own
+   * stride between this AI's thinks, so an entity that jumped further
+   * than that since the last recorded position cannot be the scout.
+   * The bound is the fastest legal stride (5 u/s base, elf woodland
+   * +25%, War Horn Gale March) times this AI's think gap, with room
+   * to spare — and it holds for a scout turned gatherer after
+   * discovery, whose target is a tree or the hall, not the route.
+   * A target-based check was tried and rejected: the gather system
+   * re-tasks a scout that found the enemy, so its move target is no
+   * longer the leg (the falsification probe caught that).
+   */
+  private scoutAlive(world: World): boolean {
+    const id = this.scoutId
+    if (id === null) return false
+    if (!world.entities.has(id) || world.health[id] <= 0) return false
+    if (world.kind[id] !== KIND_WORKER || world.team[id] !== this.team) return false
+    const maxJump = 8 * this.tuning.thinkEvery + 2
+    const dx = world.positionX[id] - this.lastScoutX
+    const dz = world.positionZ[id] - this.lastScoutZ
+    return dx * dx + dz * dz <= maxJump * maxJump
+  }
+
+  /**
+   * A scout died: count it and push the first march later by the
+   * party's report time. The delay is capped so repeated kills can
+   * never stall the attack indefinitely — and it is a first-march
+   * delay only: defense, shrine sorties, horn, training and micro are
+   * never held, and once the floor passes the attack goes.
+   */
+  private noteScoutKill(): void {
+    this.scoutKills += 1
+    this.scoutKillDelaySec = Math.min(
+      SCOUT_KILL_DELAY_FIRST_SEC + SCOUT_KILL_DELAY_STEP_SEC * (this.scoutKills - 1),
+      SCOUT_KILL_DELAY_MAX_SEC,
+    )
+    // Snapshot the death area now: the replacement scout dispatched
+    // below re-arms lastScout* with its own position.
+    this.lastDeathX = this.lastScoutX
+    this.lastDeathZ = this.lastScoutZ
+    this.scoutKilledThisThink = true
+  }
+
+  /**
+   * Send a scouting party to the death area: more eyes where the scout
+   * died — 2 workers on the first kill, 3 from the second — plus a
+   * melee escort from the second kill on, when a soldier stands beyond
+   * the garrison. One shot per kill, at most 3 parties per match, and
+   * only inside the scouting window with an economy that can spare it
+   * and an army to back it (see the surplus gate below). Party members
+   * get a plain move order, so on arrival they go idle and the gather
+   * system reabsorbs them: the party is a mission, not a standing
+   * detachment, and it can never accumulate into spam.
+   */
+  private dispatchScoutParty(
+    world: World,
+    hall: number,
+    workers: number[],
+    soldiers: number[],
+  ): void {
+    if (this.gameTime > 180) return // Scouting window over: delay stands, no party.
+    if (this.scoutPartiesSent >= SCOUT_KILL_PARTY_MAX) return
+    if (workers.length < SCOUT_KILL_PARTY_MIN_WORKERS) return // Economy too thin to spare a party.
+    // A scouting party is a probe backed by an army — it is not staked
+    // when the AI already has an army but nothing beyond its garrison.
+    // The codebase refuses the same stake elsewhere (the escort below;
+    // the shrine emergency answer spends only genuine surplus): a
+    // garrison-only AI that sent workers across the map would answer
+    // a live drain by accident — two workers crossing an empty shrine
+    // flip it on the 1-second capture check, which the shrine
+    // integration test pins as behavior a garrison-only AI must not
+    // show. When the AI has no soldiers at all, there is no garrison
+    // to thin and the party is its only answer to the kill, so it goes.
+    // The delay still stands whenever the party is withheld: the kill
+    // is answered with a later attack, just without the party.
+    if (soldiers.length > 0 && soldiers.length - this.garrisonFor(world) <= 0) return
+    const size =
+      this.scoutKills === 1 ? SCOUT_KILL_PARTY_WORKERS_FIRST : SCOUT_KILL_PARTY_WORKERS_LATER
+    const candidates = workers.filter((id) => id !== this.scoutId && !this.fleeing.has(id))
+    const party: number[] = []
+    const pick = (pred: (id: number) => boolean): void => {
+      while (party.length < size) {
+        const next = candidates.find((id) => !party.includes(id) && pred(id))
+        if (next === undefined) return
+        party.push(next)
+      }
+    }
+    // Same preference order as the scout pick: idle first, then
+    // unladen, then whoever is left — deterministic entity order.
+    pick((id) => world.state[id] === STATE_IDLE)
+    pick((id) => world.carryAmount[id] === 0)
+    pick(() => true)
+    if (party.length === 0) return
+    const dx = this.lastDeathX
+    const dz = this.lastDeathZ
+    for (const id of party) this.emitMove(world, id, dx, dz)
+    // Escort from the second kill on: the idle melee furthest from the
+    // hall — the most expendable — walks with the party. Only when a
+    // soldier stands beyond the garrison, so home defense never thins.
+    if (this.scoutKills >= 2) {
+      const garrison = this.garrisonFor(world)
+      const hx = world.positionX[hall]
+      const hz = world.positionZ[hall]
+      let escort = -1
+      let escortDist = -1
+      for (const id of soldiers) {
+        if (world.kind[id] !== KIND_MELEE || world.state[id] !== STATE_IDLE) continue
+        const d = Math.hypot(world.positionX[id] - hx, world.positionZ[id] - hz)
+        if (d > escortDist) {
+          escortDist = d
+          escort = id
+        }
+      }
+      if (escort !== -1 && soldiers.length - garrison >= 1) {
+        this.emitMove(world, escort, dx, dz)
+      }
+    }
+    this.scoutPartiesSent += 1
   }
 
   /**
@@ -1535,7 +1810,15 @@ export class OpponentAI implements System {
     if (world.bellsRung[0] !== 1) return
     // Opening advance delay (pacing slice): even with the bell rung and
     // a wave ready, the first march waits for the per-personality floor.
-    if (this.gameTime < OPENING_ADVANCE_DELAY_SEC[this.personality]) return
+    // A killed scout pushes the floor later (scoutKillDelaySec): the
+    // march waits on the scouting party's report, then goes — the delay
+    // is capped and defense is never held, so this is a later attack,
+    // not a stalled one.
+    if (
+      this.gameTime <
+      OPENING_ADVANCE_DELAY_SEC[this.personality] + this.scoutKillDelaySec
+    )
+      return
     // Cold-start desperation: until the first corpse feeds Soul-Ash, an
     // undead garrison guards a cap that cannot grow — every soldier stays
     // home, no combat starts, no ash ever lands. garrisonFor waives it so
