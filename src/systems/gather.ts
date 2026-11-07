@@ -18,6 +18,7 @@ import {
   KIND_TREE,
   KIND_WORKER,
   MILITIA_DURATION_SEC,
+  MILITIA_EXPIRY_TOLERANCE_SEC,
   NO_TARGET,
   PILE_PICKUP_RANGE,
   STATE_ATTACK,
@@ -129,7 +130,21 @@ export class GatherSystemImpl implements System {
       // the economy or a direct order already re-tasked mid-levy
       // (MOVE/GATHER/RETURN/BUILD) is only stood down in place — the
       // pass never yanks a worker out of a live work order.
-      if (world.militiaUntil[id] > 0 && world.matchTime >= world.militiaUntil[id]) {
+      // The comparison is tolerance-hardened (see
+      // MILITIA_EXPIRY_TOLERANCE_SEC): the stamp is float32 and the
+      // clock is float64-accumulated, so an exact >= lets the stamp's
+      // representation error decide whether this pass is the designed
+      // lapse tick or one tick late. The late case is not benign: this
+      // pass runs before combat, and in the slipped tick combat's
+      // target hygiene legitimately clears a re-tasked pikeman's
+      // staged target (a resource node or his own building is not a
+      // combat target), so when the lapse finally lands his work
+      // order is already dead and the stand-down releases him to the
+      // economy instead of leaving his order owning him.
+      if (
+        world.militiaUntil[id] > 0 &&
+        world.matchTime >= world.militiaUntil[id] - MILITIA_EXPIRY_TOLERANCE_SEC
+      ) {
         world.militiaUntil[id] = 0
         const st = world.state[id]
         if (

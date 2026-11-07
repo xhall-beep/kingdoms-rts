@@ -1181,9 +1181,17 @@ export class OpponentAI implements System {
       return hallCost.gold
     }
 
+    // Bell duty (town-hall note §9) is excluded from both finds, as in
+    // resumeStalledBuilds: the IDLE find can reach an armed pikeman, and
+    // the unladen fallback can reach both trip states — seizing any of
+    // them walks the muster off its stand or strands a trip.
     const builder =
-      workers.find((id) => world.state[id] === STATE_IDLE && !this.fleeing.has(id)) ??
-      workers.find((id) => world.carryAmount[id] === 0 && !this.fleeing.has(id))
+      workers.find(
+        (id) => world.state[id] === STATE_IDLE && !this.fleeing.has(id) && !world.isBellDuty(id),
+      ) ??
+      workers.find(
+        (id) => world.carryAmount[id] === 0 && !this.fleeing.has(id) && !world.isBellDuty(id),
+      )
     if (builder === undefined) return 0
     this.emitBuild(world, builder, 'hall', site.x, site.z)
     return 0
@@ -1275,8 +1283,12 @@ export class OpponentAI implements System {
       // gather system grabs idle workers before our think tick, so waiting
       // for an idle worker means scouting never happens. An explicit move
       // order sets the worker to HARVEST_OFF; it goes back to work when done.
-      // Evacuated workers stay at their rally point.
-      const candidates = workers.filter((id) => !this.fleeing.has(id))
+      // Evacuated workers stay at their rally point. Bell-duty workers are
+      // excluded (town-hall note §9, as in every sibling pick): the filter
+      // feeds all three branches below, so exempting here exempts the idle
+      // find, the unladen find, and the fallback alike — a muster traveler
+      // or an armed pikeman is never sent across the map as the scout.
+      const candidates = workers.filter((id) => !this.fleeing.has(id) && !world.isBellDuty(id))
       const scout =
         candidates.find((id) => world.state[id] === STATE_IDLE) ??
         candidates.find((id) => world.carryAmount[id] === 0) ??
@@ -1404,7 +1416,16 @@ export class OpponentAI implements System {
     if (soldiers.length > 0 && soldiers.length - this.garrisonFor(world) <= 0) return
     const size =
       this.scoutKills === 1 ? SCOUT_KILL_PARTY_WORKERS_FIRST : SCOUT_KILL_PARTY_WORKERS_LATER
-    const candidates = workers.filter((id) => id !== this.scoutId && !this.fleeing.has(id))
+    // Bell duty (town-hall note §9) is excluded, as in every sibling
+    // worker pick (evacuateWorkers, assignWorkers, resumeStalledBuilds):
+    // a peasant traveling to arm — or back to disarm — is owned by the
+    // bell machine end-to-end, and a party move order here would yank
+    // him off the trip (separation QA traced exactly that pick: a
+    // MUSTER traveler flipped ATTACK→MOVE for a tick). A mustered
+    // pikeman is likewise never a probe.
+    const candidates = workers.filter(
+      (id) => id !== this.scoutId && !this.fleeing.has(id) && !world.isBellDuty(id),
+    )
     const party: number[] = []
     const pick = (pred: (id: number) => boolean): void => {
       while (party.length < size) {
@@ -1599,9 +1620,17 @@ export class OpponentAI implements System {
       const [cos, sin] = BUILD_RING_OFFSETS[k]
       const bx = hx + cos * r
       const bz = hz + sin * r
+      // Bell duty (town-hall note §9) is excluded from both finds, as in
+      // resumeStalledBuilds: the IDLE find can reach an armed pikeman,
+      // and the unladen fallback can reach both trip states — seizing
+      // any of them walks the muster off its stand or strands a trip.
       const builder =
-        workers.find((id) => world.state[id] === STATE_IDLE && !this.fleeing.has(id)) ??
-        workers.find((id) => world.carryAmount[id] === 0 && !this.fleeing.has(id))
+        workers.find(
+          (id) => world.state[id] === STATE_IDLE && !this.fleeing.has(id) && !world.isBellDuty(id),
+        ) ??
+        workers.find(
+          (id) => world.carryAmount[id] === 0 && !this.fleeing.has(id) && !world.isBellDuty(id),
+        )
       if (this.sink) {
         // Lockstep mode: emit for the first candidate spot; applyCommand
         // validates placement deterministically on both peers.

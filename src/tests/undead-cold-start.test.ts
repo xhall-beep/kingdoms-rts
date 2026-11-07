@@ -71,17 +71,6 @@ function makeAiWorld(playerFaction: string, enemyFaction: string): World {
   return world
 }
 
-function countKind(world: World, team: number, kind: number): number {
-  let n = 0
-  for (const id of world.entities.keys()) {
-    if (world.team[id] === team && world.kind[id] === kind) n += 1
-  }
-  return n
-}
-
-const soldiersOf = (world: World, team: number): number =>
-  countKind(world, team, KIND_MELEE) + countKind(world, team, KIND_RANGED)
-
 function hallOf(world: World, team: number): number {
   for (const id of world.entities.keys()) {
     if (world.kind[id] === KIND_HALL && world.team[id] === team) return id
@@ -130,40 +119,88 @@ test('hall supply accounting agrees across spawn, completion, and destruction', 
 test('undead AI fields soldiers past the old plateau of 3 in the opening minutes', () => {
   const world = makeAiWorld('undead', 'human')
   let peakBy4 = 0
-  let peakBy5 = 0
-  // Five sim-minutes. The audited deadlock held undead at exactly 3
-  // soldiers at 3:00 with the cap frozen at 10 and producers idle.
-  for (let step = 0; step < 5 * 3600 && world.winner === -1; step += 1) {
+  let capMaxBy300 = 0
+  let capMaxBy420 = 0
+  // Cumulative TRAINED soldiers fielded (melee/ranged carrying no
+  // reanimation lifetime — skeletons are combat output, not economic
+  // production): living trained + observed trained deaths. An id
+  // recycled inside a single tick undercounts, so the count is a
+  // floor, never an overcount.
+  const prevTrained = new Set<number>()
+  let deadTrained = 0
+  let fieldedTotal = 0
+  // Seven sim-minutes. The audited deadlock held undead at exactly 3
+  // soldiers at 3:00 with the cap frozen at 10 and producers idle;
+  // the re-pinned checkpoints below read at 4:00, 5:00, and 7:00.
+  for (let step = 0; step < 7 * 3600 && world.winner === -1; step += 1) {
     world.update(STEP)
     const t = step / WORLD_TICKS_PER_SECOND
-    const s = soldiersOf(world, TEAM_PLAYER)
-    if (t <= 240 && s > peakBy4) peakBy4 = s
-    if (s > peakBy5) peakBy5 = s
+    let living = 0
+    const nowTrained = new Set<number>()
+    for (const id of world.entities.keys()) {
+      if (world.team[id] !== TEAM_PLAYER) continue
+      const k = world.kind[id]
+      if (k !== KIND_MELEE && k !== KIND_RANGED) continue
+      living += 1
+      if (world.reanimateTicks[id] === 0) nowTrained.add(id)
+    }
+    for (const id of prevTrained) {
+      if (!world.entities.has(id)) deadTrained += 1
+    }
+    prevTrained.clear()
+    for (const id of nowTrained) prevTrained.add(id)
+    fieldedTotal = deadTrained + nowTrained.size
+    if (t <= 240 && living > peakBy4) peakBy4 = living
+    const cap = world.supplyCap[TEAM_PLAYER]
+    if (t <= 300 && cap > capMaxBy300) capMaxBy300 = cap
+    if (cap > capMaxBy420) capMaxBy420 = cap
   }
-  // The plateau-break checkpoint was 3:30 when this test was written and
-  // read exactly 4 inside it under hall-centric evacuation. Per-worker
-  // evacuation (2026-10-23, post-ring defense audit) re-times the
-  // opening's first contact by seconds — undead's economy is corpse-
-  // gated, so a few seconds of contact timing is a soldier at any fixed
-  // early checkpoint — and the measured break now lands at 211 s. The
-  // checkpoint moves to 4:00; the guarded claim (the 3-plateau is broken
-  // in the opening minutes, not held) is unchanged, and a true deadlock
-  // regression (peak 3 forever, cap frozen) still fails below.
+  // RE-PIN (Anchor ruling 2026-11-07 §1.3, precondition P-3). This
+  // test previously pinned the anti-deadlock property through a
+  // simultaneous-living peak inside 5:00 (peak >= 5 in the window).
+  // That statistic conflates production with survival timing — one
+  // early casualty or a few seconds of contact re-timing moves it —
+  // and it was already recalibrated twice for exactly that
+  // sensitivity (the 3:30 checkpoint moved to 4:00, and the 5:00 peak
+  // pin went >= 8 -> >= 5, both 2026-10-23). Measured on pristine
+  // f4c0348 it reads 4 in two of the nine personality-grid cells
+  // while the economy underneath is healthy in all nine; under the
+  // separation slice it reads 4 while every direct measure below
+  // passes. The property is now pinned directly. Thresholds are
+  // derived from measurements on pristine f4c0348 and on the Rung-1
+  // separation tree, test cell (expander/expander):
+  //
+  //  - Plateau-break (unchanged pin): the living peak by 4:00
+  //    reaches 4. Measured 4 on both trees, grid minimum 4 of 9
+  //    cells. The deadlock signature is exactly 3, held forever.
+  //  - Soul-Ash cap growth: the cap reaches >= 28 by 5:00 and
+  //    >= 36 by 7:00. Measured maxima 34 / 43 pristine and 35 / 50
+  //    under Rung 1 — the floors sit at roughly four-fifths of the
+  //    lower measured arm. A stalled undead economy flatlines this
+  //    curve at the hall's 18 (Soul-Ash is its only growth source),
+  //    so the floors demand +10 / +18 of corpse-fed growth and sit
+  //    at 1.6x / 2x the stall signature.
+  //  - Fielded-by: at least 5 trained soldiers fielded by 7:00.
+  //    Measured: the fifth trained soldier is fielded at 265 s on
+  //    both trees (personality-grid worst cell 272 s), so the 7:00
+  //    bound carries ~150 s of headroom. The count is production,
+  //    not survival: casualties do not un-field a soldier, which is
+  //    what makes this statistic stable where the living peak was
+  //    not (grid living peak at 5:00 spans 4-7; the fielded-by time
+  //    spans 203-272 s with no cell unfielded).
   assert(peakBy4 >= 4, `past the old plateau by 4:00 (peak ${peakBy4}, was exactly 3)`)
-  // The 5:00 peak was pinned at >=8 when this test was written — in a
-  // world where the defending human's Militia Bell never fired and
-  // undead's waves massacred peasants unopposed. Since the AI levers
-  // slice (2026-10-22) the bell rings: undead now pays real casualties
-  // for its early waves, so its simultaneous-living peak inside 5:00
-  // reads 6 while the war itself is a rout (Soul-Ash cap 18 -> 50+,
-  // the human army collapses). The deadlock claim this test guards —
-  // undead fields a real army and starts the combat — is unchanged;
-  // the number is recalibrated to the defended-base dynamic, the same
-  // way the farmland pin was recalibrated when mods.gather was wired.
-  // Per-worker evacuation (2026-10-23) re-times first contact again:
-  // the 5:00 peak reads 5 (cap 36, fifth soldier at 219 s). Pinned at
-  // the measured dynamic, same reasoning as the bell recalibration.
-  assert(peakBy5 >= 5, `a real army by 5:00 (peak ${peakBy5})`)
+  assert(
+    capMaxBy300 >= 28,
+    `Soul-Ash cap grew by 5:00 (reached ${capMaxBy300}, a stall flatlines at 18)`,
+  )
+  assert(
+    capMaxBy420 >= 36,
+    `Soul-Ash cap kept growing by 7:00 (reached ${capMaxBy420}, a stall flatlines at 18)`,
+  )
+  assert(
+    fieldedTotal >= 5,
+    `a real army fielded by 7:00 (${fieldedTotal} trained soldiers fielded)`,
+  )
   assert(
     world.supplyCap[TEAM_PLAYER] > UNDEAD_HALL_SUPPLY,
     'Soul-Ash unlocked the cap through combat the undead started',

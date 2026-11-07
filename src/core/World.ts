@@ -210,6 +210,25 @@ export const MILITIA_MUSTER_RADIUS = 25
 export const MILITIA_DURATION_SEC = 25
 export const MILITIA_COOLDOWN_SEC = 120
 /**
+ * Tolerance for the Militia Bell expiry comparison in
+ * systems/gather.ts (the lapse authority). matchTime is a float64
+ * accumulated one STEP at a time, but militiaUntil is stored in a
+ * Float32Array, so every levy stamp carries a representation error of
+ * up to half a float32 ulp of its own value — ≈0.00003 s at a 1 000 s
+ * match clock, ≈0.00195 s at a 65 000 s clock. Compared exactly, that
+ * error — not game time — decides whether a lapse whose designed tick
+ * has arrived fires on that tick or one tick late: at one staging the
+ * stamp stored 2e-9 s above the accumulated clock and the levy served
+ * 1501 ticks instead of the designed 1500, on roughly half of all
+ * accumulation histories. This tolerance absorbs the representation
+ * error at any match length the game can plausibly reach, and at
+ * ~1/8 of a STEP (1/60 s) it can never pull a lapse onto the tick
+ * BEFORE the designed one — the previous tick's clock sits a full
+ * STEP below the stamp, and pulling early would need a tolerance
+ * above STEP minus the error (≈0.0147 s).
+ */
+export const MILITIA_EXPIRY_TOLERANCE_SEC = 0.002
+/**
  * Arming/disarming trips stop this far from the hall's edge — gather's
  * ARRIVE_MARGIN (systems/gather.ts), duplicated here because the ring
  * stamps the trip from World: the trip uses gather's own arrival
