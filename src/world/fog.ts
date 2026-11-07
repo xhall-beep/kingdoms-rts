@@ -23,14 +23,23 @@ export class FogGrid {
    * ops only; not part of the lockstep hash (cells + visibleNow already are).
    */
   revision = 0
-  /** Sorted VISIBLE indices at the end of the previous vision update. */
+  /** VISIBLE indices at the end of the previous vision update (a set; order is irrelevant — endUpdate compares membership, not sequence). */
   private lastVisible: number[] = []
+  /**
+   * Scratch membership marks for endUpdate's set comparison: one slot per
+   * cell, holding the generation of the last update that stamped it. Lets
+   * endUpdate test exact set equality in O(visible) instead of sorting.
+   * Internal scratch only — never serialized, never hashed.
+   */
+  private readonly visibleStamp: Int32Array
+  private stampGen = 0
 
   constructor(size = 180, cell = 2) {
     this.cell = cell
     this.cols = Math.ceil(size / cell)
     this.half = size / 2
     this.cells = new Uint8Array(this.cols * this.cols) // All UNEXPLORED (0).
+    this.visibleStamp = new Int32Array(this.cols * this.cols)
   }
 
   private toCell(v: number): number {
@@ -93,13 +102,28 @@ export class FogGrid {
    * only when the VISIBLE set actually changed since the previous update —
    * a stationary scene demotes and re-reveals the same cells every step, and
    * that must NOT invalidate the renderer's cache.
+   *
+   * The change test is exact set equality in O(visible): stamp every
+   * currently visible index with this call's generation, then confirm the
+   * previous set is fully covered. Equal length + full coverage means the
+   * sets are identical. (The previous implementation sorted both sets and
+   * compared element-wise — same semantics, O(n log n) with a comparator,
+   * ~0.9 ms per call at ~2,200 visible cells.)
    */
   endUpdate(): void {
-    const sorted = [...this.visibleNow].sort((a, b) => a - b)
-    let changed = sorted.length !== this.lastVisible.length
+    let changed = this.visibleNow.length !== this.lastVisible.length
     if (!changed) {
-      for (let k = 0; k < sorted.length; k += 1) {
-        if (sorted[k] !== this.lastVisible[k]) {
+      this.stampGen += 1
+      if (this.stampGen >= 0x7fffffff) {
+        // Generation exhausted (centuries of updates away): reset the
+        // scratch marks so a stale stamp can never alias the live one.
+        this.visibleStamp.fill(0)
+        this.stampGen = 1
+      }
+      const gen = this.stampGen
+      for (const i of this.visibleNow) this.visibleStamp[i] = gen
+      for (const i of this.lastVisible) {
+        if (this.visibleStamp[i] !== gen) {
           changed = true
           break
         }
@@ -107,7 +131,7 @@ export class FogGrid {
     }
     if (changed) {
       this.revision += 1
-      this.lastVisible = sorted
+      this.lastVisible = [...this.visibleNow]
     }
   }
 

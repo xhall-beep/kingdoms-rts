@@ -8,10 +8,10 @@
  * FogGrid now carries a revision counter bumped whenever rendered fog content
  * changes, and the renderer rebuilds when the revision moves.
  */
-import { FogGrid } from '../world/fog.ts'
+import { FogGrid, FOG_EXPLORED, FOG_VISIBLE } from '../world/fog.ts'
 import { Renderer } from '../render/renderer.ts'
 import { World, TEAM_PLAYER } from '../core/World.ts'
-import { VisionSystemImpl } from '../systems/vision.ts'
+import { VisionSystemImpl, VISION_UPDATE_INTERVAL } from '../systems/vision.ts'
 import { suite, test, assert, assertEqual } from './harness.ts'
 
 suite('FogGrid.revision')
@@ -208,4 +208,81 @@ test('20-frame cap still rebuilds as a backstop', () => {
   } finally {
     stub.restore()
   }
+})
+
+suite('Vision cadence (10 Hz recompute)')
+
+test('vision recomputes on tick 1, then every 6th tick', () => {
+  const world = new World()
+  world.registerSystem(new VisionSystemImpl())
+  const worker = world.spawnUnit('worker', TEAM_PLAYER, 0, 0)
+  world.sight[worker.id] = 12
+  // Tick 1: the first update of a match reveals immediately.
+  world.update(1 / 60)
+  assertEqual(world.fog[0].stateAt(0, 0), FOG_VISIBLE, 'origin visible after tick 1')
+  // Teleport away: ticks 2..6 must NOT recompute — fog stays stale.
+  world.setPosition(worker, 60, 0, 60)
+  for (let k = 0; k < VISION_UPDATE_INTERVAL - 1; k += 1) world.update(1 / 60)
+  assertEqual(world.fog[0].stateAt(0, 0), FOG_VISIBLE, 'origin still (stale) visible before the cadence tick')
+  assert(world.fog[0].stateAt(60, 60) !== FOG_VISIBLE, 'new position not yet revealed before the cadence tick')
+  // Tick 7: recompute — origin demotes to explored, new position reveals.
+  world.update(1 / 60)
+  assertEqual(world.fog[0].stateAt(0, 0), FOG_EXPLORED, 'origin demoted at the cadence tick')
+  assertEqual(world.fog[0].stateAt(60, 60), FOG_VISIBLE, 'new position revealed at the cadence tick')
+})
+
+suite('FogGrid endUpdate change check (sort-free set equality)')
+
+test('endUpdate() bumps when the set swaps to an equal-size different set', () => {
+  const fog = new FogGrid()
+  fog.beginUpdate()
+  fog.reveal(0, 0, 10)
+  fog.endUpdate()
+  const r1 = fog.revision
+  const n1 = fog.snapshotVisibleNow().length
+  fog.beginUpdate()
+  fog.reveal(-60, -60, 10) // same radius, same lattice alignment → same cell count, disjoint set
+  fog.endUpdate()
+  assertEqual(fog.snapshotVisibleNow().length, n1, 'swap keeps the visible count')
+  assert(fog.revision > r1, 'revision bumped on equal-size set swap (a count-only check would miss this)')
+})
+
+test('revision bumps match exact set comparison over a long reveal fuzz', () => {
+  const fog = new FogGrid()
+  // Deterministic LCG — no Math.random, the fuzz itself stays reproducible.
+  let seed = 0x12345678
+  const next = (): number => {
+    seed = (seed * 1664525 + 1013904223) >>> 0
+    return seed / 0x100000000
+  }
+  const anchors = [-60, -40, -20, 0, 20, 40, 60]
+  let prevSorted: number[] = []
+  let sameSizeDifferentSet = 0
+  for (let step = 0; step < 300; step += 1) {
+    fog.beginUpdate()
+    const reveals = Math.floor(next() * 4) // 0..3 reveals (0 = empty update)
+    for (let r = 0; r < reveals; r += 1) {
+      const ax = anchors[Math.floor(next() * anchors.length)]
+      const az = anchors[Math.floor(next() * anchors.length)]
+      fog.reveal(ax, az, next() < 0.5 ? 10 : 14)
+    }
+    // Oracle: the pre-change semantics — sort the visible set, compare
+    // element-wise with the previous update's set.
+    const nowSorted = fog.snapshotVisibleNow().sort((a, b) => a - b)
+    let expectedBump = nowSorted.length !== prevSorted.length
+    if (!expectedBump) {
+      for (let k = 0; k < nowSorted.length; k += 1) {
+        if (nowSorted[k] !== prevSorted[k]) {
+          expectedBump = true
+          break
+        }
+      }
+    }
+    if (nowSorted.length === prevSorted.length && expectedBump) sameSizeDifferentSet += 1
+    const before = fog.revision
+    fog.endUpdate()
+    assertEqual(fog.revision, before + (expectedBump ? 1 : 0), `step ${step}: revision bump matches set comparison`)
+    prevSorted = nowSorted
+  }
+  assert(sameSizeDifferentSet > 0, `fuzz exercised the equal-size/different-set case (${sameSizeDifferentSet}x)`)
 })
