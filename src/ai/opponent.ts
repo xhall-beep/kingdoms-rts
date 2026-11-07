@@ -2135,7 +2135,7 @@ export class OpponentAI implements System {
     }
     const hx = world.positionX[hall]
     const hz = world.positionZ[hall]
-    const guess = { x: -hx, z: hz } // Mirror of our own start.
+    const guess = { x: -hx, z: -hz } // Mirror of our own start.
     if (!isExplored(world, this.team, guess.x, guess.z)) return guess
 
     // Nothing there: search the nearest unexplored point from the army's centre.
