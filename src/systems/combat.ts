@@ -19,6 +19,7 @@ import {
   STATE_HOLD,
   STATE_IDLE,
   STATE_MOVE,
+  STATE_MUSTER,
 } from '../core/World'
 
 /**
@@ -205,7 +206,29 @@ export class CombatSystemImpl implements System {
         world.state[id] = STATE_ATTACK
       }
     }
+    // Militia Bell death case (town-hall note §8): a peasant killed in
+    // STATE_MUSTER still carries his load on his back — it becomes a
+    // ground pile where he fell. This dead loop is the single funnel
+    // every damage death passes through (melee, ranged, tower,
+    // treant). Loads are CAPTURED before removal (removal zeroes the
+    // carry) and the piles are spawned after the removal loop finishes
+    // — never createEntity mid-iteration (the spentNodes pattern), and
+    // the corpses' own freed slots guarantee the spawns room.
+    const deathPiles: { team: 0 | 1; carryKind: number; carryAmount: number; x: number; z: number }[] = []
     for (const id of dead) {
+      if (
+        world.kind[id] === KIND_WORKER &&
+        world.state[id] === STATE_MUSTER &&
+        world.carryAmount[id] > 0
+      ) {
+        deathPiles.push({
+          team: world.team[id] as 0 | 1,
+          carryKind: world.carryKind[id],
+          carryAmount: world.carryAmount[id],
+          x: world.positionX[id],
+          z: world.positionZ[id],
+        })
+      }
       this.tryReanimate(world, id)
       // Combat feel: expanding death-pop at the kill position (visual-only).
       world.deathPops.push({
@@ -233,6 +256,11 @@ export class CombatSystemImpl implements System {
         }
       }
       world.removeEntityById(id)
+    }
+    // Deferred death-case piles, in dead-loop processing order (the
+    // pile merge rule resolves sequentially in this order).
+    for (const pile of deathPiles) {
+      world.dropLoadAsPile(pile.team, pile.carryKind, pile.carryAmount, pile.x, pile.z)
     }
     // Creeping Blight (undead racial): the dead knit themselves back together.
     // Undead units regenerate 2% max HP/sec after 5 seconds out of combat.

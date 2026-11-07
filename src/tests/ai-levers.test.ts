@@ -81,6 +81,15 @@ function countMilitia(world: World, team: number): number {
   return n
 }
 
+/** Workers the bell has CALLED (traveling, serving, or returning). */
+function countCalled(world: World, team: number): number {
+  let n = 0
+  for (const id of world.entities.keys()) {
+    if (world.team[id] === team && world.kind[id] === KIND_WORKER && world.isBellDuty(id)) n += 1
+  }
+  return n
+}
+
 test('AI rings the Militia Bell in a human home defense', () => {
   const world = makeAiWorld('human', 'orc')
   // An orc raider inside the defense radius of the human hall (-40,-40).
@@ -146,34 +155,39 @@ test('mustered militia hold their stand instead of being evacuated', () => {
   const mx = world.positionX[mine]
   const mz = world.positionZ[mine]
   for (let i = 0; i < 5; i += 1) world.spawnUnit('melee', TEAM_ENEMY, mx + (i - 2) * 1.5, mz + 2)
-  // Census every step for 6s after the ring (the audit's method):
-  // pre-fix, evacuateWorkers re-ordered the muster behind the hall every
-  // think and ~half the pikemen sat in STATE_MOVE at +5s; the exemption
-  // must leave the stand fighting, never walking.
+  // Census every step for 15s after the ring (the audit's method,
+  // widened for the town-hall trip): the called crew now TRAVELS to
+  // the hall and arms there — the stand forms at the hall, not at the
+  // mine. The evacuation tell is unchanged: evacuateWorkers issues
+  // move orders, so any bell-duty worker (traveler, pikeman, or
+  // disarmer) seen in STATE_MOVE was re-ordered off his duty.
   let ringAt = -1
-  let muster = 0
+  let called = 0
+  let armedPeak = 0
   let moveSightings = 0
   let attackSightings = 0
-  for (let s = 0; s < 60 * 30 && (ringAt < 0 || world.matchTime - ringAt < 6); s += 1) {
+  for (let s = 0; s < 60 * 30 && (ringAt < 0 || world.matchTime - ringAt < 15); s += 1) {
     stepWorld(world, 1)
     if (ringAt < 0) {
       if (world.militiaCooldown[TEAM_PLAYER] > 0) {
         ringAt = world.matchTime
-        muster = countMilitia(world, TEAM_PLAYER)
+        called = countCalled(world, TEAM_PLAYER)
       }
       continue
     }
+    armedPeak = Math.max(armedPeak, countMilitia(world, TEAM_PLAYER))
     for (const id of world.entities.keys()) {
       if (world.team[id] !== TEAM_PLAYER || world.kind[id] !== KIND_WORKER) continue
-      if (!world.isMilitia(id)) continue
+      if (!world.isBellDuty(id)) continue
       if (world.state[id] === STATE_MOVE) moveSightings += 1
-      if (world.state[id] === STATE_ATTACK) attackSightings += 1
+      if (world.isMilitia(id) && world.state[id] === STATE_ATTACK) attackSightings += 1
     }
   }
   assert(ringAt > 0, 'the bell rang for the mine raid')
-  assert(muster >= 4, `a real muster took the stand (${muster} pikemen)`)
+  assert(called >= 4, `a real muster was called (${called} peasants)`)
+  assert(armedPeak >= 3, `the called crew armed and took the stand at the hall (peak ${armedPeak} pikemen)`)
   assert(attackSightings > 0, 'the muster engaged the raiders')
-  assertEqual(moveSightings, 0, 'no mustered pikeman was evacuated off its stand')
+  assertEqual(moveSightings, 0, 'no bell-duty worker was evacuated off his duty')
 })
 
 test('AI researches once its bank clears the floor', () => {

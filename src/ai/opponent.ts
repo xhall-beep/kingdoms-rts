@@ -884,8 +884,10 @@ export class OpponentAI implements System {
    * audit 2026-10-23, Finding 3).
    * The rally an evacuee is sent to is itself never inside the
    * triggering threat's radius — see fleeDestination.
-   * Mustered militia are exempt: they hold their stand instead of fleeing.
-   * Deterministic: same visible state always yields the same orders.
+   * Bell-duty workers are exempt (isBellDuty: travelers, the mustered
+   * stand, disarmers): the bell machine owns them end-to-end (town-hall
+   * note §9). Deterministic: same visible state always yields the same
+   * orders.
    */
   private evacuateWorkers(world: World, hall: number, workers: number[]): void {
     // Prune workers that died while evacuated.
@@ -902,7 +904,15 @@ export class OpponentAI implements System {
       // (gather.ts); this is the matching evacuation exemption. Drop
       // any stale evacuee mark: if the militia lapses mid-raid, the
       // next think re-orders and re-marks it through the normal path.
-      if (world.isMilitia(id)) {
+      // Town-hall arming (2026-11-06): the exemption is the bell-duty
+      // predicate, not just isMilitia — a peasant TRAVELING to arm is
+      // not militia yet, and a raider near the wood line is precisely
+      // the bell's trigger context; re-ordering the traveler would
+      // overwrite his trip (and his harvestKind, via emitMove) and the
+      // stand would silently never form. The disarmer is exempt for
+      // the mirror reason: the return must complete, and he is walking
+      // toward the hall — the safety direction — while it lasts.
+      if (world.isBellDuty(id)) {
         this.fleeing.delete(id)
         continue
       }
@@ -1036,6 +1046,12 @@ export class OpponentAI implements System {
     const woodWanted = Math.ceil(workers.length * WOOD_SHARE)
     for (const id of workers) {
       if (this.fleeing.has(id)) continue // Evacuated: stays out until the raid ends.
+      // Bell duty (town-hall note §9): the muster owns him end-to-end.
+      // This pass is a trip-killer, not a theoretical one — the
+      // HARVEST_ANY clause reaches travelers directly, and emitGather
+      // → orderGather (moving = 0, state = IDLE) cancels a trip
+      // mid-walk.
+      if (world.isBellDuty(id)) continue
       const needsAssignment =
         world.state[id] === STATE_IDLE || world.harvestKind[id] === HARVEST_ANY
       if (!needsAssignment) continue
@@ -1623,9 +1639,17 @@ export class OpponentAI implements System {
         }
       }
       if (hasBuilder) continue
+      // Bell duty (town-hall note §9) is excluded from both finds: the
+      // IDLE find can reach an armed pikeman, and the fallback find
+      // (state !== STATE_BUILD) can reach both trip states — seizing
+      // any of them walks the muster off its stand or strands a trip.
       const builder =
-        workers.find((w) => world.state[w] === STATE_IDLE && !this.fleeing.has(w)) ??
-        workers.find((w) => !this.fleeing.has(w) && world.state[w] !== STATE_BUILD)
+        workers.find(
+          (w) => world.state[w] === STATE_IDLE && !this.fleeing.has(w) && !world.isBellDuty(w),
+        ) ??
+        workers.find(
+          (w) => !this.fleeing.has(w) && world.state[w] !== STATE_BUILD && !world.isBellDuty(w),
+        )
       if (builder === undefined) continue
       if (this.sink) {
         this.emitResumeBuild(world, builder, id)

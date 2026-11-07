@@ -18,9 +18,11 @@ import {
   STATE_ATTACK,
   STATE_ATTACKMOVE,
   STATE_BUILD,
+  STATE_DISARM,
   STATE_GATHER,
   STATE_HOLD,
   STATE_MOVE,
+  STATE_MUSTER,
   STATE_PATROL,
   STATE_RETURN,
   TEAM_PLAYER,
@@ -157,6 +159,10 @@ export function unitStateText(world: World, id: number): string {
     case STATE_ATTACK: return 'Fighting'
     case STATE_BUILD: return 'Building'
     case STATE_HOLD: return 'Holding'
+    // Town-hall arming trip (2026-11-06): a called peasant walking to
+    // the hall to arm, and a pikeman walking home to hand the pike in.
+    case STATE_MUSTER: return 'Mustering'
+    case STATE_DISARM: return 'Handing in pike'
     case STATE_MOVE:
     case STATE_ATTACKMOVE:
     case STATE_PATROL: return 'Moving'
@@ -168,7 +174,8 @@ export function unitStateText(world: World, id: number): string {
  * The Militia Bell's real terms (basics slice 3, audit F6): radius
  * and duration read from the militia system's own constants — the
  * same values World.ringMilitiaBell enforces — plus the gathering
- * freeze the ring imposes (militia drop their cargo and stop).
+ * freeze the ring imposes (called peasants walk to the Hall, bank
+ * their cargo there, and stop gathering while they serve).
  */
 export const BELL_TERMS_TEXT =
   `🔔 Bell: Peasants within ${MILITIA_MUSTER_RADIUS} fight for ${MILITIA_DURATION_SEC}s — gathering stops`

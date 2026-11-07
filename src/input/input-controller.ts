@@ -9,6 +9,7 @@ import {
   KIND_GOLDMINE,
   KIND_HALL,
   KIND_MELEE,
+  KIND_PILE,
   KIND_RANGED,
   KIND_SMITHY,
   KIND_TREE,
@@ -766,7 +767,14 @@ export class InputControllerImpl implements InputController {
     const renderer = this.renderer
     if (!world || !renderer) return
     const p = renderer.screenToWorld(sx, sy)
-    const hit = this.entityAt(p.x, p.z, true)
+    let hit = this.entityAt(p.x, p.z, true)
+    // Militia Bell piles are non-selectable scenery (town-hall note
+    // §10): a pile accepts no orders — pickup is automatic on contact —
+    // so it must never enter the selection or render a command card.
+    // The tap passes THROUGH the pile to the ground beneath: with units
+    // selected it becomes a smart order to that spot, which is exactly
+    // how a player walks a worker over a pile to recover its load.
+    if (hit !== -1 && world.kind[hit] === KIND_PILE) hit = -1
 
     if (hit === -1) {
       if (now > 0) this.lastTap = null

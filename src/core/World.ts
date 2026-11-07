@@ -26,6 +26,18 @@ export const KIND_SHRINE = 10
 export const KIND_TREANT = 11
 export const KIND_WORKSHOP = 12
 export const KIND_SMITHY = 13
+/**
+ * Militia Bell death-case pile (Montz, 2026-11-06): the load of a
+ * peasant killed in STATE_MUSTER, left on the ground as its own entity
+ * where he fell until an own-team worker picks it back up. 14 sits
+ * ABOVE every range check in the codebase — `isAttackable` (kind <=
+ * KIND_FARM || tower/treant/workshop/smithy), `isBuildingKind`, the
+ * unit range (kind <= KIND_RANGED) — so a pile is inert to every system
+ * by construction. Never renumber or insert a kind <= 13: the number
+ * IS the safety property. A pile is also non-selectable scenery
+ * (town-hall note §10): no selection gesture may ever contain one.
+ */
+export const KIND_PILE = 14
 
 /**
  * The building predicate: every player/AI-buildable structure kind.
@@ -53,6 +65,20 @@ export const STATE_BUILD = 5
 export const STATE_ATTACKMOVE = 6
 export const STATE_PATROL = 7
 export const STATE_HOLD = 8
+/**
+ * Militia Bell town-hall arming trip (Anchor note 2026-11-06): a called
+ * peasant TRAVELS to his hall to arm — he is not militia yet, his carry
+ * is still on his back, and combat treats him as an ordinary worker.
+ * Membership in the muster is this state value alone; there is no
+ * muster list anywhere (the note's §1 axiom).
+ */
+export const STATE_MUSTER = 9
+/**
+ * The trip home: the levy has lapsed (militiaUntil already cleared) and
+ * the pikeman walks back to a hall to hand the pike in. On arrival he is
+ * released to STATE_IDLE as an ordinary peasant. Carries nothing.
+ */
+export const STATE_DISARM = 10
 
 export const TEAM_PLAYER = 0
 export const TEAM_ENEMY = 1
@@ -183,6 +209,29 @@ export interface DeathPop {
 export const MILITIA_MUSTER_RADIUS = 25
 export const MILITIA_DURATION_SEC = 25
 export const MILITIA_COOLDOWN_SEC = 120
+/**
+ * Arming/disarming trips stop this far from the hall's edge — gather's
+ * ARRIVE_MARGIN (systems/gather.ts), duplicated here because the ring
+ * stamps the trip from World: the trip uses gather's own arrival
+ * discipline (target position, stopDist = hall radius + this margin,
+ * arrival read as moving === 0 on a later tick). Keep the two in step.
+ */
+export const MUSTER_ARRIVE_MARGIN = 0.8
+
+/**
+ * Militia Bell pile terms (Anchor pile note 2026-11-06, carried into
+ * the town-hall note §8): a load left on the ground — by a peasant
+ * killed en route to arm, the pile's only source — is picked up
+ * automatically by an own-team worker whose centre comes within
+ * PILE_PICKUP_RANGE; a fresh drop merges into the nearest own-team pile
+ * of the same kind within PILE_MERGE_RADIUS instead of spawning a new
+ * entity; and a team's piles of one kind never exceed
+ * PILE_MAX_PER_TEAM_KIND live entities (at the cap, drops merge into
+ * the nearest own pile of that kind at any distance).
+ */
+export const PILE_PICKUP_RANGE = 1.2
+export const PILE_MERGE_RADIUS = 2.0
+export const PILE_MAX_PER_TEAM_KIND = 32
 
 /**
  * Why a Militia Bell ring would muster nothing — the read-only mirror
@@ -885,42 +934,142 @@ export class World {
   }
 
   /**
-   * Militia Bell (human racial, v2.0 spec): the Town Hall rings the alarm and
-   * nearby Peasants take up pikes as Levy Pikemen for 25 seconds — at the cost
-   * of halting all resource collection (militia don't gather). 120s cooldown.
-   * Returns the number of peasants mustered, or 0 if unavailable/on cooldown.
+   * Spawn a Militia Bell death-case pile: an en-route casualty's load
+   * left on the ground where he fell (see dropLoadAsPile). Fields are set by hand (like
+   * spawnTreant) because a pile belongs to no data table: it encodes
+   * its load exactly as a worker does — `carryKind` + `carryAmount` on
+   * the existing registered arrays — so the hash, snapshot, save/load,
+   * and PvP reset pick piles up with no new state. The node field
+   * `amount` is explicitly zeroed (a recycled id may carry a dead
+   * node's stock): nothing in node logic may ever mistake a pile for
+   * a harvest node. Team is the dropping worker's team — never
+   * TEAM_NEUTRAL — because ownership is the whole protection: only
+   * own-team workers may pick a pile up (gather.ts), and the owner
+   * always sees their own entities through fog.
+   */
+  spawnPile(team: 0 | 1, carryKind: number, amount: number, x: number, z: number): Entity {
+    const entity = this.createEntity()
+    const id = entity.id
+    this.kind[id] = KIND_PILE
+    this.team[id] = team
+    this.carryKind[id] = carryKind
+    this.carryAmount[id] = amount
+    this.amount[id] = 0
+    this.health[id] = 1
+    this.maxHealth[id] = 1
+    this.damage[id] = 0
+    this.attackRange[id] = 0
+    this.moveSpeed[id] = 0
+    this.radius[id] = 0.5
+    this.sight[id] = 0
+    this.state[id] = STATE_IDLE
+    this.setPosition(entity, x, 0, z)
+    return entity
+  }
+
+  /**
+   * Militia Bell (human racial, v2.0 spec; town-hall arming redesign,
+   * Montz 2026-11-06): the Town Hall rings the alarm and every Peasant
+   * within muster radius of it TRAVELS to the hall to arm — banking his
+   * carried load on arrival and serving 25 s as a Levy Pikeman from the
+   * moment he arms (the levy clock is per peasant, stamped by gather's
+   * STATE_MUSTER case, not here). At expiry he walks back and hands the
+   * pike in at the hall. The 120 s cooldown is stamped here, at the
+   * ring, exactly as the instant muster did. Returns the number of
+   * peasants CALLED, or 0 if unavailable/on cooldown/nobody in radius.
    */
   ringMilitiaBell(team: 0 | 1): number {
     if (this.factionOfTeam[team] !== 'human') return 0
     if (this.matchTime < this.militiaCooldown[team]) return 0
-    // Find the team's hall as the muster point.
+    // Find the team's hall as the muster point (first own hall in
+    // entity order — the selection rule is deliberately unchanged;
+    // construction state is not checked, as before).
+    let hallId = NO_TARGET
     let hx = 0
     let hz = 0
-    let found = false
     for (const id of this.entities.keys()) {
       if (this.team[id] === team && this.kind[id] === KIND_HALL) {
+        hallId = id
         hx = this.positionX[id]
         hz = this.positionZ[id]
-        found = true
         break
       }
     }
-    if (!found) return 0
-    let mustered = 0
+    if (hallId === NO_TARGET) return 0
+    let called = 0
     for (const id of this.entities.keys()) {
       if (this.team[id] !== team || this.kind[id] !== KIND_WORKER) continue
       const d = Math.hypot(this.positionX[id] - hx, this.positionZ[id] - hz)
       if (d > MILITIA_MUSTER_RADIUS) continue
-      this.militiaUntil[id] = this.matchTime + MILITIA_DURATION_SEC
-      // Drop what they're carrying and stand ready — militia don't gather.
-      this.carryAmount[id] = 0
-      this.carryKind[id] = 0
-      this.state[id] = STATE_IDLE
-      mustered += 1
+      // Stamp the trip (town-hall note §2): STATE_MUSTER + a walk to the
+      // hall in gather's own walkTo discipline — target position,
+      // stopDist = hall radius + MUSTER_ARRIVE_MARGIN, moving = 1,
+      // targetId = the hall. The carry is NOT zeroed and militiaUntil
+      // is NOT stamped: the peasant is unarmed and loaded until gather
+      // arms him on arrival. Never orderMove — it would stamp
+      // HARVEST_OFF and rewrite his post-levy economy; harvestKind is
+      // left exactly as found.
+      this.state[id] = STATE_MUSTER
+      this.targetId[id] = hallId
+      this.targetX[id] = hx
+      this.targetZ[id] = hz
+      this.stopDist[id] = this.radius[hallId] + MUSTER_ARRIVE_MARGIN
+      this.moving[id] = 1
+      called += 1
     }
-    if (mustered === 0) return 0
+    if (called === 0) return 0
     this.militiaCooldown[team] = this.matchTime + MILITIA_COOLDOWN_SEC
-    return mustered
+    return called
+  }
+
+  /**
+   * Set one load down as a ground pile at (x, z). Sole caller: the
+   * combat death pass, for a peasant killed in STATE_MUSTER (town-hall
+   * note §8) — the load was captured before his removal and this runs
+   * after the removal loop, so the corpse's own slot is already free.
+   * Merge-first: the load adds to the nearest own-team pile of the same
+   * kind within PILE_MERGE_RADIUS (ties → lowest pile id); at the
+   * per-kind soft cap it merges into the nearest own pile of that kind
+   * at ANY distance (a target is guaranteed to exist when the cap
+   * binds). A new pile spawns only when no merge applies and the cap
+   * has room.
+   *
+   * The drop NEVER throws: createEntity is reached only below both
+   * bounds. If the world is nevertheless at entity capacity with no
+   * merge target, the spawn is skipped and the load is lost with the
+   * corpse — the pile regime's single named theoretical exception
+   * (town-hall note §8): in practice the death pass's removals free at
+   * least one slot per death before any pile spawns, and merge-at-any-
+   * distance covers the cap, so the corner needs a full world AND a
+   * zero-pile team at the same instant.
+   */
+  dropLoadAsPile(team: 0 | 1, carryKind: number, amount: number, x: number, z: number): void {
+    let nearest = NO_TARGET
+    let nearestDist = Infinity
+    let count = 0
+    for (const id of this.entities.keys()) {
+      if (this.kind[id] !== KIND_PILE) continue
+      if (this.team[id] !== team || this.carryKind[id] !== carryKind) continue
+      count += 1
+      const d = Math.hypot(this.positionX[id] - x, this.positionZ[id] - z)
+      if (d < nearestDist || (d === nearestDist && id < nearest)) {
+        nearestDist = d
+        nearest = id
+      }
+    }
+    if (
+      nearest !== NO_TARGET &&
+      (nearestDist <= PILE_MERGE_RADIUS || count >= PILE_MAX_PER_TEAM_KIND)
+    ) {
+      this.carryAmount[nearest] += amount
+      return
+    }
+    if (count >= PILE_MAX_PER_TEAM_KIND || this.entities.size >= this.capacity) {
+      // No merge target exists when the cap binds (defensive — count >=
+      // cap implies a target) or the world is full: skip the spawn.
+      return
+    }
+    this.spawnPile(team, carryKind, amount, x, z)
   }
 
   /**
@@ -956,5 +1105,23 @@ export class World {
   /** True while the given worker serves as militia. */
   isMilitia(id: number): boolean {
     return this.militiaUntil[id] > this.matchTime
+  }
+
+  /**
+   * Bell duty (town-hall note §9): the bell machine owns this worker
+   * end-to-end — traveling to arm (STATE_MUSTER), serving (isMilitia),
+   * or traveling home to hand the pike in (STATE_DISARM). AI worker
+   * logic that operates state-agnostically (evacuation, assignment,
+   * build resumption) must skip a bell-duty worker: re-ordering him
+   * walks the muster off its stand. Reads World state only — nothing
+   * AI-internal — which is what keeps the machine inside the save/load
+   * envelope.
+   */
+  isBellDuty(id: number): boolean {
+    return (
+      this.isMilitia(id) ||
+      this.state[id] === STATE_MUSTER ||
+      this.state[id] === STATE_DISARM
+    )
   }
 }

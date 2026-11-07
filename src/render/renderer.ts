@@ -8,6 +8,7 @@ import {
   KIND_GOLDMINE,
   KIND_HALL,
   KIND_MELEE,
+  KIND_PILE,
   KIND_RANGED,
   KIND_SHRINE,
   KIND_SMITHY,
@@ -18,6 +19,7 @@ import {
   KIND_WORKSHOP,
   STATE_IDLE,
   HARVEST_OFF,
+  CARRY_GOLD,
   isBuildingKind,
 } from '../core/World'
 import { FOG_UNEXPLORED, FOG_VISIBLE } from '../world/fog.ts'
@@ -827,6 +829,19 @@ export class Renderer {
       this.circle(p.x, p.y, r, '#4c3620')
       this.circle(p.x, p.y, r * 0.72, '#2e6b3e')
       this.circle(p.x, p.y, r * 0.3, '#5a4028')
+    } else if (kind === KIND_PILE) {
+      // Militia Bell death-case pile (render-only): a small ground sack in
+      // the resource's own colours — gold over gold-dark for gold,
+      // log tones for wood — shrinking as it drains (the node stock
+      // precedent). Drawn through the ordinary entity loop, so fog
+      // treatment is the owner's-always-visible rule for free. The
+      // final visual form is Montz's verdict, not this branch's.
+      const stock = Math.min(1, world.carryAmount[id] / 10)
+      const pr = Math.max(3, r * (0.55 + 0.45 * stock))
+      const gold = world.carryKind[id] === CARRY_GOLD
+      this.groundShadow(p.x, p.y, pr * 0.6)
+      this.circle(p.x, p.y, pr, gold ? '#b8912f' : '#6b4a2b')
+      this.circle(p.x, p.y, pr * 0.55, gold ? '#f5c542' : '#8a6238')
     } else {
       // Unit: try sprite first, fall back to procedural discs.
       let spriteKey: string | null = null

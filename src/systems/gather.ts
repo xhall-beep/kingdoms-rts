@@ -14,13 +14,22 @@ import {
   KIND_FARM,
   KIND_GOLDMINE,
   KIND_HALL,
+  KIND_PILE,
   KIND_TREE,
   KIND_WORKER,
+  MILITIA_DURATION_SEC,
   NO_TARGET,
+  PILE_PICKUP_RANGE,
+  STATE_ATTACK,
+  STATE_ATTACKMOVE,
   STATE_BUILD,
+  STATE_DISARM,
   STATE_GATHER,
+  STATE_HOLD,
   STATE_IDLE,
   STATE_MOVE,
+  STATE_MUSTER,
+  STATE_PATROL,
   STATE_RETURN,
   isBuildingKind,
 } from '../core/World'
@@ -96,6 +105,10 @@ function nearFinishedFarm(world: World, id: number): boolean {
 export class GatherSystemImpl implements System {
   update(world: World, dt: number): void {
     const spentNodes: number[] = []
+    /** Piles drained to exactly 0 by this tick's pickup pass; removed
+     *  after every pass, never mid-iteration (the spentNodes pattern). */
+    const drainedPiles: number[] = []
+    pilePickupPass(world, drainedPiles)
     /**
      * Construction crews by site, collected during the worker pass and
      * applied in a single pass after it. Progress belongs to the
@@ -106,6 +119,40 @@ export class GatherSystemImpl implements System {
     const crews = new Map<number, { builders: number[]; rates: number[] }>()
     for (const id of world.entities.keys()) {
       if (world.kind[id] !== KIND_WORKER) continue
+      // Militia Bell expiry (town-hall note §6): there is no expiry
+      // event in the sim — isMilitia just goes false — so the return
+      // order is issued here, before the state switch, on the first
+      // tick the levy clock has lapsed. militiaUntil is cleared NOW, at
+      // the order, so the field means exactly "armed service expiry"
+      // and nothing can re-trigger. A pikeman still on duty (idle or a
+      // combat stance) is ordered home to hand the pike in; a pikeman
+      // the economy or a direct order already re-tasked mid-levy
+      // (MOVE/GATHER/RETURN/BUILD) is only stood down in place — the
+      // pass never yanks a worker out of a live work order.
+      if (world.militiaUntil[id] > 0 && world.matchTime >= world.militiaUntil[id]) {
+        world.militiaUntil[id] = 0
+        const st = world.state[id]
+        if (
+          st === STATE_IDLE ||
+          st === STATE_ATTACK ||
+          st === STATE_ATTACKMOVE ||
+          st === STATE_PATROL ||
+          st === STATE_HOLD
+        ) {
+          const hall = nearestBuiltHall(world, id)
+          if (hall === NO_TARGET) {
+            // No finished hall anywhere: release in place — he is a
+            // peasant where he stands, and nothing dangles.
+            world.state[id] = STATE_IDLE
+            world.targetId[id] = NO_TARGET
+            world.moving[id] = 0
+          } else {
+            world.targetId[id] = hall
+            walkTo(world, id, hall, ARRIVE_MARGIN)
+            world.state[id] = STATE_DISARM
+          }
+        }
+      }
       switch (world.state[id]) {
         case STATE_IDLE: {
           if (world.carryAmount[id] > 0) {
@@ -219,6 +266,40 @@ export class GatherSystemImpl implements System {
           crew.rates.push(workerDef.buildRate * haste)
           break
         }
+        case STATE_MUSTER: {
+          // Town Hall arming trip (town-hall note §3). Destination
+          // validity first — a destroyed (or id-recycled) hall
+          // re-resolves down the ladder, and with no finished hall the
+          // muster dissolves with the load still on his back.
+          if (!retargetTrip(world, id)) break
+          if (world.moving[id] === 1) break // still walking to the hall
+          // Arrival → arm, in one step. Deposit with the RETURN case's
+          // exact semantics (bank += amount, carry zeroed): a peasant
+          // mustered mid-RETURN simply completes his delivery as part
+          // of arming. Then stamp the levy — the 25 s runs from THIS
+          // moment, per peasant (§4), never from the ring.
+          const team = world.team[id]
+          if (world.carryKind[id] === CARRY_WOOD) world.wood[team] += world.carryAmount[id]
+          else if (world.carryKind[id] === CARRY_GOLD) world.gold[team] += world.carryAmount[id]
+          world.carryAmount[id] = 0
+          world.carryKind[id] = CARRY_NONE
+          world.militiaUntil[id] = world.matchTime + MILITIA_DURATION_SEC
+          world.state[id] = STATE_IDLE
+          world.targetId[id] = NO_TARGET
+          break
+        }
+        case STATE_DISARM: {
+          // The trip home (town-hall note §6): same validity ladder as
+          // the trip in. On arrival the pike is handed in — release to
+          // an ordinary peasant at his hall. The release gates nothing
+          // else, which is what makes abandoning the trip (a direct
+          // player order overwriting the state) safe by construction.
+          if (!retargetTrip(world, id)) break
+          if (world.moving[id] === 1) break // still walking home
+          world.state[id] = STATE_IDLE
+          world.targetId[id] = NO_TARGET
+          break
+        }
         default:
           break
       }
@@ -272,6 +353,62 @@ export class GatherSystemImpl implements System {
       }
     }
     for (const node of spentNodes) world.removeEntityById(node)
+    for (const pile of drainedPiles) world.removeEntityById(pile)
+  }
+}
+
+/**
+ * Militia Bell pile pickup pass — runs once per tick, before the worker
+ * FSM, so a load picked up this tick feeds the same tick's FSM (an idle
+ * worker who just recovered a pile goes RETURN at once and the FSM
+ * carries the load home — the designed recovery).
+ *
+ * Rules (Anchor pile note 2026-11-06 §3, carried into the town-hall
+ * note §8): own-team workers only — the team check is the whole
+ * ownership rule, an enemy worker can NEVER take a pile; serving
+ * militia are excluded (a levy standing on a casualty's pile does not
+ * load up mid-stand); contact only, centre distance ≤
+ * PILE_PICKUP_RANGE, no order, no state change, no rerouting — a
+ * RETURN walker simply deposits more, a GATHER walker tops up en
+ * route. Top-up is same-kind only and never exceeds the worker's free
+ * capacity; a partial transfer leaves the exact remainder in the pile,
+ * and a pile despawns only at exactly 0. Workers are processed in id
+ * order and piles scanned in id order — if two workers are in range of
+ * one pile, the lower worker id loads first. Deterministic by
+ * construction.
+ */
+function pilePickupPass(world: World, drained: number[]): void {
+  const workers: number[] = []
+  const piles: number[] = []
+  for (const id of world.entities.keys()) {
+    if (world.kind[id] === KIND_WORKER) workers.push(id)
+    else if (world.kind[id] === KIND_PILE) piles.push(id)
+  }
+  if (piles.length === 0) return
+  workers.sort((a, b) => a - b)
+  piles.sort((a, b) => a - b)
+  for (const id of workers) {
+    if (world.isMilitia(id)) continue
+    const team = world.team[id]
+    for (const pile of piles) {
+      if (world.carryAmount[pile] <= 0) continue
+      if (world.team[pile] !== team) continue
+      const pileKind = world.carryKind[pile]
+      // One load, one kind: a loaded worker takes only its own kind.
+      if (world.carryAmount[id] > 0 && world.carryKind[id] !== pileKind) continue
+      const free = world.carryMax[id] - world.carryAmount[id]
+      if (free <= 0) break
+      const d = Math.hypot(
+        world.positionX[pile] - world.positionX[id],
+        world.positionZ[pile] - world.positionZ[id],
+      )
+      if (d > PILE_PICKUP_RANGE) continue
+      const moved = Math.min(world.carryAmount[pile], free)
+      world.carryAmount[pile] -= moved
+      world.carryKind[id] = pileKind
+      world.carryAmount[id] += moved
+      if (world.carryAmount[pile] === 0) drained.push(pile)
+    }
   }
 }
 
@@ -281,6 +418,45 @@ function walkTo(world: World, id: number, target: number, margin: number): void 
   world.targetZ[id] = world.positionZ[target]
   world.stopDist[id] = world.radius[target] + margin
   world.moving[id] = 1
+}
+
+/**
+ * Shared trip plumbing for STATE_MUSTER / STATE_DISARM (town-hall note
+ * §3/§6). The destination (targetId) is valid while that entity exists,
+ * is a KIND_HALL, and belongs to the peasant's team — kind and team,
+ * not mere existence, because the id can be recycled mid-trip. The
+ * muster hall need NOT be finished: the ring chose it, and arming and
+ * deposit are abstract (the bank is not a physical inventory).
+ *
+ * An invalid destination re-resolves to the nearest FINISHED own hall
+ * (the deposit path's own rule and tiebreak) and re-walks the trip.
+ * With no finished own hall anywhere, the trip DISSOLVES: the peasant
+ * is released to STATE_IDLE with any load still on his back — the
+ * ordinary worker FSM takes him from there (carrying routes him to
+ * RETURN, whose fallback lands the load at a finished building) — and
+ * false is returned. No traveler or disarmer ever parks forever
+ * waiting for a hall that isn't coming.
+ */
+function retargetTrip(world: World, id: number): boolean {
+  const target = world.targetId[id]
+  if (
+    target !== NO_TARGET &&
+    world.entities.has(target) &&
+    world.kind[target] === KIND_HALL &&
+    world.team[target] === world.team[id]
+  ) {
+    return true
+  }
+  const hall = nearestBuiltHall(world, id)
+  if (hall === NO_TARGET) {
+    world.state[id] = STATE_IDLE
+    world.targetId[id] = NO_TARGET
+    world.moving[id] = 0
+    return false
+  }
+  world.targetId[id] = hall
+  walkTo(world, id, hall, ARRIVE_MARGIN)
+  return true
 }
 
 /** Nearest stocked node, preferring the worker's harvest assignment (falls back to any).
