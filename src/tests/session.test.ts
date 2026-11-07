@@ -1,9 +1,12 @@
 /**
  * Session regression tests — save/load round-trip determinism and replay.
  */
-import { World, TEAM_PLAYER } from '../core/World.ts'
+import { World, TEAM_PLAYER, KIND_WORKER, STATE_IDLE, STATE_HOLD } from '../core/World.ts'
 import { serializeWorld, deserializeWorld } from '../session/save-load.ts'
+import { CommandLog } from '../session/commands.ts'
 import { ReplayPlayer } from '../session/replay.ts'
+import { applyCommand } from '../net/apply.ts'
+import { hashWorldState, hashToHex } from '../net/hash.ts'
 import { orderMove } from '../systems/movement.ts'
 import { suite, test, assert, assertEqual } from './harness.ts'
 import { makeWorld, stepWorld, STEP } from './setup.ts'
@@ -134,4 +137,81 @@ test('replay re-simulation is deterministic', () => {
   const fpB = fingerprint(worldB)
 
   assertEqual(fpB, fpA, 'two replay runs produce identical state')
+})
+
+test('replay reproduces live stop and hold orders (audit item 6)', () => {
+  const TICKS = 360
+  // Two player workers: A is move->stop, B is move->hold.
+  const worldLive = makeWorld()
+  const workers: number[] = []
+  for (const id of worldLive.entities.keys()) {
+    if (worldLive.team[id] === TEAM_PLAYER && worldLive.kind[id] === KIND_WORKER) workers.push(id)
+  }
+  assert(workers.length >= 2, 'sanity: at least two player workers')
+  const [wA, wB] = workers
+  const startA = { x: worldLive.positionX[wA], z: worldLive.positionZ[wA] }
+
+  const log = new CommandLog()
+  log.record({ type: 'move', step: 30, unitIds: [wA], x: 10, z: 10 })
+  log.record({ type: 'stop', step: 90, unitIds: [wA] })
+  log.record({ type: 'move', step: 30, unitIds: [wB], x: -12, z: 4 })
+  log.record({ type: 'hold', step: 60, unitIds: [wB] })
+  const commands = log.getCommands()
+
+  // Live run: commands applied through the live path (net/apply.ts).
+  for (let s = 0; s < TICKS; s += 1) {
+    for (const cmd of commands) if (cmd.step === s) applyCommand(worldLive, cmd)
+    worldLive.update(STEP)
+  }
+
+  // Replay run: fresh world, commands re-applied by ReplayPlayer.
+  const worldReplay = makeWorld()
+  const replay = new ReplayPlayer(worldReplay)
+  replay.load(commands)
+  for (let s = 0; s < TICKS; s += 1) replay.update(STEP)
+
+  const hashLive = hashWorldState(worldLive)
+  const hashReplay = hashWorldState(worldReplay)
+  console.log(
+    `replay-stop-hold probe: ticks=${TICKS} liveHash=${hashToHex(hashLive)} replayHash=${hashToHex(hashReplay)}`,
+  )
+  assert(hashReplay === hashLive, 'replay hash equals live hash exactly')
+  assertEqual(fingerprint(worldReplay), fingerprint(worldLive), 'replay fingerprint equals live')
+
+  // The orders visibly took effect in BOTH runs (not just vacuously equal):
+  for (const w of [worldLive, worldReplay]) {
+    assertEqual(w.state[wA], STATE_IDLE, 'stopped worker is IDLE')
+    const dA = Math.hypot(w.positionX[wA] - 10, w.positionZ[wA] - 10)
+    assert(dA > 2, 'stopped worker never reached its move target')
+    const moved = Math.hypot(w.positionX[wA] - startA.x, w.positionZ[wA] - startA.z)
+    assert(moved > 0.5, 'stopped worker had actually moved before the stop')
+    assertEqual(w.state[wB], STATE_HOLD, 'held worker is in STATE_HOLD')
+    const dB = Math.hypot(w.positionX[wB] - -12, w.positionZ[wB] - 4)
+    assert(dB > 2, 'held worker stopped short of its move target')
+  }
+})
+
+test('replay reproduces a live surrender (audit item 6)', () => {
+  const TICKS = 60
+  const log = new CommandLog()
+  log.record({ type: 'surrender', step: 10, player: 0 })
+  const commands = log.getCommands()
+
+  const worldLive = makeWorld()
+  for (let s = 0; s < TICKS; s += 1) {
+    for (const cmd of commands) if (cmd.step === s) applyCommand(worldLive, cmd)
+    worldLive.update(STEP)
+  }
+  assertEqual(worldLive.winner, 1, 'live: surrender by player 0 makes team 1 the winner')
+
+  const worldReplay = makeWorld()
+  const replay = new ReplayPlayer(worldReplay)
+  replay.load(commands)
+  for (let s = 0; s < TICKS; s += 1) replay.update(STEP)
+
+  assertEqual(worldReplay.winner, 1, 'replay: surrender is applied, winner matches live')
+  assert(
+    hashWorldState(worldReplay) === hashWorldState(worldLive),
+    'replay hash equals live hash after surrender',
+  )
 })

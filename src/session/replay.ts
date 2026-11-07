@@ -8,7 +8,7 @@ import {
 } from '../core/World'
 import { orderAttack, orderAttackMove } from '../systems/combat.ts'
 import { orderBuild, orderGather } from '../systems/gather.ts'
-import { orderMove, orderPatrol } from '../systems/movement.ts'
+import { orderMove, orderPatrol, orderStop, orderHold } from '../systems/movement.ts'
 import { cancelTrainActive, cancelTrainQueued, enqueueTrain, setRally, upgradeBuilding, researchUpgrade } from '../systems/production.ts'
 import { soundWarHorn } from '../systems/warhorn.ts'
 import { placeStructure } from '../world/construction.ts'
@@ -192,6 +192,22 @@ export class ReplayPlayer {
         for (const id of cmd.unitIds) {
           if (world.entities.has(id)) orderPatrol(world, id, cmd.x, cmd.z)
         }
+        break
+      // Stop / Hold / Surrender mirror net/apply.ts exactly — without
+      // them a replay silently dropped the orders and diverged from the
+      // live match (audit item 6).
+      case 'stop':
+        for (const id of cmd.unitIds) {
+          if (world.entities.has(id)) orderStop(world, id)
+        }
+        break
+      case 'hold':
+        for (const id of cmd.unitIds) {
+          if (world.entities.has(id)) orderHold(world, id)
+        }
+        break
+      case 'surrender':
+        if (world.winner === -1) world.winner = cmd.player === 0 ? 1 : 0
         break
     }
   }
