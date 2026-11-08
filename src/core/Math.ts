@@ -98,5 +98,47 @@ export const CARDINAL_OFFSETS: readonly (readonly [number, number])[] = [
   [-1.8369701987210297e-16, -1],
 ]
 
+/**
+ * Surround-ring bearings for short-reach attackers (audit item #2):
+ * 12 unit-circle offsets at 30° steps (slot k at angle k·π/6). Same
+ * determinism rationale as BUILD_RING_OFFSETS: these are the exact
+ * doubles Math.cos/Math.sin return for those angles, written as
+ * literals so every engine parses them bit-identically; the sim path
+ * never calls trig. The combat system aims a chasing attacker at
+ * target + SURROUND_OFFSETS[slot] · (reach × 0.9) instead of the
+ * target's centre, so a squad distributes around the disc. The
+ * separation pass also draws coincident-pair directions from this
+ * table (a zero-distance pair has no geometric direction).
+ */
+export const SURROUND_OFFSETS: readonly (readonly [number, number])[] = [
+  [1, 0],
+  [0.8660254037844387, 0.49999999999999994],
+  [0.5000000000000001, 0.8660254037844386],
+  [6.123233995736766e-17, 1],
+  [-0.4999999999999998, 0.8660254037844387],
+  [-0.8660254037844385, 0.5000000000000003],
+  [-1, 1.2246467991473532e-16],
+  [-0.8660254037844388, -0.4999999999999997],
+  [-0.5000000000000004, -0.8660254037844385],
+  [-1.8369701987210297e-16, -1],
+  [0.49999999999999933, -0.866025403784439],
+  [0.8660254037844384, -0.5000000000000004],
+]
+
+/**
+ * Bearing slot for an attacker chasing a target: a pure function of
+ * the two entity ids — stable while the same attacker chases the same
+ * target, and distinct for distinct attackers on one target whenever
+ * their ids are distinct mod the slot count (squads spawn with
+ * near-consecutive ids, so in practice the first 12 attackers on a
+ * target all get different bearings; beyond that, slots repeat by
+ * wraparound, which the design note accepts for a saturated ring).
+ * 7 is coprime with the slot count, so consecutive attacker ids cycle
+ * through every slot before repeating.
+ */
+export function surroundSlot(attackerId: number, targetId: number): number {
+  return (attackerId * 7 + targetId) % SURROUND_OFFSETS.length
+}
+
 export const lerp = (from: number, to: number, amount: number): number =>
   from + (to - from) * clamp(amount, 0, 1)

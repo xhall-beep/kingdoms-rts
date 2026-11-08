@@ -1,6 +1,8 @@
 import type { System, World } from '../core/World'
 import { KIND_TOWER } from '../core/World'
 import { chargeWarHorn, rallyDamageMult, rallySpeedMult } from './warhorn.ts'
+import { SHORT_REACH_MAX } from './movement.ts'
+import { SURROUND_OFFSETS, surroundSlot } from '../core/Math.ts'
 import { SpatialHash } from '../core/spatial-hash.ts'
 import { FACTIONS } from '../data/factions.ts'
 import { WORLD_TICKS_PER_SECOND } from '../core/time.ts'
@@ -45,6 +47,12 @@ function getCounterMultiplier(world: World, attacker: number, target: number): n
   if (aKind === 1 && tKind === 2) return 1.25 // Melee vs Ranged: crush if close
   if (aKind === 0) return 0.6 // Worker vs anything: weak
   return 1.0
+}
+
+let surroundEnabled = true
+/** Test-only switch (design note §13): production code never calls this. */
+export function setSurroundEnabledForTests(on: boolean): void {
+  surroundEnabled = on
 }
 
 export class CombatSystemImpl implements System {
@@ -199,9 +207,26 @@ export class CombatSystemImpl implements System {
           if (world.health[target] <= 0 && !dead.includes(target)) dead.push(target)
         }
       } else {
-        world.targetX[id] = world.positionX[target]
-        world.targetZ[id] = world.positionZ[target]
-        world.stopDist[id] = Math.max(0.1, reach * 0.9)
+        // Surround ring (audit item #2): a short-reach attacker aims at
+        // its bearing's point on the ring around the target — at the
+        // existing stop distance, reach × 0.9 from the target's centre —
+        // instead of the centre itself, so a squad distributes around
+        // the disc instead of stacking at the arrival bearing. Only the
+        // aim point changes; the strike check above is untouched.
+        // Ranged attackers keep centre aim. Bearings are a pure
+        // function of (attacker id, target id) over a literal table —
+        // no trig in the sim path.
+        if (surroundEnabled && world.attackRange[id] <= SHORT_REACH_MAX) {
+          const off = SURROUND_OFFSETS[surroundSlot(id, target)]
+          const ring = reach * 0.9
+          world.targetX[id] = world.positionX[target] + off[0] * ring
+          world.targetZ[id] = world.positionZ[target] + off[1] * ring
+          world.stopDist[id] = 0.1
+        } else {
+          world.targetX[id] = world.positionX[target]
+          world.targetZ[id] = world.positionZ[target]
+          world.stopDist[id] = Math.max(0.1, reach * 0.9)
+        }
         world.moving[id] = 1
         world.state[id] = STATE_ATTACK
       }
