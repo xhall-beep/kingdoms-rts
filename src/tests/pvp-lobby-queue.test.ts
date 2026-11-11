@@ -116,9 +116,7 @@ function joinQueue(root: FakeEl): FakeSocket {
   return s
 }
 
-test('match-found closes the queue socket before joining the room', () => {
-  const { root } = setupLobby()
-  const queue = joinQueue(root)
+function sendMatched(queue: FakeSocket): void {
   queue.onmessage?.({
     data: JSON.stringify({
       kind: 'matched',
@@ -130,13 +128,53 @@ test('match-found closes the queue socket before joining the room', () => {
       yourRating: 1200,
     }),
   })
+}
+
+test('match-found closes the queue socket and shows the interstitial before joining', () => {
+  const { lobby, root } = setupLobby()
+  const queue = joinQueue(root)
+  sendMatched(queue)
   assert(queue.closed, 'queue socket must be closed on match, not merely nulled')
-  assert(FakeSocket.instances.length >= 2, 'room socket must be created after match')
+  assert(FakeSocket.instances.length === 1, 'room socket must NOT be created until the countdown enters')
+  assert(!root.querySelector('#pvp-match-found').hidden, 'match-found interstitial must show on match')
+  assert(
+    root.querySelector('#pvp-found-opponent').textContent === 'vs Foe',
+    `interstitial must name the opponent, got ${root.querySelector('#pvp-found-opponent').textContent}`,
+  )
+  assert(
+    root.querySelector('#pvp-found-rating').textContent === 'Your rating: 1200',
+    `interstitial must show the rating, got ${root.querySelector('#pvp-found-rating').textContent}`,
+  )
+  assert(
+    root.querySelector('#pvp-found-countdown').textContent === 'Entering match in 3…',
+    `interstitial must count down from 3, got ${root.querySelector('#pvp-found-countdown').textContent}`,
+  )
+  assert(root.querySelector('#pvp-close-row').hidden, 'Close must hide while the match-found countdown runs')
+  assert(root.querySelector('#pvp-queue-display').hidden, 'queue display must hide on match')
+  lobby.enterMatchedRoom()
+  assert(FakeSocket.instances.length >= 2, 'room socket must be created after entering the match')
   assert(
     FakeSocket.instances[1].url.includes('/api/room/ABCDEF/ws'),
     `room socket URL wrong: ${FakeSocket.instances[1].url}`,
   )
-  assert(root.querySelector('#pvp-queue-display').hidden, 'queue display must hide on match')
+  assert(root.querySelector('#pvp-match-found').hidden, 'interstitial must hide once the room join starts')
+  assert(!root.querySelector('#pvp-close-row').hidden, 'Close must come back once the room join starts')
+})
+
+test('enterMatchedRoom with no pending match joins nothing', () => {
+  const { lobby } = setupLobby()
+  lobby.enterMatchedRoom()
+  assert(FakeSocket.instances.length === 0, 'no socket must be created without a matchmaker pairing')
+})
+
+test('disconnect during match-found cancels the pending room join', () => {
+  const { lobby, root } = setupLobby()
+  const queue = joinQueue(root)
+  sendMatched(queue)
+  lobby.disconnect()
+  assert(root.querySelector('#pvp-match-found').hidden, 'interstitial must clear on disconnect')
+  lobby.enterMatchedRoom()
+  assert(FakeSocket.instances.length === 1, 'cancelled match must not join the room afterwards')
 })
 
 test('cancel closes the queue socket', () => {

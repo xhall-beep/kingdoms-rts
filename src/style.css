@@ -1098,6 +1098,28 @@ code {
   color: #ffd700;
   margin: 8px 0;
 }
+
+/* Match-found interstitial: stacks vertically (the .pvp-row flex default
+ * would lay the lines side by side) and leads with the opponent. */
+#pvp-match-found {
+  flex-direction: column;
+  gap: 4px;
+}
+.pvp-found-title {
+  font-size: 20px;
+  font-weight: bold;
+  margin: 4px 0;
+}
+#pvp-found-opponent {
+  font-size: 16px;
+  margin: 0;
+}
+#pvp-found-rating,
+#pvp-found-countdown {
+  font-size: 14px;
+  opacity: 0.8;
+  margin: 0;
+}
 .pvp-waiting { color: #888; font-style: italic; }
 .pvp-status { margin-top: 12px; color: #aaa; min-height: 20px; }
 

@@ -23,6 +23,11 @@ export class PvPLobby {
   private client: PvPClient | null = null
   private callbacks: PvPLobbyCallbacks | null = null
   private queueWs: WebSocket | null = null
+  /** Room code from the matchmaker, waiting out the match-found countdown. */
+  private pendingMatch: { code: string } | null = null
+  private matchFoundTimer: ReturnType<typeof setTimeout> | null = null
+  private matchFoundInterval: ReturnType<typeof setInterval> | null = null
+  private matchFoundRemaining = 0
 
   mount(parent: HTMLElement, callbacks: PvPLobbyCallbacks): void {
     this.callbacks = callbacks
@@ -46,6 +51,12 @@ export class PvPLobby {
           <p id="pvp-queue-count"></p>
           <button class="hud-pill" id="pvp-cancel">Cancel</button>
         </div>
+        <div class="pvp-row" id="pvp-match-found" hidden>
+          <p class="pvp-found-title">⚔️ Match found!</p>
+          <p id="pvp-found-opponent"></p>
+          <p id="pvp-found-rating"></p>
+          <p id="pvp-found-countdown"></p>
+        </div>
         <div class="pvp-row">
           <button class="hud-pill hud-mode" id="pvp-create">Create Room</button>
         </div>
@@ -59,7 +70,7 @@ export class PvPLobby {
                  placeholder="Enter code" style="text-transform:uppercase" />
           <button class="hud-pill hud-mode" id="pvp-join">Join Room</button>
         </div>
-        <div class="pvp-row">
+        <div class="pvp-row" id="pvp-close-row">
           <button class="hud-pill" id="pvp-close">Close</button>
         </div>
         <hr class="pvp-divider" />
@@ -83,6 +94,10 @@ export class PvPLobby {
   }
 
   hide(): void {
+    // Leaving the lobby abandons a pending match-found: clear the
+    // countdown so a hidden lobby never auto-enters a match, and drop
+    // the pending room (the opponent's room times out server-side).
+    this.clearMatchFound()
     if (this.root) this.root.hidden = true
   }
 
@@ -280,15 +295,86 @@ export class PvPLobby {
     }
     this.queueWs = null
 
-    this.setStatus(`Matched vs ${opponentName}! Joining...`)
     // Stash pairing credentials for authenticated result reporting
     const stash = this as unknown as { lastOpponentId: string; lastMatchId: string; lastMatchSecret: string; lastRating: number }
     stash.lastOpponentId = opponentId
     stash.lastMatchId = matchId
     stash.lastMatchSecret = secret
     stash.lastRating = yourRating
-    // Connect to the room using the existing flow
-    this.connect(code)
+    // Show the match-found interstitial; the room join follows the countdown.
+    this.showMatchFound(code, opponentName, yourRating)
+  }
+
+  /**
+   * Match-found interstitial (Quick Match path only): the player sees who
+   * they drew and their rating, then auto-enters after a short beat.
+   * There is no decline — the matchmaker has no decline protocol and the
+   * worker source is gone, so declining would strand the opponent in the
+   * room. Close is hidden for the 3s countdown instead of letting the
+   * player walk away from a made match.
+   */
+  private showMatchFound(code: string, opponentName: string, rating: number): void {
+    this.pendingMatch = { code }
+    this.matchFoundRemaining = 3
+    this.setStatus('')
+    const found = this.root?.querySelector<HTMLElement>('#pvp-match-found')
+    if (found) found.hidden = false
+    const oppEl = this.root?.querySelector<HTMLElement>('#pvp-found-opponent')
+    if (oppEl) oppEl.textContent = `vs ${opponentName}`
+    const ratingEl = this.root?.querySelector<HTMLElement>('#pvp-found-rating')
+    if (ratingEl) ratingEl.textContent = `Your rating: ${rating}`
+    this.renderMatchFoundCountdown()
+    const closeRow = this.root?.querySelector<HTMLElement>('#pvp-close-row')
+    if (closeRow) closeRow.hidden = true
+    // Timers are a browser-only flourish: the synchronous test harness
+    // runs in node with no window, and a pending interval would keep the
+    // test process alive. Tests drive enterMatchedRoom() directly.
+    if (typeof window !== 'undefined') {
+      this.matchFoundInterval = setInterval(() => {
+        this.matchFoundRemaining -= 1
+        if (this.matchFoundRemaining <= 0) {
+          this.enterMatchedRoom()
+        } else {
+          this.renderMatchFoundCountdown()
+        }
+      }, 1000)
+      this.matchFoundTimer = setTimeout(() => this.enterMatchedRoom(), 3000)
+    }
+  }
+
+  private renderMatchFoundCountdown(): void {
+    const el = this.root?.querySelector<HTMLElement>('#pvp-found-countdown')
+    if (el) el.textContent = `Entering match in ${this.matchFoundRemaining}…`
+  }
+
+  /**
+   * Enter the room the matchmaker assigned. Public so the countdown timer
+   * and the test harness share one entry point; a no-op with no pending
+   * match, so a stray call can never join a room twice.
+   */
+  enterMatchedRoom(): void {
+    const pending = this.pendingMatch
+    if (!pending) return
+    this.clearMatchFound()
+    this.setStatus('Joining match...')
+    this.connect(pending.code)
+  }
+
+  /** Clear the match-found countdown and panel; keep the lobby usable. */
+  private clearMatchFound(): void {
+    if (this.matchFoundInterval !== null) {
+      clearInterval(this.matchFoundInterval)
+      this.matchFoundInterval = null
+    }
+    if (this.matchFoundTimer !== null) {
+      clearTimeout(this.matchFoundTimer)
+      this.matchFoundTimer = null
+    }
+    this.pendingMatch = null
+    const found = this.root?.querySelector<HTMLElement>('#pvp-match-found')
+    if (found) found.hidden = true
+    const closeRow = this.root?.querySelector<HTMLElement>('#pvp-close-row')
+    if (closeRow) closeRow.hidden = false
   }
 
   /** Opponent's player ID from the last matchmaker pairing (for result reporting). */
@@ -313,6 +399,7 @@ export class PvPLobby {
   }
 
   disconnect(): void {
+    this.clearMatchFound()
     this.client?.disconnect()
     this.client = null
     if (this.queueWs) {
