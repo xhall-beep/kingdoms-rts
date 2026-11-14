@@ -420,6 +420,12 @@ export class World {
    */
   readonly spatialHash = new SpatialHash(24)
   readonly systems: System[] = []
+  /**
+   * Reused spatial-hash entry objects, refilled in place every tick.
+   * SpatialHash.rebuild consumes them synchronously, so reuse is safe;
+   * entries beyond the live count are truncated by length, never read.
+   */
+  private readonly spatialEntries: { id: number; x: number; z: number }[] = []
 
   private nextEntityId = 1
   private readonly capacity: number
@@ -697,10 +703,22 @@ export class World {
     // Rebuild the shared spatial index (deterministic world order).
     // Only the movement system changes positions, and it runs last,
     // so this snapshot is position-identical for every system this tick.
-    const entries: { id: number; x: number; z: number }[] = []
+    // Entry objects are reused in place: rebuild consumes them
+    // synchronously, and no per-tick allocation happens here.
+    const entries = this.spatialEntries
+    let entryCount = 0
     for (const id of this.entities.keys()) {
-      entries.push({ id, x: this.positionX[id], z: this.positionZ[id] })
+      let entry = entries[entryCount]
+      if (entry === undefined) {
+        entry = { id, x: 0, z: 0 }
+        entries[entryCount] = entry
+      }
+      entry.id = id
+      entry.x = this.positionX[id]
+      entry.z = this.positionZ[id]
+      entryCount += 1
     }
+    entries.length = entryCount
     this.spatialHash.rebuild(entries)
     // Update Orc momentum: increment for units in combat, reset after gap
     for (let id = 0; id < this.momentumTicks.length; id++) {
@@ -763,15 +781,35 @@ export class World {
     )
   }
 
-  snapshotSpatialState(): Float32Array[] {
-    return [
-      this.positionX.slice(),
-      this.positionY.slice(),
-      this.positionZ.slice(),
-      this.velocityX.slice(),
-      this.velocityY.slice(),
-      this.velocityZ.slice(),
+  /**
+   * Copy the six spatial arrays into `target`, reusing its buffers.
+   * A slot is (re)allocated only when it is missing or the wrong length
+   * (world capacity is fixed at construction, so steady-state this
+   * allocates nothing). Same contents as snapshotSpatialState().
+   */
+  snapshotSpatialStateInto(target: Float32Array[]): void {
+    const sources = [
+      this.positionX,
+      this.positionY,
+      this.positionZ,
+      this.velocityX,
+      this.velocityY,
+      this.velocityZ,
     ]
+    for (let i = 0; i < sources.length; i += 1) {
+      const slot = target[i]
+      if (slot === undefined || slot.length !== sources[i].length) {
+        target[i] = sources[i].slice()
+      } else {
+        slot.set(sources[i])
+      }
+    }
+  }
+
+  snapshotSpatialState(): Float32Array[] {
+    const out: Float32Array[] = []
+    this.snapshotSpatialStateInto(out)
+    return out
   }
 
   // ---- factories: build entities from the data tables (faction mods applied) ----

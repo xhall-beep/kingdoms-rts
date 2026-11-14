@@ -27,6 +27,14 @@ export class Engine {
   private simulationSteps = 0
   private interpolationAlpha = 0
   private previousSpatialState: Float32Array[]
+  /**
+   * Two pre-allocated snapshot sets, ping-ponged by advance(): each
+   * frame writes into the set that is NOT currently published as the
+   * previous state, so the renderer never sees a half-written buffer
+   * and no per-frame allocation happens. One-time cost at construction.
+   */
+  private readonly spatialSnapshots: [Float32Array[], Float32Array[]]
+  private snapshotIndex = 0
   private running = false
   private paused = false
   private lastFrameTime: number | undefined
@@ -36,7 +44,11 @@ export class Engine {
     this.fixedStepSeconds = options.fixedStepSeconds ?? 1 / 60
     this.maxFrameTimeSeconds = options.maxFrameTimeSeconds ?? 1
     this.stepHandler = options.stepHandler
-    this.previousSpatialState = this.world.snapshotSpatialState()
+    this.spatialSnapshots = [
+      this.world.snapshotSpatialState(),
+      this.world.snapshotSpatialState(),
+    ]
+    this.previousSpatialState = this.spatialSnapshots[0]
   }
 
   start(): void {
@@ -72,7 +84,11 @@ export class Engine {
 
     const clampedDelta = Math.min(deltaSeconds, this.maxFrameTimeSeconds)
     this.accumulator += clampedDelta
-    this.previousSpatialState = this.world.snapshotSpatialState()
+    // Ping-pong: write into the idle set, then publish it. The set that
+    // was previous stays untouched until its own turn comes round.
+    this.snapshotIndex = 1 - this.snapshotIndex
+    this.world.snapshotSpatialStateInto(this.spatialSnapshots[this.snapshotIndex])
+    this.previousSpatialState = this.spatialSnapshots[this.snapshotIndex]
 
     const stepTolerance = 1e-9
     while (this.accumulator + stepTolerance >= this.fixedStepSeconds) {

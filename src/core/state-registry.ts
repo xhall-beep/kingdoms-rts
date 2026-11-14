@@ -148,6 +148,9 @@ export const WORLD_EXCLUDED_FIELDS: Readonly<Record<string, string>> = {
   // Derived index, rebuilt from positions at the top of every update();
   // never authoritative state (World.ts says so explicitly).
   spatialHash: 'derived state, rebuilt every tick',
+  // Reused entry objects for the spatial-hash rebuild (perf-alloc slice):
+  // same contents as a fresh array every tick, never authoritative state.
+  spatialEntries: 'derived scratch, refilled in place every tick',
   // System instances are behavior, not state. The two pieces of internal
   // system state that ARE sim state — the victory check timer and the
   // shrine check timer — are carried explicitly by hash and snapshot
