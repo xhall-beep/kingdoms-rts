@@ -8,7 +8,7 @@ export interface BuildingDef {
   name: string;
   cost: Resources;
   hp: number;
-  radius: number;      // Footprint radius: blocks pathing and sets attack reach.
+  radius: number;      // Footprint radius: placement spacing, separation contact, and attack reach.
   buildTicks: number;  // Worker-ticks of construction needed.
   trains: UnitType[];  // Empty = no production queue.
   supply: number;      // Population capacity provided once built.

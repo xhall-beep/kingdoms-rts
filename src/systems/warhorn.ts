@@ -17,7 +17,7 @@ import { KIND_MELEE, KIND_RANGED, KIND_WORKER } from '../core/World.ts'
 export const RALLY_NONE = 0
 export const RALLY_GALE = 1
 export const RALLY_IRONBLOOD = 2
-export const RALLY_NAMES = ['', 'Gale March', 'Ironblood'] as const
+export const RALLY_NAMES = ['', 'Gale March', 'Ironblood', 'Second Wind'] as const
 
 export const HORN_COST = 50
 const RALLY_DURATION = 20

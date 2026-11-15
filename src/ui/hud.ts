@@ -24,6 +24,7 @@ import {
   TEAM_PLAYER,
   TRAIN_QUEUE_WAITING,
 } from '../core/World'
+import { HORN_CHARGE_EPSILON, HORN_COST, RALLY_NAMES } from '../systems/warhorn.ts'
 import { buildersOnSite } from '../systems/gather.ts'
 import { WILD_HEAT_THRESHOLD } from '../systems/living-wild.ts'
 import { BUILDING_TYPE_BY_KIND } from '../world/construction.ts'
@@ -227,6 +228,85 @@ export class VpDrainWatch {
       return true
     }
     return false
+  }
+}
+
+export interface RallyAnnouncement {
+  team: 0 | 1
+  rally: 1 | 2 | 3
+}
+
+/** Rally effect blurbs, parallel to RALLY_NAMES (warhorn.ts). */
+const RALLY_EFFECTS: Record<1 | 2 | 3, string> = {
+  1: '+30% speed',
+  2: '+25% damage',
+  3: 'army healed',
+}
+
+/**
+ * Banner line for a sounded rally: the enemy's horn matters as much
+ * as your own — an Ironblood you never see coming reads as a sudden
+ * damage spike, not a mechanic. Exported so tests pin the exact
+ * shipped copy.
+ */
+export function rallyBannerText(a: RallyAnnouncement): string {
+  const who = a.team === TEAM_PLAYER ? '📯' : '⚔️ Enemy'
+  return `${who} ${RALLY_NAMES[a.rally]}! ${RALLY_EFFECTS[a.rally]}`
+}
+
+/**
+ * One-shot watch for War Horn rallies (game-feel slice, 2026-11-15):
+ * sounding the horn used to change nothing on screen — the charge
+ * number dropped and the command card went quiet, so a 50-charge,
+ * 20-second army buff read as a dead tap. The watch names each rally
+ * in the banner lane the moment it starts, for either team, exactly
+ * once per sounding.
+ *
+ * Detection is read-only sim observation (HUD-side state only, never
+ * hashed, never saved):
+ * - Gale March / Ironblood persist as rallyKind, so a 0 -> nonzero
+ *   transition is exactly a sounding.
+ * - Second Wind sets no rallyKind (it heals instantly), so it is
+ *   caught by its charge signature instead: a drop of at least
+ *   HORN_COST that leaves charge above zero. Only sounding subtracts
+ *   charge; Coward's Decay empties the horn to zero, so a remainder
+ *   above zero rules decay out. A sound masked by same-frame damage
+ *   charging (observed drop under 50) is missed, never misannounced
+ *   — silence is the status quo, a wrong banner would be a lie.
+ * The latch is per match: a fresh world object re-arms it and
+ * re-baselines the reading, so a rally already sounding at HUD
+ * creation (e.g. a save loaded mid-rally) is never announced.
+ */
+export class RallyWatch {
+  private world: World | null = null
+  private lastRallyKind: [number, number] = [0, 0]
+  private lastCharge: [number, number] = [0, 0]
+
+  /** Announcements for rallies that started since the last observation (at most one per team per call). */
+  observe(world: World): RallyAnnouncement[] {
+    if (this.world !== world) {
+      this.world = world
+      this.lastRallyKind = [world.rallyKind[0], world.rallyKind[1]]
+      this.lastCharge = [world.warCharge[0], world.warCharge[1]]
+      return []
+    }
+    const out: RallyAnnouncement[] = []
+    for (const t of [0, 1] as const) {
+      const kind = world.rallyKind[t]
+      const charge = world.warCharge[t]
+      if (this.lastRallyKind[t] === 0 && kind !== 0 && world.rallyUntil[t] > world.matchTime) {
+        out.push({ team: t, rally: kind as 1 | 2 })
+      } else if (
+        kind === 0 &&
+        this.lastCharge[t] - charge >= HORN_COST - HORN_CHARGE_EPSILON &&
+        charge > 0
+      ) {
+        out.push({ team: t, rally: 3 })
+      }
+      this.lastRallyKind[t] = kind
+      this.lastCharge[t] = charge
+    }
+    return out
   }
 }
 
@@ -731,6 +811,7 @@ export class HudImpl implements Hud {
   }
 
   private vpDrainWatch = new VpDrainWatch()
+  private rallyWatch = new RallyWatch()
 
   /**
    * First enemy-shrine drain explains itself, once per match
@@ -741,6 +822,21 @@ export class HudImpl implements Hud {
   private announceVpDrain(world: World): void {
     if (this.vpDrainWatch.observe(world)) {
       this.showBanner(VP_DRAIN_BANNER_TEXT, 5000, 'hud-banner hud-banner-note')
+    }
+  }
+
+  /**
+   * War Horn rallies announce themselves in the banner lane
+   * (game-feel slice, 2026-11-15): a sounded horn used to show
+   * nothing at all. Same lease as the bells; the note class fits
+   * the name + effect on a 412px screen.
+   */
+  private announceRallies(world: World): void {
+    for (const a of this.rallyWatch.observe(world)) {
+      this.showBanner(rallyBannerText(a), 4000, 'hud-banner hud-banner-note')
+      try {
+        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) navigator.vibrate(80)
+      } catch { /* noop */ }
     }
   }
 
@@ -933,6 +1029,7 @@ export class HudImpl implements Hud {
     this.updateAlerts(world)
     this.announceVpDrain(world)
     this.announceBells(world)
+    this.announceRallies(world)
     // Counts are computed once and split across the two readouts: the top
     // strip carries VP + faction extras; the dashboard idle row carries
     // Workers/Army (they no longer earn a second strip row).

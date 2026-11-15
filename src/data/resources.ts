@@ -1,6 +1,6 @@
 import type { ResourceKind } from '../core/types.ts';
 
-/** Harvestable nodes. `radius` is the obstacle size used for pathing. */
+/** Harvestable nodes. `radius` is the node's footprint for gather arrival and placement spacing. */
 export const RESOURCES: Record<ResourceKind, { amount: number; radius: number }> = {
   wood: { amount: 150, radius: 1.3 },
   // 1600/mine (8 mines = 12,800 total): the 800/mine economy exhausted all
