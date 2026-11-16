@@ -851,7 +851,13 @@ export class World {
     this.cooldown[id] = 0
     this.cooldownTotal[id] = def.cooldownTicks / TICK_RATE
     this.moveSpeed[id] = def.speed * mods.speed * TICK_RATE
-    this.radius[id] = 0.5
+    // Footprint by type (audit item 10, 2026-11-06; melee retuned
+    // 0.9 → 0.65 on 2026-11-16): melee 0.65, ranged 0.7, worker 0.5 —
+    // was a flat 0.5 for all three, which flattened
+    // combat reach, separation contact, tap targets, and sprite size,
+    // and made the slice-7 "combat units (radius 0.9, 25.7px)" claim
+    // false at the time it was written.
+    this.radius[id] = def.radius
     // Racial worker identity: carry capacity comes from the faction's worker profile.
     if (type === 'worker') {
       this.carryMax[id] = FACTIONS[this.factionOfTeam[team]].worker.carryMax

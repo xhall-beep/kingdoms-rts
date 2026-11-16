@@ -363,9 +363,16 @@ test('defense is not delayed by a kill: a raid is answered before the floor', ()
   world.removeEntityById(scout!)
   think(ai, world, 1.0) // Kill answered (delay set) — defense must not wait on it.
   assertEqual(ai.scoutKillResponse().delaySec, 30, 'delay is set')
+  // Raiders at -17 (was -16): the sight check measures edge distance
+  // (centre − target radius), so the radii slice's melee radius pulls
+  // a fifth soldier into auto-engage during the settle and defend() is
+  // left with one order instead of two. At -17 the four-nearest
+  // choreography is restored; the raid is still inside the defense
+  // radius (18), and the property — defend() answers pre-floor — is
+  // unchanged. See the same staging note in ai-pacing.test.ts.
   const raiders = [
-    world.spawnUnit('melee', TEAM_PLAYER, enemyHallX - 16, enemyHallZ).id,
-    world.spawnUnit('melee', TEAM_PLAYER, enemyHallX - 16, enemyHallZ + 5).id,
+    world.spawnUnit('melee', TEAM_PLAYER, enemyHallX - 17, enemyHallZ).id,
+    world.spawnUnit('melee', TEAM_PLAYER, enemyHallX - 17, enemyHallZ + 5).id,
   ]
   world.fog[TEAM_ENEMY].reveal(enemyHallX, enemyHallZ, 40)
   stepWorld(world, 5) // vision settles, as in the ai-pacing raid rig

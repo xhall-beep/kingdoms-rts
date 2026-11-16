@@ -173,8 +173,11 @@ function makeDuel(): {
 
 /**
  * Max arc centre-x in a narrow horizontal window around screen y = 400,
- * restricted to unit-body radii (disc 5, ring 3.5, squashed up to ~5.9):
- * trees (13), gold (20) and buildings (25+) can never pollute it.
+ * restricted to unit-body radii (disc 5, ring 3.5, squashed up to ~5.9
+ * for a worker; disc 6.5, ring 4.55, squashed up to ~7.7 for a melee at
+ * radius 0.65 — the radii slice, retuned 2026-11-16): trees (13),
+ * gold (20)
+ * and buildings (25+) can never pollute it.
  */
 function maxBodyArcX(ctx: RecordingCtx, x0: number, x1: number): number {
   let max = -Infinity
@@ -184,7 +187,7 @@ function maxBodyArcX(ctx: RecordingCtx, x0: number, x1: number): number {
       arc.x >= x0 &&
       arc.x <= x1 &&
       arc.rx >= 3.4 &&
-      arc.rx <= 6.1
+      arc.rx <= 11.0
     ) {
       max = Math.max(max, arc.x)
     }
@@ -200,7 +203,7 @@ function hasSquashedBodyArc(ctx: RecordingCtx, x0: number, x1: number): boolean 
       arc.x >= x0 &&
       arc.x <= x1 &&
       arc.rx >= 3.4 &&
-      arc.rx <= 6.1 &&
+      arc.rx <= 11.0 &&
       arc.rx - arc.ry > 0.2,
   )
 }

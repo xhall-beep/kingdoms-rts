@@ -122,10 +122,19 @@ test('expander advances at its 240s floor', () => {
 test('defense is not gated: a raid is answered before the floor', () => {
   const { world, soldiers, enemyHallX, enemyHallZ } = armedScenario(6)
   // Two player raiders inside the AI's defense radius (aggressor: 18),
-  // on the far side of the hall from the staged soldiers.
+  // on the far side of the hall from the staged soldiers. Staged at -17
+  // (was -16): the sight check measures edge distance (centre − target
+  // radius), so the radii slice's melee radius pulls a fifth soldier
+  // into auto-engage during the settle and defend() is left with one
+  // order instead of two. At -17 the four-nearest choreography is
+  // restored (soldier 4's edge distance stays above sight 24 after the
+  // raiders' approach); the raid is still inside the defense radius,
+  // and the property under test — defend() answers pre-floor — is
+  // unchanged. (The fifth-soldier engagement was measured at the
+  // original melee 0.9; the -17 staging is kept for the 0.65 retune.)
   const raiders = [
-    world.spawnUnit('melee', TEAM_PLAYER, enemyHallX - 16, enemyHallZ).id,
-    world.spawnUnit('melee', TEAM_PLAYER, enemyHallX - 16, enemyHallZ + 5).id,
+    world.spawnUnit('melee', TEAM_PLAYER, enemyHallX - 17, enemyHallZ).id,
+    world.spawnUnit('melee', TEAM_PLAYER, enemyHallX - 17, enemyHallZ + 5).id,
   ]
   world.fog[TEAM_ENEMY].reveal(enemyHallX, enemyHallZ, 40)
   stepWorld(world, 5) // vision settles, as in the ai-personality raid rig

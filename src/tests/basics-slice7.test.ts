@@ -11,8 +11,16 @@
  *    (radius 0.5) draws a 19px box at boot zoom instead of 14.3px —
  *    a ~12.1px solid figure (163/256 of the box), still inside the
  *    21px selection-ring diameter.
- *  - Combat units are untouched: a melee unit (radius 0.9) draws
- *    25.7px at boot zoom, above the floor, exactly as before.
+ *  - Combat units are untouched: a melee unit draws above the floor
+ *    at boot zoom, exactly as before.
+ *    CORRECTION (audit item 10, 2026-11-10): that premise was false
+ *    when written — every trainable unit spawned with radius 0.5, so
+ *    melee really drew the floored 19px. The radii slice that day gave
+ *    melee a real radius (0.9 as first proved; retuned to 0.65 on
+ *    2026-11-16, drawing the floored 19px at boot zoom — back at the
+ *    floor with the worker); the "melee at boot zoom" test below still pins only the
+ *    helper (with a 0.9 input), while unit-radii.test.ts pins the
+ *    world radius the helper now receives.
  *  - The floor only bites at small draw radii (small units, low
  *    zoom); at high zoom the 2.2x scale wins again.
  *  - Render-only: world radius, tap picking (40px tolerance in the
