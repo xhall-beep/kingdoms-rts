@@ -720,7 +720,16 @@ export class World {
     }
     entries.length = entryCount
     this.spatialHash.rebuild(entries)
-    // Update Orc momentum: increment for units in combat, reset after gap
+    // Update Orc momentum: increment every tick while the unit is inside
+    // the combat reset window, reset after a longer gap. lastCombatTick
+    // moves only when a strike lands (0.8 s cooldown), so gating the
+    // increment on ticksSinceCombat === 1 built ~1 tick per strike
+    // instead of 1 tick per tick — while getMomentumBonus divides by 60
+    // assuming per-tick accumulation (audit 2026-11-06 §3: 60 s of
+    // striking bought +2.4% vs the designed cap). Within the window
+    // every tick counts, so sustained combat reaches the cap as designed.
+    // (Retune 2026-11-15: cap lowered 0.30 -> 0.18 in factions.ts after
+    // the full-strength fix breached proving bounds on 2026-11-07.)
     for (let id = 0; id < this.momentumTicks.length; id++) {
       if (!this.entities.has(id)) continue
       // Neutral creatures (treants) belong to no faction: no momentum.
@@ -730,8 +739,8 @@ export class World {
       if (!sig) continue
       const ticksSinceCombat = this.tick - this.lastCombatTick[id]
       const resetTicks = Math.round(sig.resetSec * 60) // TICK_RATE=60
-      if (ticksSinceCombat === 1) {
-        // Was in combat last tick: build momentum
+      if (ticksSinceCombat >= 1 && ticksSinceCombat <= resetTicks) {
+        // Inside the combat window: build momentum this tick.
         this.momentumTicks[id]++
       } else if (ticksSinceCombat > resetTicks) {
         // Out of combat too long: reset

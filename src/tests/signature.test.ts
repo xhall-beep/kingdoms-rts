@@ -2,7 +2,7 @@
  * Faction signature mechanic tests — verifies Undead reanimation works
  * deterministically and doesn't affect other factions.
  */
-import { TEAM_PLAYER, TEAM_ENEMY } from '../core/World.ts'
+import { TEAM_PLAYER, TEAM_ENEMY, KIND_HALL } from '../core/World.ts'
 import { FACTIONS } from '../data/factions.ts'
 import { getUnits } from '../data/stats.ts'
 import { UPGRADES } from '../data/upgrades.ts'
@@ -139,6 +139,71 @@ test('momentum bonus is capped at maxBonus', () => {
   // Bonus calculation caps: 1 + min(ticks * dps / 60, maxBonus)
   const bonus = 1 + Math.min((world.momentumTicks[id] * sig.damagePerSec) / 60, sig.maxBonus)
   assert(bonus <= 1 + sig.maxBonus + 0.001, `bonus capped at ${1 + sig.maxBonus} (got ${bonus})`)
+})
+
+/**
+ * NOTE (audit 2026-11-06 §3): the tests above drive momentum with a
+ * SYNTHETIC signal — they set lastCombatTick = world.tick before every
+ * update, i.e. "in combat every tick". That pins the DESIGNED rate
+ * (per-tick accumulation) and cannot catch the real bug: in live combat
+ * lastCombatTick moves only when a strike lands (0.8 s cooldown), so the
+ * old `ticksSinceCombat === 1` gate built ~1 tick per strike and 60 s of
+ * striking bought +2.4% instead of the designed cap. The two tests below
+ * drive momentum through REAL combat (a Mauler striking a hall) and are
+ * the regression net for that bug — under the old gate the first asserts
+ * 2 ticks where it now asserts ~59, and the second never reaches the cap.
+ * Retune 2026-11-15: the full-strength fix (cap 0.30) breached proving
+ * bounds on 2026-11-07 (flips 5, timeouts 5->8, human -3), so maxBonus
+ * was lowered to 0.18; the cap test below reads the cap from the data
+ * and pins the retuned timing (540 ticks at 0.02/s ~ 9 s to cap).
+ * HP is topped up on both sides so the window measures momentum,
+ * not who dies first.
+ */
+function strikeHallFor(world: ReturnType<typeof makeWorld>): { unit: number; hall: number } {
+  let hall = -1
+  for (const id of world.entities.keys()) {
+    if (world.kind[id] === KIND_HALL && world.team[id] === TEAM_ENEMY) { hall = id; break }
+  }
+  assert(hall !== -1, 'enemy hall exists')
+  const e = world.spawnUnit('melee', TEAM_PLAYER, world.positionX[hall] - 2, world.positionZ[hall])
+  world.health[hall] = 1e6
+  world.maxHealth[hall] = 1e6
+  world.health[e.id] = 1e6
+  world.maxHealth[e.id] = 1e6
+  orderAttack(world, e.id, hall)
+  return { unit: e.id, hall }
+}
+
+test('momentum builds every tick between strikes in real combat', () => {
+  const world = makeWorld()
+  world.factionOfTeam[TEAM_PLAYER] = 'orc'
+  const { unit } = strikeHallFor(world)
+  // 60 ticks (1 s) of real striking: strikes land ~every 48 ticks, so the
+  // old per-strike gate would leave momentumTicks at ~2. Per-tick
+  // accumulation inside the combat window gives ~59.
+  for (let i = 0; i < 60; i++) world.update(STEP)
+  assert(world.momentumTicks[unit] >= 55, `momentum builds per tick between strikes (got ${world.momentumTicks[unit]})`)
+})
+
+test('momentum reaches the retuned cap in sustained striking', () => {
+  const world = makeWorld()
+  world.factionOfTeam[TEAM_PLAYER] = 'orc'
+  const sig = FACTIONS.orc.signature!.momentum!
+  const { unit, hall } = strikeHallFor(world)
+  const hp0 = world.health[hall]
+  const capTicks = Math.round(sig.maxBonus * 60 / sig.damagePerSec) // 540 at 0.18 / 0.02
+
+  // 10 s of sustained striking: past the 9 s cap point.
+  for (let i = 0; i < 600; i++) world.update(STEP)
+  assert(world.momentumTicks[unit] >= capTicks, `at cap after 10s of striking (got ${world.momentumTicks[unit]}, cap ${capTicks})`)
+  assert(world.health[hall] < hp0, 'hall took damage while momentum built')
+  const bonus = 1 + Math.min((world.momentumTicks[unit] * sig.damagePerSec) / 60, sig.maxBonus)
+  assert(Math.abs(bonus - (1 + sig.maxBonus)) < 0.001, `bonus at cap ${1 + sig.maxBonus} (got ${bonus})`)
+
+  // 5 s more: bonus stays pinned at the cap.
+  for (let i = 0; i < 300; i++) world.update(STEP)
+  const bonus2 = 1 + Math.min((world.momentumTicks[unit] * sig.damagePerSec) / 60, sig.maxBonus)
+  assert(Math.abs(bonus2 - (1 + sig.maxBonus)) < 0.001, `bonus stays at cap ${1 + sig.maxBonus} (got ${bonus2})`)
 })
 
 suite('signature: elf woodland')

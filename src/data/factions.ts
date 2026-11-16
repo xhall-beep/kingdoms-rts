@@ -112,7 +112,7 @@ export const FACTIONS: Record<FactionId, FactionDef> = {
   orc: { name: 'Orc', colors: [0x8a2b22, 0xc9372c, 0x3a2a22], skin: 0x7da63a, head: 'horns', hall: 'box,pyr,horns,towers',
     units: { worker: 'Drudge', melee: 'Mauler', ranged: 'Javelineer' },
     mods: m(1.15, 1.15, 0.95, 1.1, 1.1, 0.9),
-    signature: { momentum: { damagePerSec: 0.02, maxBonus: 0.3, resetSec: 5 } },
+    signature: { momentum: { damagePerSec: 0.02, maxBonus: 0.18, resetSec: 5 } },
     worker: { carryMax: 20, buildRate: 1, seedWarp: false, sapTap: false } },
   undead: { name: 'Undead', colors: [0x5b3f8f, 0x9be7ff, 0x2a2236], skin: 0xe9e4d4, head: 'hood', hall: 'box,cone,spires,skull',
     units: { worker: 'Husk', melee: 'Gnawer', ranged: 'Gloom Archer' },
