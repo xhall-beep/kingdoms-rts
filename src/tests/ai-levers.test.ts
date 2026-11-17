@@ -18,6 +18,12 @@
  *    economy never holds and research fired ~never (bank-dynamics
  *    audit 2026-10-22); in sink mode research applies directly, like
  *    the AI's orc tier upgrades.
+ *  - The AI upgrades orc tiers: the gate floors on the next tier's own
+ *    cost (150g/100w for 1→2, 300g/200w for 2→3) with the same
+ *    3-soldier army precondition — the old 400g floor sampled the same
+ *    never-held bank and orc tiers fired ~never (mechanics audit §7,
+ *    probe p4: the aggressor sat at tier 1 for the whole match).
+ *    The hall is tried first, then each Foundry in turn.
  *  - Mustered militia are exempt from worker evacuation: the AI used
  *    to re-order its own pikemen behind the hall every think, walking
  *    the muster off its stand (bank-dynamics audit ring census).
@@ -30,6 +36,7 @@ import {
   TEAM_ENEMY,
   KIND_WORKER,
   KIND_HALL,
+  KIND_BARRACKS,
   KIND_GOLDMINE,
   STATE_GATHER,
   STATE_MOVE,
@@ -271,6 +278,102 @@ test('research gate: no fire below 3 standing soldiers', () => {
   world.wood[TEAM_PLAYER] = 2000
   oneThink(world)
   assertEqual(totalLevels(world, TEAM_PLAYER), 0, 'a rich bank does not research for an army that does not stand')
+})
+
+/**
+ * Staged orc world where expand() wants nothing this think, so the
+ * staged bank reaches the tier step untouched: the full opening chain
+ * stands finished (Foundry, workshop, archery, smithy) and a farm is
+ * already pending (so neither farm branch fires), and the bank stays
+ * below the 400g second-Foundry branch. expandBase is inert at
+ * gameTime 1 (expansionAtSec is minutes out). Without this, expand()
+ * spends the staged bank on a farm (50g/80w) before the tier step
+ * runs, and the pins below would pass for the wrong reason.
+ */
+function makeTierWorld(soldierCount: number): { world: World; hall: number; foundry: number } {
+  const world = makeAiWorld('orc', 'human', false)
+  world.spawnBuilding('barracks', TEAM_PLAYER, -34, -46, true)
+  world.spawnBuilding('workshop', TEAM_PLAYER, -46, -34, true)
+  world.spawnBuilding('archery', TEAM_PLAYER, -54, -30, true)
+  world.spawnBuilding('smithy', TEAM_PLAYER, -30, -54, true)
+  world.spawnBuilding('farm', TEAM_PLAYER, -20, -20, false) // Pending: blocks both farm branches.
+  for (let i = 0; i < soldierCount; i += 1) world.spawnUnit('melee', TEAM_PLAYER, -38 + i, -30)
+  let hall = -1
+  let foundry = -1
+  for (const id of world.entities.keys()) {
+    if (world.team[id] !== TEAM_PLAYER) continue
+    if (world.kind[id] === KIND_HALL) hall = id
+    if (world.kind[id] === KIND_BARRACKS) foundry = id
+  }
+  if (hall < 0 || foundry < 0) throw new Error('tier world is missing its hall or Foundry')
+  return { world, hall, foundry }
+}
+
+/** Total upgrade time running on any own hall/Foundry (0 = nothing reforging). */
+function worldUpgradeLeft(world: World): number {
+  let total = 0
+  for (const id of world.entities.keys()) {
+    if (world.team[id] !== TEAM_PLAYER) continue
+    if (world.kind[id] !== KIND_HALL && world.kind[id] !== KIND_BARRACKS) continue
+    total += world.upgradeLeft[id]
+  }
+  return total
+}
+
+test('orc tier gate: AI upgrades the hall at the tier cost, not the old 400g floor', () => {
+  const { world, hall } = makeTierWorld(3)
+  assertEqual(world.tier[hall], 1, 'staged at tier 1')
+  // Exactly the 1→2 price: the old 400g floor would have stood down.
+  world.gold[TEAM_PLAYER] = 150
+  world.wood[TEAM_PLAYER] = 100
+  oneThink(world)
+  assert(world.upgradeLeft[hall] > 0, 'the hall started its tier-2 reforge')
+  assertEqual(world.gold[TEAM_PLAYER], 0, 'exactly the tier gold price was charged')
+  assertEqual(world.wood[TEAM_PLAYER], 0, 'exactly the tier wood price was charged')
+})
+
+test('orc tier gate: no fire below the next tier cost', () => {
+  // One gold short of 1→2.
+  const shortGold = makeTierWorld(3)
+  shortGold.world.gold[TEAM_PLAYER] = 149
+  shortGold.world.wood[TEAM_PLAYER] = 500
+  oneThink(shortGold.world)
+  assertEqual(worldUpgradeLeft(shortGold.world), 0, '149g does not buy the 150g tier')
+  // One wood short of 1→2.
+  const shortWood = makeTierWorld(3)
+  shortWood.world.gold[TEAM_PLAYER] = 500
+  shortWood.world.wood[TEAM_PLAYER] = 99
+  oneThink(shortWood.world)
+  assertEqual(worldUpgradeLeft(shortWood.world), 0, '99w does not buy the 100w tier')
+  // Tier 2→3 costs 300g: a 200g bank buys nothing at tier 2. (The
+  // staged Foundry is still tier 1 and does take the spend — that is
+  // the intended fall-through, pinned by its own test — so assert on
+  // the hall alone here.)
+  const tier2 = makeTierWorld(3)
+  tier2.world.tier[tier2.hall] = 2
+  tier2.world.gold[TEAM_PLAYER] = 200
+  tier2.world.wood[TEAM_PLAYER] = 500
+  oneThink(tier2.world)
+  assertEqual(tier2.world.upgradeLeft[tier2.hall], 0, '200g does not buy the 300g tier-3 reforge')
+})
+
+test('orc tier gate: no fire below 3 standing soldiers', () => {
+  const { world } = makeTierWorld(2)
+  world.gold[TEAM_PLAYER] = 5000
+  world.wood[TEAM_PLAYER] = 2000
+  oneThink(world)
+  assertEqual(worldUpgradeLeft(world), 0, 'a rich bank does not reforge for an army that does not stand')
+})
+
+test('orc tier gate: falls through to a Foundry when the hall is maxed', () => {
+  const { world, hall, foundry } = makeTierWorld(3)
+  world.tier[hall] = 3 // Maxed: the hall cannot take the spend.
+  assertEqual(world.tier[foundry], 1, 'staged Foundry at tier 1')
+  world.gold[TEAM_PLAYER] = 150
+  world.wood[TEAM_PLAYER] = 100
+  oneThink(world)
+  assertEqual(world.upgradeLeft[hall], 0, 'the maxed hall took nothing')
+  assert(world.upgradeLeft[foundry] > 0, 'the Foundry started its tier-2 reforge')
 })
 
 test('AI research fires by mid-game for every faction in scripted sims', () => {

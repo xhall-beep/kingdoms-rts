@@ -259,6 +259,13 @@ const HORN_DECAY_WARN_TICKS = 30 * 60
 const RESEARCH_MIN_ARMY = 3
 /** Minimum seconds between one AI's research purchases (see above). */
 const RESEARCH_PACE = 120
+/**
+ * Minimum standing army before the orc AI spends flow income on tiers
+ * (see upgradeOrcBuildings): without it the AI spends its 200g/100w
+ * starting stake on a tier before it owns a single soldier. Same
+ * 3-soldier bar as the research gate, for the same opening-ramp reason.
+ */
+const ORC_TIER_MIN_ARMY = 3
 /** Melee first: winners' armies run ~58% melee, so its ladder pays most. */
 const RESEARCH_ORDER: readonly UpgradeType[] = ['meleeDmg', 'meleeHp', 'rangedDmg']
 
@@ -773,11 +780,26 @@ export class OpponentAI implements System {
    * Orc racial: reforge the War-Hall and Foundries through the tiers when the
    * war chest allows. Runs before trainSoldiers so upgrades compete honestly
    * with unit production for the same gold.
+   *
+   * Gate on the tier's own cost, like the research gate: the old 400g
+   * surplus floor sampled a bank the AI economy never holds (median
+   * think bank ~42g, bank-dynamics audit 2026-10-22), so orc tiers
+   * fired ~never — probe p4's aggressor sat at tier 1 for the whole
+   * match (mechanics audit §7). upgradeBuilding itself refuses when
+   * the bank is short of the next tier's price (150g/100w for 1→2,
+   * 300g/200w for 2→3, TIER_UPGRADES), so no flat floor is needed —
+   * the hall is tried first, then each Foundry in turn.
    */
   private upgradeOrcBuildings(world: World, hall: number): void {
     if (world.factionOfTeam[this.team] !== 'orc') return
-    // Only once the economy is rolling: keep an early-game reserve.
-    if (world.gold[this.team] < 400) return
+    // Standing army first: without it the AI spends its 200g/100w
+    // starting stake on a tier before it owns a single soldier, and
+    // the opening ramp — where gold converts straight into soldiers
+    // every think — gets taxed. Same bar as the research gate.
+    const soldiers =
+      unitsOf(world, this.team, KIND_MELEE).length +
+      unitsOf(world, this.team, KIND_RANGED).length
+    if (soldiers < ORC_TIER_MIN_ARMY) return
     if (upgradeBuilding(world, hall)) return
     for (const id of world.entities.keys()) {
       if (world.team[id] !== this.team || world.kind[id] !== KIND_BARRACKS) continue
