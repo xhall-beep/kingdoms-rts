@@ -709,11 +709,16 @@ export class HudImpl implements Hud {
     })
     wire('#hud-replay', () => {
       this.callbacks?.onReplay()
-      closeMenu()
       const btn = parent.querySelector('#hud-replay')
       const inReplay = btn && btn.textContent === 'Replay'
       if (btn) btn.textContent = inReplay ? 'Exit' : 'Replay'
       if (speedRow) speedRow.hidden = !inReplay
+      // Entering replay: keep the menu OPEN so the speed pills are
+      // visible the moment they exist. Previously closeMenu() ran first,
+      // so the row was unhidden inside a hidden menu and a player could
+      // never see the 1x/2x/4x pills (Hands driver finding, 2026-11-16).
+      // Exiting replay closes the menu as before.
+      if (!inReplay) closeMenu()
     })
     if (speedRow) {
       for (const btn of speedRow.querySelectorAll('button')) {

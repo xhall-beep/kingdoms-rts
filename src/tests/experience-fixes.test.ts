@@ -468,3 +468,46 @@ test('camera is clamped near the world so the map cannot be lost', () => {
     restore()
   }
 })
+
+// ---------------------------------------------------------------------------
+// Defect #2 (2026-11-18): replay speed row unreachable — Hands driver
+// finding (2026-11-16). #hud-speed starts hidden and the only unhide path
+// was the Replay toggle, which called closeMenu() FIRST, so the row was
+// unhidden inside a hidden menu: a player could never see the 1x/2x/4x
+// pills. Fix: entering replay keeps the menu open; exiting closes it.
+// ---------------------------------------------------------------------------
+
+suite('experience-fixes: replay speed row reachable')
+
+test('entering replay unhides the speed row AND keeps the menu open', () => {
+  const { parent, restore } = mountHud()
+  try {
+    // Template label: the fake DOM does not parse innerHTML, so seed it.
+    parent.querySelector('#hud-replay').textContent = 'Replay'
+    assertEqual(parent.querySelector('#hud-speed').hidden, true, 'speed hidden at boot')
+    parent.querySelector('#hud-menu-btn').click()
+    assertEqual(parent.querySelector('#hud-menu').hidden, false, 'menu opens')
+    parent.querySelector('#hud-replay').click()
+    assertEqual(parent.querySelector('#hud-replay').textContent, 'Exit', 'label flips to Exit')
+    assertEqual(parent.querySelector('#hud-speed').hidden, false, 'speed row visible on entering replay')
+    assertEqual(parent.querySelector('#hud-menu').hidden, false, 'menu stays open so the pills are seen')
+  } finally {
+    restore()
+  }
+})
+
+test('exiting replay re-hides the speed row and closes the menu', () => {
+  const { parent, restore } = mountHud()
+  try {
+    parent.querySelector('#hud-replay').textContent = 'Replay'
+    parent.querySelector('#hud-menu-btn').click()
+    parent.querySelector('#hud-replay').click() // enter
+    assertEqual(parent.querySelector('#hud-speed').hidden, false, 'speed visible in replay')
+    parent.querySelector('#hud-replay').click() // exit
+    assertEqual(parent.querySelector('#hud-replay').textContent, 'Replay', 'label flips back to Replay')
+    assertEqual(parent.querySelector('#hud-speed').hidden, true, 'speed re-hidden on exit')
+    assertEqual(parent.querySelector('#hud-menu').hidden, true, 'menu closes on exit')
+  } finally {
+    restore()
+  }
+})
