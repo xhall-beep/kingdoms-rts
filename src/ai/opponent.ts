@@ -4,6 +4,7 @@ import type { System, World } from '../core/World'
 import {
   HARVEST_ANY,
   HARVEST_GOLD,
+  HARVEST_OFF,
   HARVEST_WOOD,
   KIND_ARCHERY,
   KIND_BARRACKS,
@@ -17,6 +18,7 @@ import {
   NO_TARGET,
   NO_TRAINING,
   STATE_IDLE,
+  STATE_MOVE,
   STATE_BUILD,
   STATE_ATTACK,
   STATE_ATTACKMOVE,
@@ -365,6 +367,29 @@ const SCOUT_KILL_PARTY_LATE_SEC = 180
 /** Late-kill squad: soldiers, not workers — see dispatchScoutParty. */
 const SCOUT_KILL_SQUAD_FIRST = 2
 const SCOUT_KILL_SQUAD_LATER = 3
+/**
+ * Squad leash (2026-11-20 — retune follow-up, QA verdict 2026-11-06):
+ * a dispatched scout party/squad is a probe, not a detachment. Once
+ * the death area is cleared — no enemy units near it — the survivors
+ * come home to the hall instead of loitering at the spot until the
+ * next wave folds them in; and when the death area is held by a force
+ * that outnumbers the squad, the squad comes home at once instead of
+ * walking into the kill that ate the scout. Both recalls are plain
+ * move orders, like the outbound order, so the members rejoin the
+ * economy/army through the normal picks.
+ *
+ * Numbers: scan 14 (a scout's killer lingers inside it; the hall's
+ * defense radius is 28, so this is a local check, not a map scan);
+ * arrival 6 (inside a unit's auto-acquire range, so an arrived member
+ * has actually seen the spot); timeout 75s (the longest walk on this
+ * map is ~25s at 5 u/s — past that the probe is stuck or re-tasked);
+ * losing margin 2 (a 2-soldier squad recalls against 4+ holders; a
+ * 3-worker party recalls against 5+).
+ */
+const SCOUT_PARTY_LEASH_SCAN_RADIUS = 14
+const SCOUT_PARTY_LEASH_ARRIVAL_RADIUS = 6
+const SCOUT_PARTY_LEASH_TIMEOUT_SEC = 75
+const SCOUT_PARTY_LEASH_LOSING_MARGIN = 2
 /** Offensive-march log cap (probe observation only — see below). */
 const SCOUT_KILL_MARCH_LOG_MAX = 128
 
@@ -497,6 +522,19 @@ export class OpponentAI implements System {
    * after the replacement scout is dispatched, so the two picks never
    * steal each other's worker. */
   private scoutKilledThisThink = false
+  /** Leash on the last dispatched scout party/squad (see the
+   * SCOUT_PARTY_LEASH_* constants): the members still on the probe,
+   * the death area they walked to, and the dispatch gameTime. Empty
+   * when no probe is out. Not persisted in saves: a load prunes it
+   * through the same filters the per-think step applies, and the
+   * worst case is a recall to the hall — harmless. */
+  private leashMembers: number[] = []
+  private leashX = 0
+  private leashZ = 0
+  private leashDispatchedAt = 0
+  /** Leash recalls issued this match (probe observation — see
+   * scoutKillResponse): the leash fired this many times. */
+  private leashRecalls = 0
   /** Workers currently evacuated from a raid. They are not reassigned to
    * gather or construction duty until the threat is gone. */
   private readonly fleeing = new Set<number>()
@@ -546,12 +584,16 @@ export class OpponentAI implements System {
     partiesSent: number
     delaySec: number
     wavesHeld: number
+    leashRecalls: number
+    leashActive: boolean
   } {
     return {
       kills: this.scoutKills,
       partiesSent: this.scoutPartiesSent,
       delaySec: this.scoutKillDelaySec,
       wavesHeld: this.wavesHeldByScoutKill,
+      leashRecalls: this.leashRecalls,
+      leashActive: this.leashMembers.length > 0,
     }
   }
 
@@ -683,6 +725,7 @@ export class OpponentAI implements System {
     this.evacuateWorkers(world, hall, workers)
     this.assignWorkers(world, workers)
     this.scout(world, hall, workers, soldiers)
+    this.leashScoutParty(world, hall)
     const baseReserve = this.expandBase(world, hall, workers, soldiers)
     const reserveGold = Math.max(baseReserve, this.expand(world, hall, workers))
     this.resumeStalledBuilds(world, workers)
@@ -1465,6 +1508,7 @@ export class OpponentAI implements System {
     const dx = this.lastDeathX
     const dz = this.lastDeathZ
     for (const id of party) this.emitMove(world, id, dx, dz)
+    const leashed = [...party]
     // Escort from the second kill on: the idle melee furthest from the
     // hall — the most expendable — walks with the party. Only when a
     // soldier stands beyond the garrison, so home defense never thins.
@@ -1484,8 +1528,10 @@ export class OpponentAI implements System {
       }
       if (escort !== -1 && soldiers.length - garrison >= 1) {
         this.emitMove(world, escort, dx, dz)
+        leashed.push(escort)
       }
     }
+    this.armLeash(leashed)
     this.scoutPartiesSent += 1
   }
 
@@ -1527,7 +1573,93 @@ export class OpponentAI implements System {
     const squad = beyond.slice(0, size)
     if (squad.length === 0) return
     for (const id of squad) this.emitMove(world, id, this.lastDeathX, this.lastDeathZ)
+    this.armLeash(squad)
     this.scoutPartiesSent += 1
+  }
+
+  /** Arm the leash on a dispatched party/squad: the members, the death
+   * area they walked to, and the dispatch time. A new dispatch
+   * replaces the old leash — at most 3 parties go out per match, and
+   * only the latest is ever out on the probe. */
+  private armLeash(members: number[]): void {
+    if (members.length === 0) return
+    this.leashMembers = [...members]
+    this.leashX = this.lastDeathX
+    this.leashZ = this.lastDeathZ
+    this.leashDispatchedAt = this.gameTime
+  }
+
+  /**
+   * Squad leash step — runs every think after scout(). The probe comes
+   * home when its job is done (the death area is cleared and someone
+   * has arrived, or the probe timed out) or when the death area is
+   * held by a force that outnumbers it (the losing-position gate).
+   * Members that left the probe — re-tasked by the gather system,
+   * folded into a wave, fighting — drop off the leash instead of
+   * being yanked: the recall only ever moves members still on the
+   * probe (idle, or still moving at the death point).
+   */
+  private leashScoutParty(world: World, hall: number): void {
+    if (this.leashMembers.length === 0) return
+    const enemyTeam = (this.team === 0 ? 1 : 0) as 0 | 1
+    const onProbe = this.leashMembers.filter((id) => {
+      if (!world.entities.has(id) || world.health[id] <= 0 || world.team[id] !== this.team) return false
+      // A worker the economy re-tasked has left the probe: assignWorkers
+      // sets a harvest kind and orderGather leaves him idle awaiting
+      // pickup, so state alone cannot tell him from an arrived probe
+      // member. The outbound move order sets HARVEST_OFF, so a worker
+      // still on the probe is the only one carrying it — the recall
+      // must never yank a worker off the gather order he just got.
+      if (world.kind[id] === KIND_WORKER && world.harvestKind[id] !== HARVEST_OFF) return false
+      if (world.state[id] === STATE_IDLE) return true
+      if (world.state[id] !== STATE_MOVE) return false
+      const dx = world.targetX[id] - this.leashX
+      const dz = world.targetZ[id] - this.leashZ
+      return dx * dx + dz * dz <= 1
+    })
+    this.leashMembers = onProbe
+    if (onProbe.length === 0) return
+    // Enemy units holding the death area.
+    let enemiesNear = 0
+    for (const id of world.entities.keys()) {
+      if (world.team[id] !== enemyTeam || world.health[id] <= 0 || world.kind[id] > 2) continue
+      const dx = world.positionX[id] - this.leashX
+      const dz = world.positionZ[id] - this.leashZ
+      if (dx * dx + dz * dz <= SCOUT_PARTY_LEASH_SCAN_RADIUS * SCOUT_PARTY_LEASH_SCAN_RADIUS) enemiesNear += 1
+    }
+    // Losing-position gate: the death area is held by a force that
+    // outnumbers the squad — recall at once, even en route, instead of
+    // feeding the kill that ate the scout (retune verdict idx 29: a
+    // winning AI sent the party and lost).
+    if (enemiesNear >= onProbe.length + SCOUT_PARTY_LEASH_LOSING_MARGIN) {
+      this.recallLeash(world, hall)
+      return
+    }
+    // Cleared-area recall: someone has actually arrived — idle at the
+    // spot, not merely walking through the radius — or the probe has
+    // timed out, and nothing holds the area. Idle is the arrival
+    // signal on purpose: a worker that arrives goes idle and the
+    // gather system re-tasks it in the same think (assignWorkers runs
+    // before this step), so the economy reclaims its own — the leash
+    // only ever recalls members with nothing else to do.
+    const arrived = onProbe.some((id) => {
+      if (world.state[id] !== STATE_IDLE) return false
+      const dx = world.positionX[id] - this.leashX
+      const dz = world.positionZ[id] - this.leashZ
+      return dx * dx + dz * dz <= SCOUT_PARTY_LEASH_ARRIVAL_RADIUS * SCOUT_PARTY_LEASH_ARRIVAL_RADIUS
+    })
+    const timedOut = this.gameTime - this.leashDispatchedAt >= SCOUT_PARTY_LEASH_TIMEOUT_SEC
+    if ((arrived || timedOut) && enemiesNear === 0) this.recallLeash(world, hall)
+  }
+
+  /** Recall every member still on the leash to the hall (plain move
+   * orders, like the outbound order) and drop the leash. */
+  private recallLeash(world: World, hall: number): void {
+    const hx = world.positionX[hall]
+    const hz = world.positionZ[hall]
+    for (const id of this.leashMembers) this.emitMove(world, id, hx, hz)
+    this.leashMembers = []
+    this.leashRecalls += 1
   }
 
   /**
