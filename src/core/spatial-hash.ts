@@ -5,28 +5,50 @@
  * a sequence number. Queries yield (id, seq) pairs; callers break distance
  * ties by lower sequence number, which reproduces the exact target selection
  * of a full linear scan. This keeps lockstep PvP in sync.
+ *
+ * Cell keys are packed integers (mixed radix), not strings: the grid is
+ * rebuilt every tick and queried by every combat/gather/movement search, so
+ * per-call string construction + string hashing was measured as the largest
+ * fixed per-tick cost in the engine (rebuild 70.7 µs at 195 entities,
+ * 2026-11-20 micro-benchmark). The packing is exact while cell coordinates
+ * stay within ±2^25 (≈ ±800M world units at cellSize 24) — far beyond any
+ * position the game can produce (the playfield is ±90 and positions are
+ * Float32). Contents, visit order and sequence numbers are unchanged from
+ * the string-keyed version, so query results are bit-identical.
  */
 
 export class SpatialHash {
   private readonly cellSize: number
-  private readonly cells = new Map<string, number[]>()
-  /** Entity ID -> insertion sequence (world iteration order). */
-  private readonly seq = new Map<number, number>()
+  private readonly cells = new Map<number, number[]>()
+  /** Entity ID -> insertion sequence (world iteration order); -1 = not in the current rebuild. */
+  private seqArr = new Int32Array(0)
 
   constructor(cellSize = 24) {
     this.cellSize = cellSize
   }
 
-  private key(cx: number, cz: number): string {
-    return `${cx},${cz}`
+  private key(cx: number, cz: number): number {
+    // Mixed radix: exact while |cz| < 2^26 and |cx| < 2^25 (see header).
+    return cx * 67108864 + cz
   }
 
   /** Rebuild from scratch. `ids` must be in deterministic (world) order. */
   rebuild(entries: Iterable<{ id: number; x: number; z: number }>): void {
     this.cells.clear()
-    this.seq.clear()
+    // Every slot starts at the not-inserted sentinel, so sequenceOf keeps
+    // its old semantics for ids absent from this rebuild (recycled ids,
+    // mid-tick spawns) without a Map.
+    this.seqArr.fill(-1)
     let n = 0
     for (const e of entries) {
+      if (e.id >= this.seqArr.length) {
+        let len = Math.max(64, this.seqArr.length * 2)
+        while (len <= e.id) len *= 2
+        const next = new Int32Array(len)
+        next.set(this.seqArr)
+        next.fill(-1, this.seqArr.length)
+        this.seqArr = next
+      }
       const cx = Math.floor(e.x / this.cellSize)
       const cz = Math.floor(e.z / this.cellSize)
       const k = this.key(cx, cz)
@@ -36,13 +58,15 @@ export class SpatialHash {
         this.cells.set(k, cell)
       }
       cell.push(e.id)
-      this.seq.set(e.id, n++)
+      this.seqArr[e.id] = n++
     }
   }
 
   /** Sequence number for tie-breaking (lower = earlier in world order). */
   sequenceOf(id: number): number {
-    return this.seq.get(id) ?? Number.MAX_SAFE_INTEGER
+    if (id < 0 || id >= this.seqArr.length) return Number.MAX_SAFE_INTEGER
+    const s = this.seqArr[id]
+    return s < 0 ? Number.MAX_SAFE_INTEGER : s
   }
 
   /**
