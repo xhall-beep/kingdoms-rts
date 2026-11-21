@@ -953,11 +953,24 @@ export class HudImpl implements Hud {
   private alertLaneApplied = -1
   private pvpStatusEl: HTMLElement | null = null
 
+  /** Cache key (class + text) the banner-bottom measurement was taken
+   * for, and the measured bottom in px. The lane must clear the
+   * banner's REAL height: the fixed 110px lane assumed a ~50px
+   * single-line banner, but a wrapping note banner (92vw) runs ~82px
+   * tall, so the chip parked on the banner's last line — the 2026-11-21
+   * verify frame caught the shrine chip covering "to drain theirs."
+   * Re-measured only when the banner's content changes, so the
+   * per-frame lane sync stays a cheap integer compare; a zero or
+   * non-finite measurement (no layout, e.g. the node test stub) falls
+   * back to the old 110px lane. */
+  private laneBannerKey = ''
+  private laneBannerBottom = 110
+
   /** The chip's lane yields to whatever else owns the top centre: the
-   * banner (top 52, ~50 tall) first, then the PvP status line (top
-   * 104, ~38 tall). With the banner lease in place the two can truly
-   * coincide (a bell ringing out mid-attack), and sharing the 56px
-   * lane stacked them on the same pixels. Written only on change. */
+   * banner (top 52, measured height) first, then the PvP status line
+   * (top 104, ~38 tall). With the banner lease in place the two can
+   * truly coincide (a bell ringing out mid-attack), and sharing the
+   * 56px lane stacked them on the same pixels. Written only on change. */
   private syncAlertLane(): void {
     if (!this.alertEl) return
     if (!this.pvpStatusEl && typeof document !== 'undefined' && typeof document.querySelector === 'function') {
@@ -965,7 +978,21 @@ export class HudImpl implements Hud {
     }
     const bannerShown = this.bannerEl !== null && !this.bannerEl.hidden
     const statusShown = this.pvpStatusEl !== null && !this.pvpStatusEl.hidden
-    const top = statusShown ? 148 : bannerShown ? 110 : 56
+    let top: number
+    if (statusShown) {
+      top = 148
+    } else if (bannerShown && this.bannerEl) {
+      const key = `${this.bannerEl.className}|${this.bannerEl.textContent ?? ''}`
+      if (key !== this.laneBannerKey) {
+        this.laneBannerKey = key
+        const measured = this.bannerEl.offsetTop + this.bannerEl.offsetHeight
+        this.laneBannerBottom = Number.isFinite(measured) && measured > 0 ? measured + 8 : 110
+      }
+      top = this.laneBannerBottom
+    } else {
+      this.laneBannerKey = ''
+      top = 56
+    }
     if (top !== this.alertLaneApplied) {
       this.alertLaneApplied = top
       if (this.alertEl.style) this.alertEl.style.top = `${top}px`

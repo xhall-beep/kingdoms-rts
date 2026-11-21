@@ -19,7 +19,7 @@ import { suite, test, assert, assertEqual, assertClose } from './harness.ts'
 import { HudImpl } from '../ui/hud.ts'
 import { InputControllerImpl, pinchStep } from '../input/input-controller.ts'
 import { Renderer, FOG_UNEXPLORED_FILL } from '../render/renderer.ts'
-import { World } from '../core/World.ts'
+import { World, TEAM_PLAYER } from '../core/World.ts'
 import { makeWorld } from './setup.ts'
 import { BUILD_STAMP, BUILD_STAMP_LABEL } from '../build-stamp.ts'
 
@@ -60,6 +60,10 @@ class FakeEl {
   textContent = ''
   value = ''
   className = ''
+  /** Layout metrics the HUD reads (banner measurement); real browsers
+   * fill these, the stub defaults to 0 and tests set them. */
+  offsetTop = 0
+  offsetHeight = 0
   dataset: Record<string, string> = {}
   style: Record<string, unknown> = {}
   children: FakeEl[] = []
@@ -153,7 +157,7 @@ function stubDocument(): () => void {
   }
 }
 
-function mountHud(): { parent: FakeEl; restore: () => void } {
+function mountHud(): { parent: FakeEl; hud: HudImpl; restore: () => void } {
   const restoreLs = stubLocalStorage()
   const restoreDoc = stubDocument()
   const parent = new FakeEl()
@@ -165,6 +169,7 @@ function mountHud(): { parent: FakeEl; restore: () => void } {
   hud.mount(parent as unknown as HTMLElement)
   return {
     parent,
+    hud,
     restore: () => {
       restoreLs()
       restoreDoc()
@@ -507,6 +512,69 @@ test('exiting replay re-hides the speed row and closes the menu', () => {
     assertEqual(parent.querySelector('#hud-replay').textContent, 'Replay', 'label flips back to Replay')
     assertEqual(parent.querySelector('#hud-speed').hidden, true, 'speed re-hidden on exit')
     assertEqual(parent.querySelector('#hud-menu').hidden, true, 'menu closes on exit')
+  } finally {
+    restore()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Alert chip clears the banner (2026-11-21 verify frame)
+// ---------------------------------------------------------------------------
+// The shrine chip and the VP-drain banner fire on the same event, and the
+// old fixed 110px chip lane assumed a ~50px single-line banner. A wrapping
+// note banner (92vw) runs ~82px tall, so the chip parked on the banner's
+// last line — the 2026-11-21 verify frame caught it covering
+// "to drain theirs." The lane now measures the banner's real bottom.
+
+suite('experience-fixes: alert chip clears the banner')
+
+test('chip sits in the 56px lane with no banner showing', () => {
+  const { parent, hud, restore } = mountHud()
+  try {
+    const world = makeWorld()
+    world.alertEvents.push({ kind: 'shrine', x: 0, z: 0, team: TEAM_PLAYER, tick: world.tick })
+    hud.update(world, [])
+    assertEqual(parent.querySelector('#hud-alert').hidden, false, 'shrine chip shows')
+    assertEqual(parent.querySelector('#hud-alert').style.top, '56px', 'chip in the default lane')
+  } finally {
+    restore()
+  }
+})
+
+test('chip clears a multi-line note banner by its measured bottom', () => {
+  const { parent, hud, restore } = mountHud()
+  try {
+    const world = makeWorld()
+    // Opening banner is the note class: 92vw, wrapping, ~82px tall.
+    hud.announceOpening()
+    const banner = parent.querySelector('#hud-banner')
+    assertEqual(banner.hidden, false, 'banner showing')
+    banner.offsetTop = 52
+    banner.offsetHeight = 82
+    world.alertEvents.push({ kind: 'shrine', x: 0, z: 0, team: TEAM_PLAYER, tick: world.tick })
+    hud.update(world, [])
+    assertEqual(parent.querySelector('#hud-alert').hidden, false, 'shrine chip shows')
+    // 52 + 82 + 8 gap: the chip's top edge sits below the banner's bottom.
+    assertEqual(parent.querySelector('#hud-alert').style.top, '142px', 'chip clears the measured banner bottom')
+  } finally {
+    restore()
+  }
+})
+
+test('chip drops back to the default lane when the banner hides', () => {
+  const { parent, hud, restore } = mountHud()
+  try {
+    const world = makeWorld()
+    hud.announceOpening()
+    const banner = parent.querySelector('#hud-banner')
+    banner.offsetTop = 52
+    banner.offsetHeight = 82
+    world.alertEvents.push({ kind: 'shrine', x: 0, z: 0, team: TEAM_PLAYER, tick: world.tick })
+    hud.update(world, [])
+    assertEqual(parent.querySelector('#hud-alert').style.top, '142px', 'chip below the banner while it shows')
+    banner.hidden = true
+    hud.update(world, [])
+    assertEqual(parent.querySelector('#hud-alert').style.top, '56px', 'chip back in the default lane')
   } finally {
     restore()
   }
