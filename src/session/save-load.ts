@@ -110,6 +110,11 @@ export interface WorldSave {
   meleeHpLvl?: number[]
   rangedDmgLvl?: number[]
   factionOfTeam: [FactionId, FactionId]
+  /**
+   * Per-team human seats (opening-grace variant, 2026-11-23). Optional:
+   * saves written before this field existed load as [0, 0] — no grace.
+   */
+  humanSeat?: number[]
   winner: -1 | 0 | 1
   matchTime: number
   season: number
@@ -229,6 +234,7 @@ export function serializeWorld(world: World, step: number, commands: readonly Co
     meleeHpLvl: [...world.meleeHpLvl],
     rangedDmgLvl: [...world.rangedDmgLvl],
     factionOfTeam: [...world.factionOfTeam] as [FactionId, FactionId],
+    humanSeat: [...world.humanSeat],
     winner: world.winner,
     matchTime: world.matchTime,
     season: world.season,
@@ -300,6 +306,8 @@ export function deserializeWorld(world: World, save: WorldSave): void {
   world.meleeHpLvl = save.meleeHpLvl ? [...save.meleeHpLvl] : [0, 0]
   world.rangedDmgLvl = save.rangedDmgLvl ? [...save.rangedDmgLvl] : [0, 0]
   world.factionOfTeam = [...save.factionOfTeam] as [FactionId, FactionId]
+  // Saves predating the player-seat grace carry no seats: no grace.
+  world.humanSeat = save.humanSeat ? [...save.humanSeat] : [0, 0]
   world.winner = save.winner
   world.matchTime = save.matchTime ?? 0
   // Older saves predate the Season Wheel and stay in the growing season.

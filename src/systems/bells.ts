@@ -17,6 +17,32 @@ import type { System, World } from '../core/World.ts'
 export const BELL_TIMES = [180, 360, 540] as const
 export const BELL_NAMES = ['First Bell — the Raid Bell', 'Second Bell — the Turn', 'Third Bell — the War Bell'] as const
 
+/**
+ * The opening grace (softening slice, 2026-11-21): until the First Bell
+ * the match's offensive systems hold — the Living Wild does not answer
+ * a harvest and the AI sends no shrine sorties, while its first march
+ * waits on the longer advance floor in opponent.ts. Defense is never
+ * part of the grace: a force attacked in the window fights back at
+ * full strength. One boundary, shared by every system that keys on
+ * it, so the quiet opening cannot drift apart between owners.
+ */
+export const OPENING_GRACE_SEC = BELL_TIMES[0]
+
+/**
+ * The forest's grace runs one bell longer, to the Second Bell
+ * (persona proving, 2026-11-21): a treant rising at the First Bell is
+ * still a first-minutes killer for any build whose first soldiers
+ * come after 3:00 — the Economist's boom died to the 3:00 treant with
+ * zero soldiers fielded, exactly as it had to the 1:37 treant before
+ * the slice — and it synchronizes with a rusher's departure, eating
+ * the wood line the moment the army leaves. The AI's own grace
+ * (sorties, marches) stays at the First Bell above; the wild is not
+ * the AI, and A3's full-strength deadline binds the AI, not the
+ * forest. At the Second Bell the shipped game itself escalates, and
+ * a build with no soldiers by 6:00 is behind on its own terms.
+ */
+export const WILD_GRACE_SEC = BELL_TIMES[1]
+
 export class BellSystemImpl implements System {
   update(world: World): void {
     for (let i = 0; i < BELL_TIMES.length; i += 1) {

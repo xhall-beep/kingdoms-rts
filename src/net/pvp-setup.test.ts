@@ -81,8 +81,8 @@ test('reset erases arbitrary play history (hash-identical worlds)', () => {
   dirtyTheWorld(b)
   assert(hashWorldState(a) !== hashWorldState(b), 'precondition: histories differ')
 
-  resetWorldForMatch(a, pristine, ['elf', 'undead'])
-  resetWorldForMatch(b, pristine, ['elf', 'undead'])
+  resetWorldForMatch(a, pristine, ['elf', 'undead'], [1, 1])
+  resetWorldForMatch(b, pristine, ['elf', 'undead'], [1, 1])
 
   assertEqual(hashWorldState(a), hashWorldState(b), 'reset worlds hash identically')
   assertEqual(a.entities.size, b.entities.size, 'same entity count')
@@ -93,6 +93,8 @@ test('reset erases arbitrary play history (hash-identical worlds)', () => {
   )
   assertEqual(a.factionOfTeam[0], 'elf', 'team 0 faction')
   assertEqual(a.factionOfTeam[1], 'undead', 'team 1 faction')
+  assertEqual(a.humanSeat[0], 1, 'team 0 seat is human')
+  assertEqual(a.humanSeat[1], 1, 'team 1 seat is human')
   assertEqual(a.matchTime, 0, 'match clock reset')
   assertEqual(a.season, 0, 'season reset')
   assertEqual(a.winner, -1, 'winner reset')
@@ -116,7 +118,7 @@ test('reset covers every typed-array field on World', () => {
 test('reset reseed uses the agreed factions for spawn stats', () => {
   const pristine = bootSnapshot()
   const world = makeWorld()
-  resetWorldForMatch(world, pristine, ['orc', 'orc'])
+  resetWorldForMatch(world, pristine, ['orc', 'orc'], [1, 1])
   // Orc racial: Drudge hauls double — spawn stats must reflect the NEW
   // factions, not the boot snapshot's human/orc pairing.
   let workerId = -1
@@ -234,7 +236,7 @@ test('divergent peers converge via the turn-0 handshake', () => {
         for (const cmd of commands) {
           if (cmd.type !== 'pvp-setup') continue
           const pair = notePvpSetupCommand(setup, cmd)
-          if (pair !== null) resetWorldForMatch(world, pristine, pair)
+          if (pair !== null) resetWorldForMatch(world, pristine, pair, [1, 1])
         }
       }
       for (const cmd of commands) applyCommand(world, cmd)

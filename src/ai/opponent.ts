@@ -32,6 +32,7 @@ import { orderAttackMove } from '../systems/combat.ts'
 import { orderMove } from '../systems/movement.ts'
 import { HORN_COST, RALLY_NONE, soundWarHorn, warChargeAtLeast } from '../systems/warhorn.ts'
 import { CAPTURE_RADIUS } from '../systems/shrines.ts'
+import { OPENING_GRACE_SEC } from '../systems/bells.ts'
 import { enqueueTrain, researchCost, researchUpgrade, trainingQueueFor, upgradeBuilding } from '../systems/production.ts'
 import { UPGRADES, type UpgradeType } from '../data/upgrades.ts'
 import {
@@ -315,11 +316,26 @@ const OPENING_MELEE_COMMITMENT: Record<AIPersonality, number> = {
 /**
  * Opening advance delay (pacing slice 2026-10-27): the first offensive
  * wave may not launch before this gameTime (sim seconds), per
- * personality. Defense, shrine sorties, horn, training and micro are
- * deliberately NOT gated — the pacing study's measured ecosystem
- * (rusher row and AI-vs-AI outcomes byte-identical) holds with only
- * the march held. Values are L1-A; the pre-measured escalation path
- * is L1-C 240/240/255, then L1-B 255/255/270.
+ * personality. Defense, horn, training and micro are deliberately
+ * NOT gated — the pacing study's measured ecosystem (rusher row and
+ * AI-vs-AI outcomes byte-identical) holds with only the march held.
+ * Values were L1-A (225/225/240); the pre-measured escalation path
+ * ran L1-C 240/240/255, then L1-B 255/255/270.
+ *
+ * Softening slice (Montz, 2026-11-21): this floor deliberately does
+ * NOT move. The persona diagnosis found the AI's first march was
+ * never the early killer (it already landed 4:09–4:40, behind this
+ * floor and the First Bell gate in attack()) — the Living Wild was.
+ * A raised floor (285/285/300) was built and proven against: it
+ * saved no one the diagnosis implicated, it broke the Turtle (the
+ * first wave landed at 5:08, grown to full size, seventeen seconds
+ * before his first soldier trained), and it starved the undead
+ * cold-start, whose Soul-Ash economy ignites on first-march contact.
+ * The softening lives in the grace gates instead: the forest holds
+ * to the Second Bell (living-wild.ts) and shrine sorties hold to the
+ * First Bell (contestShrine, below). Thresholds, garrisons,
+ * composition, horn and micro are untouched, so mid/late character
+ * is unchanged.
  */
 const OPENING_ADVANCE_DELAY_SEC: Record<AIPersonality, number> = {
   aggressor: 225,
@@ -786,6 +802,23 @@ export class OpponentAI implements System {
       return
     }
 
+    // Opening grace, player seats only (softening variant, 2026-11-23):
+    // the normal contest is the one AI-initiated offensive dispatch
+    // no floor gated — a surplus sortie could deal damage inside the
+    // window over a point nobody forced. It waits for the First Bell,
+    // but ONLY when the shrine's holder is a human seat: an unheld
+    // shrine, or one held by an AI team, is contested without
+    // waiting — there is no human victim to protect, and AI-vs-AI
+    // games must not see the grace. The emergency answer above is
+    // NOT gated: it answers a live drain the enemy started, which is
+    // retaliation, not initiation — gating it would hand a shrine
+    // camper an unanswered 5 VP/s bleed for the whole window (the
+    // 2026-10-22 shrine-audit defect, reopened).
+    if (
+      holder !== -1 &&
+      world.humanSeat[holder] === 1 &&
+      this.gameTime < OPENING_GRACE_SEC
+    ) return
     const surplus = idle.length - this.attackThreshold(world)
     if (surplus < 3) return
     const party = idle.slice(0, 3)

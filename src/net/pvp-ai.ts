@@ -142,10 +142,15 @@ export class PvpAiGame {
 
     // Fresh deterministic map from the player's own faction settings — not
     // whatever live single-player state happened to be on screen.
-    resetWorldForMatch(world, this.pristineSave, [
-      readFactionSetting('krts-player-faction', 'human'),
-      readFactionSetting('krts-enemy-faction', 'orc'),
-    ])
+    resetWorldForMatch(
+      world,
+      this.pristineSave,
+      [
+        readFactionSetting('krts-player-faction', 'human'),
+        readFactionSetting('krts-enemy-faction', 'orc'),
+      ],
+      [1, 0], // team 0 is the human seat, team 1 the AI
+    )
 
     // Pause the Engine's own tick loop — lockstep drives world.update() now.
     this.composition.engine.pause()

@@ -224,7 +224,7 @@ export class PvPGame {
         if (cmd.type !== 'pvp-setup') continue
         const pair = notePvpSetupCommand(this.setup, cmd)
         if (pair !== null) {
-          resetWorldForMatch(world, this.pristineSave, pair)
+          resetWorldForMatch(world, this.pristineSave, pair, [1, 1]) // both seats human — the grace is symmetric in PvP
           console.log(`PvP world seeded: slot0=${pair[0]} slot1=${pair[1]}`)
         }
       }

@@ -28,6 +28,12 @@
  *   check and reset independently of world.tick by the PvP reset path,
  *   so it cannot be re-derived from tick on restore; it is carried
  *   bit-exact, like the victory timer.
+ * - v5 (player-seat grace, 2026-11-23): + humanSeat per-team control
+ *   flags (registry team array, f64s). The opening grace fires only
+ *   for human seats, so the flag is sim state a resync must carry —
+ *   a snapshot restored without it could re-time a treant after
+ *   resync. Restore is strict v5, like the earlier bumps: snapshots
+ *   are transient within one build, never persisted across builds.
  */
 import { World } from '../core/World.ts'
 import type { FactionId } from '../data/factions.ts'
@@ -44,7 +50,7 @@ import { VictorySystemImpl } from '../systems/victory.ts'
 import { ShrineSystemImpl } from '../systems/shrines.ts'
 
 const SNAP_MAGIC = 0x534e4150 // 'SNAP'
-const SNAP_VERSION = 4
+const SNAP_VERSION = 5
 
 function victoryTimerOf(world: World): number {
   for (const s of world.systems) {

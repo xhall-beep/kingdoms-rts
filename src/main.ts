@@ -348,6 +348,11 @@ export function initializeGame(): GameComposition {
     }
     setupTDUI(tdState)
   } else {
+    // Standard match vs the AI: team 0 is the human seat, team 1 the
+    // AI — the opening grace (softening variant) fires for team 0
+    // only. Tower Defense / Convergence never reach this branch and
+    // keep the default [0, 0]: no behavior change in those modes.
+    composition.engine.world.humanSeat = [1, 0]
     seedScenario(composition.engine.world, playerFaction, enemyFaction)
   }
   const commandLog = new CommandLog()

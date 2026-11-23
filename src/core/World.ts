@@ -357,6 +357,13 @@ export class World {
   supplyUsed: number[] = [0, 0]
   supplyCap: number[] = [0, 0]
   factionOfTeam: [FactionId, FactionId] = ['human', 'human']
+  /** Per-team control: 1 = a human player occupies the seat, 0 = AI.
+   * Game config, fixed at match setup — never written by any sim
+   * system. The opening grace (softening variant, 2026-11-23) fires
+   * only for human seats; AI-vs-AI games never set it, so their
+   * forest and sorties behave exactly as the shipped game. Sim state:
+   * hashed (registry team array), snapshotted, saved. */
+  humanSeat: number[] = [0, 0]
   /** Simulation tick counter (for deterministic rolls). */
   tick = 0
   /** Match clock in seconds — drives the Three Bells pacing system. */

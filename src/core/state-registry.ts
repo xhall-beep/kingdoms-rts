@@ -105,6 +105,10 @@ export const WORLD_TEAM_ARRAYS: readonly string[] = [
   'warCharge', 'warLastTick',
   'rallyKind', 'rallyUntil',
   'victoryPoints',
+  // Per-team control flags (opening-grace variant, 2026-11-23): 1 =
+  // a human player occupies the seat, 0 = AI. Hashed, snapshotted,
+  // and saved like the other team arrays.
+  'humanSeat',
 ]
 
 export type ScalarKind = 'int' | 'float'

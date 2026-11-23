@@ -176,6 +176,9 @@ test('hash sees every field the pre-registry hash missed', () => {
   num('rallyKind', () => w.rallyKind[0], (v) => { w.rallyKind[0] = v }, 2)
   num('rallyUntil', () => w.rallyUntil[0], (v) => { w.rallyUntil[0] = v }, 55.5)
   num('militiaCooldown', () => w.militiaCooldown[0], (v) => { w.militiaCooldown[0] = v }, 77)
+  // Per-team control flag (player-seat grace, 2026-11-23): the hash
+  // must see which seats a human occupies.
+  num('humanSeat', () => w.humanSeat[0], (v) => { w.humanSeat[0] = v }, 1)
   // Scalars the old hash omitted (it covered season + winner only).
   num('tick', () => w.tick, (v) => { w.tick = v }, 1)
   num('matchTime', () => w.matchTime, (v) => { w.matchTime = v }, 12.25)
@@ -231,6 +234,7 @@ test('snapshot/restore is hash-exact on non-default state', () => {
   a.rallyUntil = [400, 0]
   a.militiaCooldown = [500, 0]
   a.meleeDmgLvl = [2, 1]
+  a.humanSeat = [1, 0]
   a.reanimateTicks[live] = 400
   a.momentumTicks[live] = 9
   a.lastCombatTick[live] = 250
@@ -254,6 +258,8 @@ test('snapshot/restore is hash-exact on non-default state', () => {
   assertEqual(hashWorldState(b), before, 'restored hash must match on non-default state')
   assertEqual(b.victoryPoints[0], 640, 'VP restored')
   assertEqual(b.season, 1, 'season restored')
+  assertEqual(b.humanSeat[0], 1, 'human seat restored')
+  assertEqual(b.humanSeat[1], 0, 'AI seat restored')
   assertEqual(b.tick, a.tick, 'tick restored')
   assertEqual(b.matchTime, 372.5, 'matchTime restored')
   assertEqual(b.reanimateTicks[live], 400, 'reanimate timer restored')

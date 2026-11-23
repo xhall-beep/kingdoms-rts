@@ -1,5 +1,6 @@
 import type { System, World } from '../core/World.ts'
 import { NO_TARGET, STATE_ATTACK } from '../core/World.ts'
+import { WILD_GRACE_SEC } from './bells.ts'
 
 /**
  * The Living Wild (v2.0 canon): over-harvest spawns hostile treants.
@@ -58,14 +59,66 @@ export function recordTreeHarvest(
 export class LivingWildSystemImpl implements System {
   update(world: World, dt: number): void {
     for (const team of [0, 1] as const) {
-      if (world.wildHeat[team] > 0) {
-        world.wildHeat[team] = Math.max(
-          0,
-          world.wildHeat[team] - WILD_HEAT_DECAY_PER_SEC * dt,
-        )
+      if (world.humanSeat[team] !== 1) {
+        // Shipped behavior, VERBATIM — AI teams (including every farm
+        // game) must see the pristine forest exactly. The softening
+        // design's check-before-decay reorder is NOT behavior-neutral:
+        // heat landing exactly on the threshold (450.0) decays to
+        // 449.95 first and skips the spawn in the shipped code, while
+        // the reordered read spawns at once — and that one-tick shift
+        // cascaded into 2 diverged farm matches (variant iteration 1,
+        // 2026-11-23). The reorder survives only on the human-seat
+        // path below, where the grace clamp needs it.
+        if (world.wildHeat[team] > 0) {
+          world.wildHeat[team] = Math.max(
+            0,
+            world.wildHeat[team] - WILD_HEAT_DECAY_PER_SEC * dt,
+          )
+        }
+        if (world.wildHeat[team] < WILD_HEAT_THRESHOLD) continue
+        world.wildHeat[team] -= WILD_HEAT_THRESHOLD
+      } else {
+        // Human seat: the threshold check reads the heat BEFORE this
+        // tick's decay — the grace clamp below pins a banked debt at
+        // exactly the threshold, and a decay-first read would erode
+        // that pinned bank by a hair (450 -> 449.95) and forgive it
+        // entirely. Natural crossings overshoot by a tick of accrual
+        // either way, so the reorder moves no shipped spawn by more
+        // than a tick on this path.
+        if (world.wildHeat[team] < WILD_HEAT_THRESHOLD) {
+          if (world.wildHeat[team] > 0) {
+            world.wildHeat[team] = Math.max(
+              0,
+              world.wildHeat[team] - WILD_HEAT_DECAY_PER_SEC * dt,
+            )
+          }
+          continue
+        }
+        // Wild grace, player seats only (softening variant, 2026-11-23):
+        // the forest does not answer before the Second Bell
+        // (WILD_GRACE_SEC in bells.ts) for a team a human plays — the
+        // persona proving showed a First-Bell treant is still an
+        // executioner for soldierless boom builds. The debt is
+        // deferred, not forgiven — but it is capped at exactly one
+        // answer: during grace the heat is clamped at the threshold,
+        // so the bell brings ONE treant, never a burst of banked
+        // spawns on consecutive ticks (a 14-worker clear-cut banks
+        // two or more full thresholds by 3:00 unclamped). Pure
+        // function of matchTime + the seat flag.
+        if (world.matchTime < WILD_GRACE_SEC) {
+          if (world.wildHeat[team] > WILD_HEAT_THRESHOLD) {
+            world.wildHeat[team] = WILD_HEAT_THRESHOLD
+          }
+          continue
+        }
+        world.wildHeat[team] -= WILD_HEAT_THRESHOLD
+        if (world.wildHeat[team] > 0) {
+          world.wildHeat[team] = Math.max(
+            0,
+            world.wildHeat[team] - WILD_HEAT_DECAY_PER_SEC * dt,
+          )
+        }
       }
-      if (world.wildHeat[team] < WILD_HEAT_THRESHOLD) continue
-      world.wildHeat[team] -= WILD_HEAT_THRESHOLD
       const treant = world.spawnTreant(world.wildSiteX[team], world.wildSiteZ[team])
       // Alert chip: the spawn is an EVENT for the offending team's
       // player (visual-only) — the wrath meter itself stays quiet

@@ -53,6 +53,7 @@ export function resetWorldForMatch(
   world: World,
   pristineSave: WorldSave,
   factions: [FactionId, FactionId],
+  humanSeat: [number, number],
 ): void {
   deserializeWorld(world, pristineSave)
 
@@ -95,6 +96,12 @@ export function resetWorldForMatch(
   }
 
   world.factionOfTeam = [factions[0], factions[1]]
+  // Per-team control, assigned AFTER the pristine restore above (same
+  // position as the factions): the boot snapshot predates the seats,
+  // so a match's seats are set here, never inherited. [1, 1] for two
+  // humans (PvP), [1, 0] when team 1 is the AI (practice) — the
+  // opening grace fires only for human seats.
+  world.humanSeat = [...humanSeat]
   seedScenario(world, factions[0], factions[1])
 }
 

@@ -83,7 +83,11 @@ function runClearCut(): { world: World; spawnStep: number } {
   const world = makeWildWorld()
   seedWoodLine(world, TEAM_PLAYER, 14)
   let spawnStep = -1
-  for (let s = 0; s < 12000; s += 1) {
+  // 24000 steps (400s): under the wild grace the forest holds its
+  // answer until the Second Bell (360s), so the run must cross it —
+  // the banked heat is clamped at the threshold and the treant rises
+  // on the first tick past 360s.
+  for (let s = 0; s < 24000; s += 1) {
     world.update(STEP)
     if (treantIds(world).length > 0) {
       spawnStep = s
@@ -97,17 +101,18 @@ test('sustained clear-cutting raises a treant at the harvest site', () => {
   const { world, spawnStep } = runClearCut()
   assert(spawnStep > 0, 'a treant rose under sustained clear-cutting')
   const [treant] = treantIds(world)
-  // Spawn point: the tree being cut (within a step's walk of a tree).
-  let nearestTree = Infinity
-  for (const id of world.entities.keys()) {
-    if (world.kind[id] !== 7) continue // KIND_TREE
-    const d = Math.hypot(
-      world.positionX[id] - world.positionX[treant],
-      world.positionZ[id] - world.positionZ[treant],
-    )
-    nearestTree = Math.min(nearestTree, d)
-  }
-  assert(nearestTree <= 2, `treant rose at the harvest site (nearest tree ${nearestTree.toFixed(2)})`)
+  // Spawn point: the recorded harvest site. The shipped form of this
+  // assertion measured the nearest STANDING tree, but under the wild
+  // grace the rise is deferred to the Second Bell and this staging's
+  // 14 workers fell the whole grove by then — no standing tree
+  // remains to measure against (nearest tree: Infinity). The site
+  // itself is the mechanic under test: gather records it at the cut
+  // tree on every chop, and the treant rises on it.
+  const siteDist = Math.hypot(
+    world.positionX[treant] - world.wildSiteX[TEAM_PLAYER],
+    world.positionZ[treant] - world.wildSiteZ[TEAM_PLAYER],
+  )
+  assert(siteDist <= 2, `treant rose at the harvest site (site distance ${siteDist.toFixed(2)})`)
   // The trigger consumed the threshold: heat restarts below it.
   assert(
     world.wildHeat[TEAM_PLAYER] < WILD_HEAT_THRESHOLD,
@@ -142,6 +147,10 @@ test('the treant hunts the worker who was cutting', () => {
   world.wildSiteX[TEAM_PLAYER] = 5
   world.wildSiteZ[TEAM_PLAYER] = 5
   world.wildWorker[TEAM_PLAYER] = offender.id
+  // Staged past the Second Bell: before it, the forest holds its
+  // answer (wild grace, softening slice 2026-11-21 — pinned in
+  // opening-grace.test.ts); this test measures the hunt itself.
+  world.matchTime = 400
   stepWorld(world, 1)
   const treants = treantIds(world)
   assertEqual(treants.length, 1, 'exactly one treant rose')

@@ -65,6 +65,9 @@ test('enemy unit struck by a tower pushes nothing for the player', () => {
 
 test('treant spawn pushes a treant alert at the harvest site for the offending team', () => {
   const world = makeWorld()
+  // Past the wild grace (Second Bell): before 6:00 the forest holds
+  // its answer, so the spawn this test stages must sit after it.
+  world.matchTime = 400
   world.wildSiteX[TEAM_PLAYER] = 12
   world.wildSiteZ[TEAM_PLAYER] = -8
   world.wildHeat[TEAM_PLAYER] = WILD_HEAT_THRESHOLD + 10
