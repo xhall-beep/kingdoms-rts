@@ -273,6 +273,26 @@ test('build stamp placeholder + HUD wiring', () => {
   }
 })
 
+test('stamped builds show the stamp, not "dev build" (deploy replace-all guard)', () => {
+  // Regression: the deploy pipeline replaces EVERY `__BUILD_STAMP__`
+  // occurrence in the bundle. The old label compared BUILD_STAMP against
+  // the placeholder literal, so after replacement the comparison was true
+  // and every shipped build labelled itself "dev build" (found 2026-11-24
+  // on the live build). Replay the deploy transform on the module source
+  // and check the label that results.
+  const src = readRepoFile('src/build-stamp.ts')
+  // The defect write-up in the file's own header comment quotes the old
+  // comparison — strip comments so the guard checks live code only.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+  assert(!code.includes("=== '__BUILD_STAMP__'"), 'label must not compare against the placeholder literal')
+  const stamped = src.replaceAll('__BUILD_STAMP__', 'abcdef1 · 2026-11-24')
+  const body = stamped.replace(/^export /gm, '')
+  const { BUILD_STAMP: stampedValue, BUILD_STAMP_LABEL: stampedLabel } =
+    new Function(`${body}; return { BUILD_STAMP, BUILD_STAMP_LABEL };`)()
+  assertEqual(stampedValue, 'abcdef1 · 2026-11-24', 'deploy replacement lands in BUILD_STAMP')
+  assertEqual(stampedLabel, 'abcdef1 · 2026-11-24', 'stamped build shows the stamp, not "dev build"')
+})
+
 // ---------------------------------------------------------------------------
 // Defect #3: pinch-to-zoom gesture math + controller integration
 // ---------------------------------------------------------------------------
